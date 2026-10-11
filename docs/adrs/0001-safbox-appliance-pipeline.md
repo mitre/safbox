@@ -46,11 +46,15 @@ Forces that shape the design:
 5. **The build runner has API access only.** Packer drives Proxmox over its
    HTTPS API from a least-privilege account scoped to a resource pool, a small
    set of reserved VM IDs, one storage for disks, one for ISOs, one bridge, and
-   one node. The runner has no shell on the Proxmox nodes.
+   one node. The runner has no shell on the Proxmox nodes. Creation rights
+   come from the pool: every create and clone request names it, because
+   Proxmox deletes per-VM ACLs when a VM is destroyed, so grants on reserved
+   IDs can only act as a ceiling on which IDs may ever exist.
 
 Decisions already taken during design review and recorded here:
 
-- Base image for v1 is **Rocky Linux 10**, installed from the DVD ISO by
+- Base image for v1 is **Rocky Linux 10**, installed from the distribution
+  ISO (minimal for headless builds, DVD when a desktop is wanted) by
   kickstart with **FIPS mode enabled at install** (`fips=1`). Rocky 10 is
   chosen over Ubuntu 26.04 because the full hardening stack exists for it
   today: a published DISA RHEL 10 STIG, an Ansible Lockdown role, and a MITRE
@@ -139,6 +143,11 @@ Within the appliance layer:
   with the same justification, following the SAF overlay pattern. One list of
   deviations, consumed by both sides, so hardening and validation cannot
   drift apart. Hardening runs as the last play before the self-test and seal.
+  The goal is not a box hardened to the hilt by default: no two environments
+  make the same risk decisions, so the shipped posture is a sensible,
+  usable baseline and the real product is that every control is a documented
+  knob (the Lockdown role's variables, the deviations file, the banner text,
+  and the like) that a consumer can turn when they rebuild.
 - **FIPS mode is on from installation and is not configurable afterward.**
   The kickstart passes `fips=1`; every Rocky-based SAFBox image is a FIPS-mode
   system from first boot. Red Hat removed the post-install switch in RHEL 10,
@@ -322,14 +331,19 @@ credible FIPS path for regulated networks; small footprint.
   parties on a hosted or embedded basis to compete with the licensor's paid
   products, and explicitly excludes free products from that restriction.
   SAFBox is free and open source and does not compete with a paid Packer, so
-  bundling the unmodified binary is within the grant. Record this in a
-  `NOTICE` file, keep Packer in its own role so it can be excluded by a
+  bundling the unmodified binary is within the grant. Record this in
+  `docs/third-party.md`, keep Packer in its own role so it can be excluded by a
   variable, and re-check if SAFBox is ever sold.
-- *Secrets leak into the image.* The seal role is mandatory and runs last; the
-  self-test asserts that no `/etc/safbox/*.env` files, SSH host keys, or
-  `machine-id` exist in the template. The build user's password is a Packer
-  variable supplied from the environment, never committed, and is locked at
-  seal; cloud-init provisions the real login on deploy.
+- *Secrets and build identity leak into the image.* The seal role is
+  mandatory and runs last. It deletes the build user's authorized key, its
+  sudoers drop-in, and the account itself; removes SSH host keys,
+  `machine-id`, the installer's kickstart copies and logs under `/root` and
+  `/var/log/anaconda`, and the installer-created NetworkManager profile. The
+  self-test asserts all of that plus the absence of `/etc/safbox/*.env` in
+  the template. The build user authenticates only by an ephemeral per-build
+  key minted outside the repository; there is no build password. Until the
+  seal exists, templates are tagged `unsealed`, say so in their description,
+  and are not distributable. cloud-init provisions the real login on deploy.
 - *Vendored content goes stale.* The manifest records the pin date; `safbox
   content status` reports age and, when online, available updates. Re-bake on a
   cadence once distribution exists.
@@ -339,6 +353,12 @@ credible FIPS path for regulated networks; small footprint.
 - *Upstream images change shape.* Pin Heimdall and Vulcan image tags in the
   versions file; bump deliberately with the Quadlet unit reviewed against the
   new upstream compose file.
+- *The answer file is fetched over plain HTTP during the build.* Packer's
+  temporary server is unauthenticated, so the build network segment is
+  trusted and `http_bind_address` limits where it listens. Release builds
+  must deliver the kickstart over HTTPS (`kickstart_url`, which Anaconda
+  verifies) or from media; this is the subject of the kickstart-delivery
+  decision card.
 - *Hardening severs the build connection.* The STIG touches sshd, PAM, and
   the firewall while Packer is connected over SSH. Mitigations: the build user
   authenticates by key and is in any group the hardened sshd allows; rules
@@ -424,15 +444,19 @@ credible FIPS path for regulated networks; small footprint.
   `yamllint`. A second run of the playbook against a built box reports zero
   changed tasks. Package names and paths come from `vars/<os_family>.yml`; no
   bare `apt` or `dnf` module calls in task files.
-- **Platform discipline.** Nothing outside `packer/source-*.pkr.hcl` and
-  `packer/http/` may name a hypervisor or cloud. The verification playbook
-  greps for this.
-- **Pinned inputs.** Tool versions in `ansible/group_vars/all/versions.yml`,
+- **Platform discipline.** Nothing in the appliance layer (`ansible/`,
+  `verify/`, the appliance tests) may name a hypervisor or cloud. The install
+  layer (`packer/`, its tests, `scripts/`) and the documentation necessarily
+  do; new platforms are added there as new source files and answer files. A test greps the
+  appliance layer for this.
+- **Pinned inputs.** Tool versions in `ansible/group_vars/all/main.yml`,
   content in `content/manifest.yml`, container images by tag. No `latest`
   anywhere in a built image.
 - **No secrets in the repository or the image.** Build credentials arrive via
-  `PKR_VAR_*` environment variables or the Proxmox env file. `gitleaks` runs
-  as a pre-commit hook. The seal role and self-test enforce the image side.
+  `PKR_VAR_*` environment variables or the Proxmox env file, never on a
+  command line. `gitleaks` runs as a pre-commit hook on each developer's
+  clone and, once CI exists, on every push; the hook alone does not travel
+  with the repository. The seal role and self-test enforce the image side.
 - **Self-test is the gate.** `packer build` fails if the in-image InSpec
   profile does not meet `verify/threshold.yml`.
 - **Two-audience docs.** Every user-facing feature lands with a line in the
@@ -446,7 +470,7 @@ credible FIPS path for regulated networks; small footprint.
 | Shared need | Used by | Built in |
 |---|---|---|
 | `packer/build.pkr.hcl` shared provisioner chain (Ansible, self-test, seal) and `variables.pkr.hcl` | every source, every phase | Phase 1 |
-| `ansible/playbooks/safbox.yml` entrypoint and `group_vars/all/versions.yml` | all roles | Phase 2 |
+| `ansible/playbooks/safbox.yml` entrypoint and `group_vars/all/main.yml` | all roles | Phase 2 |
 | `base` and `container_runtime` roles | all service roles | Phase 2 |
 | `firstboot` framework: `/etc/safbox/`, `safbox-firstboot.service`, drop-in hooks per service | heimdall, vulcan, proxy | Phase 2 |
 | `safbox_cli` skeleton with subcommand registration | content, services, status | Phase 2 |
@@ -463,14 +487,14 @@ safbox/
     source-proxmox-el10.pkr.hcl   v1; ISO variable selects Rocky or Alma
     (source-qemu-el10, source-proxmox-ubuntu, source-vsphere-*, ... later;
      Packer loads only top-level *.pkr.hcl, so sources are files, not a folder)
-    http/
-      el10/ks.cfg              shared by Rocky and Alma; fips=1 in the bootloader line
-      (ubuntu/user-data, meta-data later)
+    answerfiles/
+      el10/ks.cfg.pkrtpl.hcl              shared by Rocky and Alma; fips=1 in the bootloader line
+      (ubuntu/user-data, meta-data later; delivery is a variable, not a folder)
   ansible/
     playbooks/safbox.yml
     playbooks/verify.yml
     roles/<role>/{tasks,vars,templates,files,defaults}
-    group_vars/all/versions.yml
+    group_vars/all/main.yml
     requirements.yml           collections, pinned
   deploy/
     terraform/proxmox/          sample deployment, v1
@@ -486,21 +510,23 @@ safbox/
     adrs/
     deploy.md
     rebuild.md
-  NOTICE
 ```
 
 ### Phases
 
 #### Phase 1: Repo scaffold and first Packer build (unblocked, start here)
 **Files:** `packer/build.pkr.hcl`, `packer/variables.pkr.hcl`,
-`packer/source-proxmox-el10.pkr.hcl`, `packer/http/el10/ks.cfg.pkrtpl.hcl`,
-`.gitignore`, `.pre-commit-config.yaml`, `README.md`, `NOTICE`.
+`packer/source-proxmox-el10.pkr.hcl`, `packer/answerfiles/el10/ks.cfg.pkrtpl.hcl`,
+`packer/example.pkrvars.hcl`, `scripts/build.sh`, `scripts/clone-and-ssh.sh`,
+`tests/packer/validate.sh`, `tests/kickstart/ks-lint.sh`, `.gitignore`,
+`.pre-commit-config.yaml`, `README.md`, `LICENSE.md`, `docs/rebuild.md`,
+`docs/third-party.md`.
 **Acceptance criteria:**
 - [ ] `packer init` and `packer validate` pass with the proxmox and ansible
       plugins pinned.
 - [ ] A build from the runner creates the VM on the configured node and pool
-      from the RHEL 10 family DVD ISO via kickstart, with no provisioning
-      beyond the guest agent and SSH, and converts it to a template.
+      from the RHEL 10 family ISO via kickstart, with no provisioning beyond
+      the guest agent, cloud-init, and SSH, and converts it to a template.
 - [ ] The same kickstart and source build from both the Rocky 10 and the
       AlmaLinux 10 x86-64-v2 ISO; the only input that changes is the ISO
       variable. Verified on Alma in the lab; Rocky verified when a v3 host is
@@ -531,16 +557,23 @@ roles `base`, `container_runtime`, `firstboot`, `safbox_cli`, `seal`,
       boot of a clone.
 - [ ] `safbox-firstboot.service` runs once on first boot of a clone, creates
       `/etc/safbox/`, and does not run again.
-- [ ] Seal removes host keys, `machine-id`, cloud-init state, history, and
-      locks the build user; a clone regenerates all of them.
-- [ ] Self-test profile runs in-image under CINC Auditor and gates the build.
+- [ ] Seal removes the build user's authorized key and sudoers drop-in and
+      deletes the account, removes SSH host keys, `machine-id`, cloud-init
+      state, shell history, logs, `/root/*ks*.cfg`, `/var/log/anaconda`, and
+      the installer's NetworkManager profile; drops the `unsealed` tag; a
+      clone regenerates host keys and machine-id.
+- [ ] Self-test profile runs in-image under CINC Auditor and gates the build;
+      it asserts FIPS (kernel flag, crypto policy, OpenSSL provider), Secure
+      Boot, no build-user key or sudoers drop-in, no SSH host keys, no
+      kickstart copies, qemu-guest-agent's default RPC block list intact, and
+      records distribution and microarchitecture level.
 - [ ] `ansible-lint` and `yamllint` clean.
 **Verification:** `packer build`; `ansible-playbook playbooks/verify.yml`
 against the clone; `cinc-auditor exec verify/inspec-safbox` on the clone.
 
 #### Phase 3: Tooling roles (blocked by Phase 2)
 **Files:** roles `cinc_auditor`, `saf_cli`, `ansible_tooling`, `packer_tool`;
-`group_vars/all/versions.yml`; `NOTICE` updated for Packer.
+`group_vars/all/main.yml`; `docs/third-party.md` updated for Packer.
 **Acceptance criteria:**
 - [ ] `cinc-auditor`, `saf`, `ansible`, `packer` present at pinned versions;
       `safbox status` prints them.
@@ -691,7 +724,9 @@ story (Ubuntu Pro entitlement) are decided in that phase, under this ADR.
 Static checks run on GitHub-hosted runners from day one. Image builds need a
 hypervisor: a workstation against a Proxmox target for now, a self-hosted
 runner later, and a KVM-capable hosted runner for the `qemu` distribution lane
-in Phase 9. Any Proxmox account used to build must be least-privilege: a pool,
-reserved VM IDs, one storage for disks, one for ISOs, one bridge, one node.
+in Phase 9. Any Proxmox account used to build must be least-privilege: a pool
+that authorizes creation, optional reserved VM IDs as a ceiling, one storage
+for disks, one for ISOs, one bridge, one node. Build and deploy tooling must
+name the pool on every create or clone.
 The concrete node, pool, IDs, and storage names are never committed; they live
 in the builder's local variables file.
