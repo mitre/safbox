@@ -1,0 +1,32 @@
+# Session handoff notes, local only
+HANDOFF.local.md
+
+# Packer
+packer_cache/
+*.pkrvars.hcl
+!example.pkrvars.hcl
+.packer.d/
+crash.log
+
+# macOS
+.DS_Store
+
+# beads issue tracker (embedded Dolt, local only)
+.beads/
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
+.beads/proxieddb/
+
+# Ephemeral build keys
+.build/
+
+# beads 1.3+ cooperative flock files (never deleted by bd)
+*.gate.lock*
+
+# agent stuff
+.claude
+.codex
+CLAUDE.md
