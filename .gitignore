@@ -23,6 +23,11 @@ crash.log
 # Ephemeral build keys
 .build/
 
+# Tool byproducts
+__pycache__/
+saf-cli.log
+inspec.lock
+
 # beads 1.3+ cooperative flock files (never deleted by bd)
 *.gate.lock*
 
@@ -30,3 +35,9 @@ crash.log
 .claude
 .codex
 CLAUDE.md
+
+# Site overrides for Ansible variables
+ansible/local.yml
+
+# Symlink to the current build log (scripts/build.sh maintains it)
+last.log

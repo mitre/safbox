@@ -126,6 +126,11 @@ for _ in $(seq 1 72); do
     echo "$out" | grep -q '^fips_enabled=1$' || { echo "FAIL: clone is not in FIPS mode" >&2; exit 1; }
     echo "$out" | grep -q "^hostname=safbox-clone-$CLONE_ID\$" || { echo "FAIL: cloud-init did not set the clone's hostname" >&2; exit 1; }
     echo "PASS: clone $CLONE_ID reachable over SSH with the cloud-init user, FIPS on"
+    # Release gate: the same validation profile the build ran, now from
+    # outside against what a consumer receives, after first boot.
+    if [ "${SAFBOX_SKIP_VALIDATE:-0}" != 1 ]; then
+      "$ROOT/scripts/validate.sh" "$USER_NAME@$ip" "$KEY" "clone-$CLONE_ID" firstboot_completed_expected=true
+    fi
     exit 0
   fi
   sleep 5

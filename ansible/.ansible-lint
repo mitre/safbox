@@ -1,0 +1,13 @@
+---
+# ansible-lint configuration for the appliance layer. Run from this
+# directory: ansible-lint -c .ansible-lint . (see tests/ansible/lint.sh).
+profile: production
+offline: true
+strict: true
+exclude_paths:
+  - collections/
+kinds:
+  - playbook: playbooks/*.yml
+  - vars: group_vars/**/*.yml
+  - vars: roles/*/vars/*.yml
+  - requirements: requirements.yml

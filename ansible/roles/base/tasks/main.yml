@@ -1,0 +1,104 @@
+---
+- name: Load OS family variables
+  tags: [always]
+  ansible.builtin.include_vars:
+    file: "{{ lookup('ansible.builtin.first_found', base_vars_lookup) }}"
+  vars:
+    base_vars_lookup:
+      files:
+        - "{{ ansible_facts['os_family'] }}.yml"
+      paths:
+        - "{{ role_path }}/vars"
+
+- name: First-boot framework
+  when: safbox_base_1 | default(true) | bool
+  tags: [safbox-base-1]
+  block:
+    - name: Install the packages the first-boot framework uses
+      ansible.builtin.package:
+        name: "{{ base_packages }}"
+        state: present
+
+    - name: Create the root-only first-boot directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+      loop:
+        - "{{ base_firstboot_etc_dir }}"
+        - "{{ base_firstboot_hook_dir }}"
+        - "{{ base_firstboot_state_dir }}"
+
+    - name: Create the helper library directory
+      ansible.builtin.file:
+        path: "{{ base_lib_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Install the secrets helper library
+      ansible.builtin.copy:
+        src: secrets.sh
+        dest: "{{ base_lib_dir }}/secrets.sh"
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Install the first-boot script
+      ansible.builtin.copy:
+        src: safbox-firstboot
+        dest: "{{ base_firstboot_script }}"
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Install the first-boot unit
+      ansible.builtin.template:
+        src: safbox-firstboot.service.j2
+        dest: "/etc/systemd/system/{{ base_firstboot_unit }}"
+        owner: root
+        group: root
+        mode: '0644'
+      notify: Reload systemd units
+
+    - name: Register the unit with systemd before enabling it
+      ansible.builtin.meta: flush_handlers
+
+    # Enabled, never started here: starting it in the build would run first
+    # boot inside the template and bake per-install state into the image.
+    - name: Enable the first-boot unit
+      ansible.builtin.systemd_service:
+        name: "{{ base_firstboot_unit }}"
+        enabled: true
+
+- name: The safbox command
+  when: safbox_base_2 | default(true) | bool
+  tags: [safbox-base-2]
+  block:
+    - name: Create the command registry directory
+      ansible.builtin.file:
+        path: "{{ base_cli_commands_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Install the safbox dispatcher
+      ansible.builtin.copy:
+        src: safbox
+        dest: "{{ base_cli_bin }}"
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Register the built-in subcommands
+      ansible.builtin.copy:
+        src: "commands/{{ item }}"
+        dest: "{{ base_cli_commands_dir }}/{{ item }}"
+        owner: root
+        group: root
+        mode: '0755'
+      loop: "{{ base_cli_commands }}"

@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# safbox: command-line entrypoint of a SAFBox appliance.
+#
+# Subcommands are executables registered in /usr/local/lib/safbox/commands;
+# `safbox <name> [args]` executes that file. A subcommand advertises a
+# one-line description with a `# Summary: ...` comment in its first lines,
+# which `safbox help` prints.
+set -euo pipefail
+
+readonly SAFBOX_LIB_DIR="${SAFBOX_LIB_DIR:-/usr/local/lib/safbox}"
+readonly SAFBOX_COMMANDS_DIR="${SAFBOX_COMMANDS_DIR:-${SAFBOX_LIB_DIR}/commands}"
+export SAFBOX_LIB_DIR SAFBOX_COMMANDS_DIR
+
+summary_of() {
+  local file=$1 line
+  line=$(head -n 20 "$file" | grep -m1 -E '^# Summary: ' || true)
+  printf '%s' "${line#\# Summary: }"
+}
+
+cmd_help() {
+  cat <<USAGE
+Usage: safbox <command> [arguments]
+
+Commands:
+USAGE
+  printf '  %-12s %s\n' help 'Show this help'
+  local file name
+  shopt -s nullglob
+  for file in "${SAFBOX_COMMANDS_DIR}"/*; do
+    [[ -f "$file" && -x "$file" ]] || continue
+    name=$(basename "$file")
+    printf '  %-12s %s\n' "$name" "$(summary_of "$file")"
+  done
+  shopt -u nullglob
+  printf '\nRegister a command by installing an executable into %s\n' "$SAFBOX_COMMANDS_DIR"
+}
+
+main() {
+  local cmd=${1:-help}
+  shift || true
+  case "$cmd" in
+    help|-h|--help)
+      cmd_help
+      ;;
+    *)
+      if [[ ! "$cmd" =~ ^[a-z][a-z0-9-]*$ ]]; then
+        printf 'safbox: invalid command name %q\n' "$cmd" >&2
+        exit 2
+      fi
+      if [[ -f "${SAFBOX_COMMANDS_DIR}/${cmd}" && -x "${SAFBOX_COMMANDS_DIR}/${cmd}" ]]; then
+        exec "${SAFBOX_COMMANDS_DIR}/${cmd}" "$@"
+      fi
+      printf "safbox: unknown command '%s'; run 'safbox help'\n" "$cmd" >&2
+      exit 2
+      ;;
+  esac
+}
+
+main "$@"

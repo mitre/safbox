@@ -100,8 +100,8 @@ variable "vm_disk_size" {
 
 variable "cpu_type" {
   type        = string
-  description = "QEMU CPU model for the build VM, inherited by clones. A named model keeps clones migratable across a heterogeneous cluster; 'host' ties them to the build node. x86-64-v2-AES is the floor for the AlmaLinux v2 lane; use x86-64-v3 for Rocky 10."
-  default     = "x86-64-v2-AES"
+  description = "QEMU CPU model for the build VM, inherited by clones. A named model keeps clones migratable across a heterogeneous cluster; 'host' ties them to the build node. RHEL 10 and Rocky 10 require x86-64-v3."
+  default     = "x86-64-v3"
 }
 
 variable "disk_format" {
@@ -126,6 +126,24 @@ variable "http_bind_address" {
   type        = string
   description = "Address Packer's kickstart HTTP server binds to. Null binds all interfaces; set the build-facing IP so the rendered answer file is not offered on every network the runner touches."
   default     = null
+}
+
+variable "seal" {
+  type        = bool
+  description = "Run the full seal (scrub instance identity and installer residue, delete the build user, host keys and logs, assert the result) and produce a distributable template. false runs the development seal, which scrubs identity and residue but keeps the build user, its key, the host keys and the logs so the template can be inspected; such templates are tagged 'unsealed'."
+  default     = true
+}
+
+variable "ansible_dir" {
+  type        = string
+  description = "Path to the appliance layer (playbooks, roles, group_vars, ansible.cfg). Defaults to the repository's ansible/ directory."
+  default     = null
+}
+
+variable "ansible_extra_vars" {
+  type        = list(string)
+  description = "Extra variables passed to every appliance playbook as key=value, e.g. [\"safbox_example_quadlet_enabled=true\"] for the acceptance build."
+  default     = []
 }
 
 variable "git_revision" {

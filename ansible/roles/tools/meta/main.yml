@@ -1,0 +1,22 @@
+---
+galaxy_info:
+  role_name: tools
+  namespace: safbox
+  author: MITRE SAF
+  description: "The assessment and build tools SAFBox ships (CINC Auditor now; SAF CLI, Ansible and Packer in Phase 3)"
+  license: Apache-2.0
+  min_ansible_version: "2.16"
+  platforms:
+    - name: EL
+      versions:
+        - "10"
+    - name: Debian
+      versions:
+        - all
+    - name: Ubuntu
+      versions:
+        - all
+  galaxy_tags:
+    - safbox
+    - appliance
+dependencies: []

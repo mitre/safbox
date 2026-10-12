@@ -1,0 +1,54 @@
+set -euo pipefail
+shopt -s nullglob
+export LC_ALL=C
+# The connection is usually the build user's, so this shell starts in the
+# home directory step 2 deletes; nothing below may depend on it.
+cd /
+
+# 1. Host keys: each clone generates its own on first boot.
+find /etc/ssh -maxdepth 1 -type f -name 'ssh_host_*' -delete
+
+# 2. The build user's sudo drop-in, account and home, and the sudo rules
+#    cloud-init wrote for the build VM's own boot.
+rm -f -- {{ seal_build_user_sudoers | quote }} {{ seal_cloud_init_sudoers | quote }}
+# --force because this very connection is a process of that user; userdel
+# warns and proceeds. The session ends when the play does.
+if getent passwd {{ seal_build_user | quote }} >/dev/null; then
+  userdel --remove --force {{ seal_build_user | quote }}
+fi
+
+# 3. What root's tools left in its home during the build.
+rm -rf -- {{ seal_root_tool_residue | map('quote') | join(' ') }}
+
+# 4. Logs last, so they keep nothing from the steps above: truncate files in
+#    place (ownership and labels survive), drop the build's journal.
+find /var/log -path /var/log/journal -prune -o -type f -exec truncate -s 0 {} +
+journalctl --rotate
+journalctl --vacuum-time=1s >/dev/null 2>&1
+# Absent when journald keeps the journal in memory only (Storage=auto with no
+# /var/log/journal, the distribution default).
+if [ -d /var/log/journal ]; then
+  find /var/log/journal -mindepth 1 -maxdepth 1 -type d -exec rm -rf {} +
+fi
+
+# Post-conditions. Nothing outside can log in after this script to check the
+# template, so it checks itself and fails the build when the seal is
+# incomplete.
+fail() { echo "seal post-condition failed: $*" >&2; exit 1; }
+if getent passwd {{ seal_build_user | quote }} >/dev/null; then fail "build user {{ seal_build_user }} still exists"; fi
+for f in {{ seal_build_user_sudoers | quote }} {{ seal_cloud_init_sudoers | quote }}; do
+  if [ -e "$f" ]; then fail "sudoers rule $f still exists"; fi
+done
+keys=(/etc/ssh/ssh_host_*)
+if [ -n "${keys[*]-}" ]; then fail "SSH host keys present: ${keys[*]}"; fi
+if [ -s /etc/machine-id ] && [ "$(cat /etc/machine-id)" != uninitialized ]; then fail "/etc/machine-id is initialised"; fi
+if [ -e /var/lib/cloud/instance ]; then fail "cloud-init instance state present"; fi
+residue=(/root/*ks*.cfg /root/ks-post.log /var/log/anaconda {{ seal_firstboot_state | map('quote') | join(' ') }})
+for f in "${residue[@]}"; do
+  if [ -e "$f" ]; then fail "build residue present: $f"; fi
+done
+envs=({{ seal_env_file_dir | quote }}/*.env)
+if [ -n "${envs[*]-}" ]; then fail "first-boot secrets present: ${envs[*]}"; fi
+profiles=(/etc/NetworkManager/system-connections/*.nmconnection)
+if [ -n "${profiles[*]-}" ]; then fail "network profiles bound to the build VM: ${profiles[*]}"; fi
+echo "seal post-conditions met"

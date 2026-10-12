@@ -1,0 +1,93 @@
+---
+# Project-wide variables for the SAFBox appliance layer, applied to every
+# host the playbooks touch. One file, sectioned. Role-level knobs with
+# sensible defaults live in each role's defaults/main.yml; this file is where
+# the project overrides them and where every version pin lives
+# (ADR-0001 Quality Standards: pinned inputs). Later phases add their pins
+# here when they first use them; nothing is pinned ahead of use.
+#
+# Precedence reminder: role defaults < this file < play vars < -e extra vars.
+
+# ---------------------------------------------------------------------------
+# Build
+# ---------------------------------------------------------------------------
+
+# The account the install layer creates for the build (the kickstart's
+# build_user). The seal step deletes it with its key and sudo drop-in, and
+# asserts it is gone; the validation profile checks it on clones.
+safbox_build_user: packer
+
+# Default accounts distribution cloud images create (system_info.default_user
+# in cloud.cfg, or the image vendor's own). The kickstart stops cloud-init
+# creating one (users: [] in cloud.cfg.d); the validation profile asserts
+# none exists.
+safbox_distro_default_users:
+  - cloud-user
+  - almalinux
+  - rocky
+  - ubuntu
+  - debian
+
+# Install a trivial Quadlet unit that proves the container runtime starts a
+# unit on boot (Phase 2 acceptance). The acceptance build sets it true; the
+# validation profile checks the unit whenever it is installed.
+safbox_example_quadlet_enabled: false
+
+# ---------------------------------------------------------------------------
+# Task group switches
+# ---------------------------------------------------------------------------
+# Every task group in the appliance roles is a block tagged
+# safbox-<role>-<n> and runs only while its switch below is true, in the
+# style of Ansible Lockdown. Turn a group off here or in ansible/local.yml;
+# run or skip groups for one invocation with --tags / --skip-tags. The seal
+# role is tagged but not switchable: it runs whole or not at all.
+
+# platform
+safbox_platform_1: true   # base packages and services
+safbox_platform_2: true   # SELinux enforcing assertion
+safbox_platform_3: true   # firewall allows the base services
+safbox_platform_4: true   # container runtime (podman, Quadlet, registry policy)
+safbox_platform_5: true   # smoke-test container (also needs safbox_example_quadlet_enabled)
+safbox_platform_6: true   # persistent journal
+
+# base
+safbox_base_1: true  # first-boot framework
+safbox_base_2: true  # the safbox command
+
+# tools
+safbox_tools_1: true      # CINC Auditor
+
+# ---------------------------------------------------------------------------
+# Pins: container images
+# ---------------------------------------------------------------------------
+# Images are pinned by digest so a retagged upstream image cannot change what
+# we ship. The human-readable tag is recorded alongside for review; roles
+# MUST use the digest form (name@sha256:...). The digest is that of the
+# multi-architecture index, as returned in the Docker-Content-Digest header:
+#   curl -sI -H 'Accept: application/vnd.docker.distribution.manifest.list.v2+json' \
+#     https://<registry>/v2/<name>/manifests/<tag>
+
+# Container runtime smoke test image (Phase 2).
+safbox_image_pause:
+  name: registry.k8s.io/pause
+  tag: 3.10.2
+  digest: sha256:f548e0e8e3dc1896ca956272154dde3314e8cc4fde0a57577ee9fa1c63f5baf4
+
+# ---------------------------------------------------------------------------
+# Pins: downloaded tools
+# ---------------------------------------------------------------------------
+# Anything fetched by URL is pinned by version AND sha256 of the artifact;
+# tasks pass the checksum to get_url so a changed upstream file fails the
+# build instead of installing silently. Checksums are those published in the
+# vendor's metadata (CINC: https://omnitruck.cinc.sh/stable/<product>/metadata)
+# and were verified against a download.
+
+# CINC Auditor ships on the box as an assessment tool (the tools role). This
+# is the RHEL 10 family build. Hosts with unusual needs (for example a CPU
+# older than the x86-64-v3 level RHEL 10 builds assume) override the whole
+# entry in a local vars file; see docs/rebuild.md "Site overrides".
+safbox_tool_cinc_auditor:
+  version: 7.2.1
+  release: 1.el10
+  url: https://packages.cinc.sh/files/stable/cinc-auditor/7.2.1/el/10/cinc-auditor-7.2.1-1.el10.x86_64.rpm
+  sha256: cd83f06159efdb05686457644926cbe976e9023730ec90fe9f21fb1530e25f2d

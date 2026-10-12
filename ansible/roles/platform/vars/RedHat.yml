@@ -1,0 +1,22 @@
+---
+# RHEL 10 family (Rocky Linux 10, AlmaLinux 10) names.
+platform_packages:
+  - chrony
+  - sudo
+  - openssh-server
+  - firewalld
+  - qemu-guest-agent
+  - cloud-init
+  - python3-libselinux
+  - python3-firewall
+platform_services_enabled:
+  - sshd
+  - chronyd
+  - firewalld
+  - qemu-guest-agent
+  - cloud-init
+platform_firewalld_services:
+  - ssh
+platform_container_packages:
+  - podman
+  - containers-common

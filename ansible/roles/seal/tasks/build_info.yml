@@ -1,0 +1,53 @@
+---
+- name: Gather the installed package list
+  ansible.builtin.package_facts:
+    manager: auto
+
+- name: Read the FIPS state
+  ansible.builtin.slurp:
+    src: /proc/sys/crypto/fips_enabled
+  register: seal_fips_raw
+
+# Microarchitecture level the image was built for: named by the package
+# architecture when the vendor builds for a level (x86_64_v2), otherwise the
+# distribution baseline for a plain x86_64 build (vars/<os_family>.yml).
+# NEVRA: an absent or zero epoch is omitted, as rpm -q prints it.
+- name: Derive the build record fields
+  vars:
+    seal_glibc_arch: "{{ ansible_facts['packages'][seal_glibc_package] | map(attribute='arch') | first }}"
+    seal_level_named: >-
+      {{ seal_glibc_arch | regex_replace('^x86_64_v', 'x86-64-v')
+         if seal_glibc_arch is match('^x86_64_v[0-9]$') else '' }}
+    seal_level_baseline: >-
+      {{ seal_x86_64_baseline_level[ansible_facts['distribution_major_version']] | default('n/a')
+         if seal_glibc_arch == 'x86_64' else 'n/a' }}
+  ansible.builtin.set_fact:
+    seal_build_date: "{{ '%Y-%m-%dT%H:%M:%SZ' | strftime(ansible_facts['date_time']['epoch'] | int, utc=true) }}"
+    seal_package_arch: "{{ seal_glibc_arch }}"
+    seal_microarch_level: "{{ seal_level_named or seal_level_baseline }}"
+    seal_fips_enabled: "{{ seal_fips_raw.content | b64decode | trim }}"
+    seal_unpinned_nevras: >-
+      {%- set ns = namespace(nevras=[]) -%}
+      {%- for name in seal_unpinned_packages if name in ansible_facts['packages'] -%}
+      {%- for p in ansible_facts['packages'][name] -%}
+      {%- set epoch = (p.epoch ~ ':') if (p.epoch | int(0)) > 0 else '' -%}
+      {%- set ns.nevras = ns.nevras + [p.name ~ '-' ~ epoch ~ p.version ~ '-' ~ p.release ~ '.' ~ p.arch] -%}
+      {%- endfor -%}
+      {%- endfor -%}
+      {{ ns.nevras | join(' ') }}
+
+- name: Create the build record directory
+  ansible.builtin.file:
+    path: "{{ seal_build_info_path | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Write the build record
+  ansible.builtin.template:
+    src: build-info.j2
+    dest: "{{ seal_build_info_path }}"
+    owner: root
+    group: root
+    mode: '0644'

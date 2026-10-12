@@ -1,0 +1,52 @@
+---
+- name: Load OS family variables
+  tags: [always]
+  ansible.builtin.include_vars:
+    file: "{{ lookup('ansible.builtin.first_found', tools_vars_lookup) }}"
+  vars:
+    tools_vars_lookup:
+      files:
+        - "{{ ansible_facts['os_family'] }}.yml"
+      paths:
+        - "{{ role_path }}/vars"
+
+- name: CINC Auditor
+  when: safbox_tools_1 | default(true) | bool
+  tags: [safbox-tools-1]
+  block:
+    - name: Gather the installed package list
+      ansible.builtin.package_facts:
+        manager: auto
+
+    # Version and release both, so a site override to a different build of
+    # the same version is installed rather than skipped.
+    - name: Install the pinned CINC Auditor
+      when: >-
+        (ansible_facts['packages'][tools_cinc_auditor_package] | default([])
+         | selectattr('version', '==', safbox_tool_cinc_auditor.version)
+         | selectattr('release', '==', safbox_tool_cinc_auditor.release) | length) == 0
+      vars:
+        tools_cinc_download: "/var/tmp/{{ safbox_tool_cinc_auditor.url | basename }}"
+      block:
+        - name: Download the CINC Auditor package and verify its checksum
+          ansible.builtin.get_url:
+            url: "{{ safbox_tool_cinc_auditor.url }}"
+            dest: "{{ tools_cinc_download }}"
+            checksum: "sha256:{{ safbox_tool_cinc_auditor.sha256 }}"
+            owner: root
+            group: root
+            mode: '0600'
+
+        # CINC publishes its packages unsigned, so there is no signature to
+        # check. The integrity guarantee is the pinned sha256 verified by the
+        # download above; the GPG check is waived for that one verified file.
+        - name: Install the checksum-verified CINC Auditor package
+          ansible.builtin.package:
+            name: "{{ tools_cinc_download }}"
+            state: present
+            disable_gpg_check: true
+
+        - name: Remove the downloaded package
+          ansible.builtin.file:
+            path: "{{ tools_cinc_download }}"
+            state: absent

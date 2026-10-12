@@ -1,0 +1,39 @@
+---
+- name: Load OS family variables
+  tags: [always]
+  ansible.builtin.include_vars:
+    file: "{{ lookup('ansible.builtin.first_found', seal_vars_lookup) }}"
+  vars:
+    seal_vars_lookup:
+      files:
+        - "{{ ansible_facts['os_family'] }}.yml"
+      paths:
+        - "{{ role_path }}/vars"
+
+- name: Check the seal mode
+  tags: [always]
+  ansible.builtin.assert:
+    that:
+      - seal_mode in ['full', 'development']
+    fail_msg: "seal_mode must be full or development, not '{{ seal_mode }}'"
+    quiet: true
+
+# Seal groups are tagged but have no on/off switch: a partially sealed image
+# carries build identity, so the seal runs whole or not at all.
+- name: Record the build metadata before anything is scrubbed
+  ansible.builtin.import_tasks: build_info.yml
+  tags: [safbox-seal-1]
+
+- name: Remove instance identity and build residue
+  ansible.builtin.import_tasks: scrub.yml
+  tags: [safbox-seal-2]
+
+# Must stay last: after it the build user and its sudo rule do not exist,
+# so it is one privileged command that also verifies its own result. (The
+# running sshd keeps the deleted host keys in memory until it restarts, so
+# the absence of host keys alone does not end SSH access.) A development
+# seal stops before it.
+- name: Remove host keys and the build user, then verify the seal
+  ansible.builtin.import_tasks: finalize.yml
+  tags: [safbox-seal-3]
+  when: seal_mode == 'full'

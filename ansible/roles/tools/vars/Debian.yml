@@ -1,0 +1,4 @@
+---
+# Debian family. Present per ADR-0001 but untested; the pinned CINC Auditor
+# artifact is an RPM, so the Debian install method is Phase 3's.
+tools_cinc_auditor_package: cinc-auditor

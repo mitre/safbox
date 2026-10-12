@@ -1,0 +1,23 @@
+---
+# Debian family (Debian, Ubuntu) names. Present per ADR-0001 but untested
+# until the Ubuntu source lands.
+platform_packages:
+  - chrony
+  - sudo
+  - openssh-server
+  - firewalld
+  - qemu-guest-agent
+  - cloud-init
+platform_services_enabled:
+  - ssh
+  - chrony
+  - firewalld
+  - qemu-guest-agent
+  - cloud-init
+platform_firewalld_services:
+  - ssh
+platform_container_packages:
+  - podman
+  - golang-github-containers-common
+# AppArmor, not SELinux, on this family.
+platform_selinux_required: false

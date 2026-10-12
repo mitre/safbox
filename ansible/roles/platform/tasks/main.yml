@@ -1,0 +1,153 @@
+---
+- name: Load OS family variables
+  tags: [always]
+  ansible.builtin.include_vars:
+    file: "{{ lookup('ansible.builtin.first_found', platform_vars_lookup) }}"
+  vars:
+    platform_vars_lookup:
+      files:
+        - "{{ ansible_facts['os_family'] }}.yml"
+      paths:
+        - "{{ role_path }}/vars"
+
+# The kickstart installs and enables most of this already; on any other host
+# it is the contract the rest of the appliance relies on.
+- name: Base packages and services
+  when: safbox_platform_1 | default(true) | bool
+  tags: [safbox-platform-1]
+  block:
+    - name: Install the base packages
+      ansible.builtin.package:
+        name: "{{ platform_packages }}"
+        state: present
+
+    - name: Enable and start the base services
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        enabled: true
+        state: started
+      loop: "{{ platform_services_enabled }}"
+
+- name: SELinux enforcing
+  when:
+    - safbox_platform_2 | default(true) | bool
+    - platform_selinux_required | bool
+  tags: [safbox-platform-2]
+  block:
+    - name: Assert SELinux is enforcing now and at boot
+      ansible.builtin.assert:
+        that:
+          - ansible_facts['selinux']['status'] == 'enabled'
+          - ansible_facts['selinux']['mode'] == 'enforcing'
+          - ansible_facts['selinux']['config_mode'] == 'enforcing'
+        fail_msg: "SELinux must be enforcing; found {{ ansible_facts['selinux'] }}"
+        quiet: true
+
+- name: Firewall
+  when: safbox_platform_3 | default(true) | bool
+  tags: [safbox-platform-3]
+  block:
+    - name: Allow the base services through the firewall
+      ansible.posix.firewalld:
+        service: "{{ item }}"
+        permanent: true
+        immediate: true
+        state: enabled
+      loop: "{{ platform_firewalld_services }}"
+
+- name: Container runtime
+  when: safbox_platform_4 | default(true) | bool
+  tags: [safbox-platform-4]
+  block:
+    - name: Install podman from the distribution repositories
+      ansible.builtin.package:
+        name: "{{ platform_container_packages }}"
+        state: present
+
+    - name: Create the Quadlet unit directory
+      ansible.builtin.file:
+        path: "{{ platform_container_quadlet_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Create the registries drop-in directory
+      ansible.builtin.file:
+        path: /etc/containers/registries.conf.d
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Apply the registry policy
+      ansible.builtin.template:
+        src: registries-safbox.conf.j2
+        dest: /etc/containers/registries.conf.d/50-safbox.conf
+        owner: root
+        group: root
+        mode: '0644'
+
+- name: Smoke-test container
+  when: safbox_platform_5 | default(true) | bool
+  tags: [safbox-platform-5]
+  block:
+    - name: Pull the smoke test image so a clone can start it offline
+      containers.podman.podman_image:
+        name: "{{ platform_container_example_image }}"
+        state: present
+      when: platform_container_example_enabled | bool
+
+    - name: Install the smoke test Quadlet unit
+      ansible.builtin.template:
+        src: example.container.j2
+        dest: "{{ platform_container_quadlet_dir }}/{{ platform_container_example_name }}.container"
+        owner: root
+        group: root
+        mode: '0644'
+      notify: Reload systemd units
+      when: platform_container_example_enabled | bool
+
+    - name: Remove the smoke test Quadlet unit when it is not wanted
+      ansible.builtin.file:
+        path: "{{ platform_container_quadlet_dir }}/{{ platform_container_example_name }}.container"
+        state: absent
+      notify: Reload systemd units
+      when: not platform_container_example_enabled | bool
+
+    - name: Generate the Quadlet units now so the smoke test can start
+      ansible.builtin.meta: flush_handlers
+
+    # Quadlet-generated units carry their [Install] section through the
+    # generator; they are started, never enabled, with systemctl.
+    - name: Start the smoke test container
+      ansible.builtin.systemd_service:
+        name: "{{ platform_container_example_name }}.service"
+        state: started
+      when: platform_container_example_enabled | bool
+
+- name: Persistent journal
+  when: safbox_platform_6 | default(true) | bool
+  tags: [safbox-platform-6]
+  block:
+    - name: Create the journald drop-in directory
+      ansible.builtin.file:
+        path: /etc/systemd/journald.conf.d
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Keep the journal on disk
+      ansible.builtin.template:
+        src: journald-safbox.conf.j2
+        dest: /etc/systemd/journald.conf.d/10-safbox.conf
+        owner: root
+        group: root
+        mode: '0644'
+      notify: Restart journald
+
+    # Restart and flush now (handlers) so the journal is on disk before the
+    # build's validation checks for it.
+    - name: Apply the journal setting now
+      ansible.builtin.meta: flush_handlers

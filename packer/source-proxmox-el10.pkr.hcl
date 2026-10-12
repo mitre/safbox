@@ -12,13 +12,14 @@ source "proxmox-iso" "el10" {
   pool    = var.proxmox_pool
   vm_id   = var.vm_id
   vm_name = var.vm_name
-  # 'unsealed' is removed by the Phase 2 seal step. Until then the template
-  # still carries the build user, its key, and shared host identity, and is
-  # not distributable. (tags need datacenter user-tag-access permitting them.)
-  tags = "safbox;base;unsealed"
+  # A template built with seal = false (the development seal) still carries
+  # the build user, its key, and shared SSH host keys; it is tagged
+  # 'unsealed' and says so.
+  # (tags need the datacenter's user-tag-access to permit them.)
+  tags = var.seal ? "safbox;base" : "safbox;base;unsealed"
 
   template_name        = var.vm_name
-  template_description = "SAFBox base image, UNSEALED (Phase 1: build user and shared host identity present; not distributable). ISO ${var.iso_file} ${var.iso_checksum}. FIPS enabled at install. git ${var.git_revision}. Built ${timestamp()}."
+  template_description = "${var.seal ? "SAFBox base image, sealed." : "SAFBox base image, UNSEALED (build user and shared host identity present; not distributable)."} ISO ${var.iso_file} ${var.iso_checksum}. FIPS enabled at install. git ${var.git_revision}. Built ${timestamp()}."
 
   boot_iso {
     type         = "scsi"

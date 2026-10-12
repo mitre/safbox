@@ -1,6 +1,6 @@
-# Shared build: one provisioner chain for every source. Phase 1 only asserts
-# the installed state; the Ansible appliance layer, self-test, and seal arrive
-# in Phase 2 (ADR-0001 §Implementation Plan).
+# Shared build: one provisioner chain for every source. Assert the installed
+# state, run the appliance layer, check it from outside, then seal
+# (ADR-0001 §Decision: two-layer pipeline).
 
 packer {
   required_version = ">= 1.12.0"
@@ -33,6 +33,14 @@ locals {
     "<f10>"
   ]
   boot_command = var.boot_command != null ? var.boot_command : local.default_boot_command
+
+  ansible_dir = coalesce(var.ansible_dir, "${abspath(path.root)}/../ansible")
+  ansible_env = [
+    "ANSIBLE_CONFIG=${local.ansible_dir}/ansible.cfg",
+    "ANSIBLE_ROLES_PATH=${local.ansible_dir}/roles",
+    "ANSIBLE_FORCE_COLOR=0",
+  ]
+  ansible_extra = flatten([for v in var.ansible_extra_vars : ["-e", v]])
 }
 
 build {
@@ -40,8 +48,8 @@ build {
   sources = ["source.proxmox-iso.el10"]
 
   # Assert, do not configure: FIPS is on in kernel and userland, Secure Boot
-  # is enforced, the guest agent and cloud-init are present and enabled, no
-  # distribution default user was created, and we are on the expected OS.
+  # is enforced, the guest agent and cloud-init are present and enabled, and
+  # we are on the expected OS. Fails fast, before the appliance layer runs.
   provisioner "shell" {
     inline = [
       "set -eu",
@@ -51,7 +59,6 @@ build {
       "policy=$(update-crypto-policies --show); echo \"crypto-policy=$policy\"; test \"$policy\" = FIPS",
       "openssl list -providers | grep -qi fips",
       "sb=$(sudo -n mokutil --sb-state 2>&1 | head -1); echo \"secureboot: $sb\"; echo \"$sb\" | grep -q 'SecureBoot enabled'",
-
       ". /etc/os-release && echo \"os=$ID $VERSION_ID\" && test \"$PLATFORM_ID\" = platform:el10",
       "level=$(/lib64/ld-linux-x86-64.so.2 --help | grep -E 'x86-64-v[234] \\(supported' | head -1); echo \"microarch:$level\"; test -n \"$level\"",
       "systemctl is-enabled qemu-guest-agent cloud-init sshd",
@@ -59,26 +66,42 @@ build {
     ]
   }
 
-  # Remove the account the None datasource created on the build VM's own
-  # boot, then reset cloud-init and the machine identity so a clone of the
-  # template runs as a new instance. The Phase 2 seal role completes the
-  # scrub (build user, host keys, installer logs and kickstart copies,
-  # NetworkManager profile).
-  provisioner "shell" {
-    execute_command = "sudo -n sh -c '{{ .Vars }} {{ .Path }}'"
+  # Appliance layer (ADR-0001 two-layer pipeline): the same playbooks any
+  # operator can run against an existing host. Packer connects as the build
+  # user with the ephemeral key; group_vars load from the playbooks.
+  provisioner "ansible" {
+    playbook_file    = "${local.ansible_dir}/playbooks/safbox.yml"
+    galaxy_file      = "${local.ansible_dir}/requirements.yml"
+    user             = var.build_user
+    use_proxy        = false
+    ansible_env_vars = local.ansible_env
+    extra_arguments  = local.ansible_extra
+  }
+
+  # Outside-in check of the build VM before the seal: the inspec-safbox
+  # profile runs from this machine over SSH as the build user, and the SAF
+  # CLI gates the build on verify/threshold.yml. Nothing is installed or
+  # left on the image for it.
+  provisioner "shell-local" {
     inline = [
-      "set -eu",
-      "for u in almalinux rocky cloud-user; do if id \"$u\" >/dev/null 2>&1; then echo \"removing default user $u\"; userdel -r \"$u\"; fi; done",
-      "cloud-init clean --logs --machine-id",
+      "${abspath(path.root)}/../scripts/validate.sh '${build.User}@${build.Host}:${build.Port}' '${var.ssh_private_key_file}' build build_info_expected=false",
     ]
   }
 
-  # Assert the template carries no distribution default user.
-  provisioner "shell" {
-    inline = [
-      "set -eu",
-      "for u in almalinux rocky cloud-user; do ! id \"$u\" >/dev/null 2>&1 || { echo \"unexpected default user $u\"; exit 1; }; done",
-      "echo 'no default user present'",
-    ]
+  # Seal: record the build, scrub identity and residue, delete the build
+  # user, and verify its own post-conditions. Nothing may run over SSH
+  # afterwards; Packer stops the VM through the Proxmox API. With seal =
+  # false the development seal runs instead: identity and residue are
+  # scrubbed so clones boot as new instances, and the build user, host keys
+  # and logs stay for inspection.
+  provisioner "ansible" {
+    playbook_file    = "${local.ansible_dir}/playbooks/seal.yml"
+    user             = var.build_user
+    use_proxy        = false
+    ansible_env_vars = local.ansible_env
+    extra_arguments = concat([
+      "-e", "seal_git_commit=${var.git_revision}",
+      "-e", "seal_mode=${var.seal ? "full" : "development"}",
+    ], local.ansible_extra)
   }
 }

@@ -1,0 +1,29 @@
+---
+# yamllint configuration shared by ansible/ and verify/. Mirrors the rules
+# ansible-lint applies so the two tools never disagree.
+extends: default
+rules:
+  braces:
+    min-spaces-inside: 0
+    max-spaces-inside: 1
+  brackets:
+    min-spaces-inside: 0
+    max-spaces-inside: 0
+  colons:
+    max-spaces-before: 0
+    max-spaces-after: 1
+  comments:
+    min-spaces-from-content: 1
+  comments-indentation: false
+  document-start:
+    present: true
+  indentation:
+    spaces: 2
+    indent-sequences: true
+  line-length:
+    max: 120
+  octal-values:
+    forbid-implicit-octal: true
+    forbid-explicit-octal: true
+  truthy:
+    allowed-values: ['true', 'false']

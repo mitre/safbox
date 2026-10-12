@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# safbox-firstboot: run the first-boot hooks of a deployed SAFBox exactly once.
+#
+# Invoked by safbox-firstboot.service. Hooks are executables in
+# /etc/safbox/firstboot.d, run in lexical (byte-order) name order, as root,
+# with the secrets helper library available to source. A hook that fails
+# aborts the run; no completion marker is written, so the next boot retries.
+# Output goes to the journal under the identifier safbox-firstboot.
+set -euo pipefail
+export LC_ALL=C
+umask 077
+
+readonly SAFBOX_ETC_DIR="${SAFBOX_ETC_DIR:-/etc/safbox}"
+readonly SAFBOX_HOOK_DIR="${SAFBOX_HOOK_DIR:-${SAFBOX_ETC_DIR}/firstboot.d}"
+readonly SAFBOX_STATE_DIR="${SAFBOX_STATE_DIR:-/var/lib/safbox}"
+readonly SAFBOX_DONE_MARKER="${SAFBOX_DONE_MARKER:-${SAFBOX_STATE_DIR}/firstboot.done}"
+readonly SAFBOX_LIB_DIR="${SAFBOX_LIB_DIR:-/usr/local/lib/safbox}"
+export SAFBOX_ETC_DIR SAFBOX_HOOK_DIR SAFBOX_STATE_DIR SAFBOX_DONE_MARKER SAFBOX_LIB_DIR
+
+log() { printf 'safbox-firstboot: %s\n' "$*"; }
+die() { log "ERROR: $*" >&2; exit 1; }
+
+[[ $EUID -eq 0 ]] || die "must run as root"
+
+if [[ -e "$SAFBOX_DONE_MARKER" ]]; then
+  log "already completed at $(cat "$SAFBOX_DONE_MARKER"); nothing to do"
+  exit 0
+fi
+
+install -d -m 0700 -o root -g root "$SAFBOX_ETC_DIR" "$SAFBOX_HOOK_DIR" "$SAFBOX_STATE_DIR"
+
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=secrets.sh
+[[ -r "${SAFBOX_LIB_DIR}/secrets.sh" ]] && source "${SAFBOX_LIB_DIR}/secrets.sh"
+
+shopt -s nullglob
+hooks=("${SAFBOX_HOOK_DIR}"/*)
+shopt -u nullglob
+
+log "running ${#hooks[@]} hook(s) from ${SAFBOX_HOOK_DIR}"
+for hook in "${hooks[@]}"; do
+  name=$(basename "$hook")
+  if [[ ! -f "$hook" || ! -x "$hook" ]]; then
+    log "skipping ${name}: not an executable file"
+    continue
+  fi
+  log "running ${name}"
+  if ! "$hook"; then
+    die "hook ${name} failed; first boot will retry on the next boot"
+  fi
+  log "finished ${name}"
+done
+
+date -u +%Y-%m-%dT%H:%M:%SZ > "$SAFBOX_DONE_MARKER"
+chmod 0600 "$SAFBOX_DONE_MARKER"
+log "first boot complete; marker written to ${SAFBOX_DONE_MARKER}"

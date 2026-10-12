@@ -28,6 +28,15 @@ fi
 : "${PROXMOX_USERNAME:?set PROXMOX_USERNAME}"
 : "${PROXMOX_TOKEN:?set PROXMOX_TOKEN}"
 
+# Every run logs to .build/logs/, and last.log in the repository root always
+# points at the newest one: `tail -F last.log` follows builds across runs.
+mkdir -p "$ROOT/.build/logs"
+chmod 700 "$ROOT/.build" 2>/dev/null || true
+RUN_LOG="$ROOT/.build/logs/build-$(date -u +%Y%m%dT%H%M%SZ).log"
+ln -sfn "$RUN_LOG" "$ROOT/last.log"
+exec > >(tee -a "$RUN_LOG") 2>&1
+echo "build log: $RUN_LOG"
+
 KEYDIR="$ROOT/.build"
 mkdir -p "$KEYDIR"
 chmod 700 "$KEYDIR"
@@ -41,11 +50,25 @@ export PACKER_LOG=1
 export PACKER_LOG_PATH="$KEYDIR/packer-debug.log"
 rm -f "$PACKER_LOG_PATH"
 
+# Revision recorded in the template: the commit, marked -dirty when tracked
+# files are modified or untracked project files exist, so an image built from
+# uncommitted work is never mistaken for one built from that commit.
+REVISION=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)
+if [ -n "$(git -C "$ROOT" status --porcelain 2>/dev/null)" ]; then REVISION="$REVISION-dirty"; fi
+
+# The Ansible provisioner runs ansible-playbook on this machine.
+export PATH="$HOME/.local/bin:$PATH"
+command -v ansible-playbook >/dev/null || { echo "ansible-playbook not found; pipx install ansible" >&2; exit 1; }
+# The build validates the VM from this machine before sealing it.
+for tool in cinc-auditor saf; do
+  command -v "$tool" >/dev/null || { echo "$tool not found; the build validates the VM from this machine (see docs/rebuild.md)" >&2; exit 1; }
+done
+
 packer init packer/
 packer build \
   -var "ssh_public_key=$(cat "$KEY.pub")" \
   -var "ssh_private_key_file=$KEY" \
-  -var "git_revision=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)" \
+  -var "git_revision=$REVISION" \
   "$@" packer/
 rc=$?
 

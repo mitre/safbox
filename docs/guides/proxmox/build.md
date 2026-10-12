@@ -173,7 +173,7 @@ every variable from the tables above, plus:
 | `http_interface` | the workstation has several network interfaces |
 | `kickstart_url` | the VM's network cannot reach the workstation; host the rendered kickstart elsewhere |
 | `installer_ssh = true` | you want to SSH into a stuck installer while developing; `scripts/build.sh` refuses it unless `SAFBOX_DEV=1` |
-| `cpu_type` | `x86-64-v3` for Rocky 10; the default `x86-64-v2-AES` suits the AlmaLinux v2 lane and keeps clones migratable. Named models expose no hardware RNG, which is why the source attaches a virtio-rng device; `rng0` needs `VM.Config.HWType`, already in the role |
+| `cpu_type` | the default `x86-64-v3` needs a v3 node; on older hardware see the rebuild guide's "Site overrides". Named models expose no hardware RNG, which is why the source attaches a virtio-rng device (`rng0` needs `VM.Config.HWType`, already in the role) |
 | `disk_format = "qcow2"` | the disk storage is a directory, NFS, or CIFS storage |
 | `vlan_tag` | the build network is a tagged VLAN |
 | `http_bind_address` | the runner should offer the rendered kickstart on one address only |
@@ -197,11 +197,14 @@ template first (through the API with the same token, which the pool grant
 allows, or in the GUI). Full clones made from it are unaffected; linked
 clones block the deletion.
 
-**The Phase 1 template is not distributable.** It is tagged `unsealed` and
-says so in its description: the build user, its passwordless sudo and SSH
-key, shared SSH host keys, and the kickstart copies under `/root` are all
-still present until the Phase 2 seal step. Use it only to develop and test
-the appliance layer. The rendered kickstart is also served to the build VM
+**Only sealed templates are distributable.** The build seals by default:
+it deletes the build user, its key, and its sudo rule, removes shared SSH
+host keys, machine identity, and the installer's kickstart copies, and
+asserts its own result. A build with `seal = false` runs the development
+seal instead: machine identity, cloud-init state and installer residue are
+still scrubbed, but the build user, its key and sudo rule and the shared SSH
+host keys stay for inspection. Such a template is tagged `unsealed` and says
+so in its description; use it only to develop and test the appliance layer. The rendered kickstart is also served to the build VM
 over plain HTTP from the runner, so the build network segment is trusted;
 for release builds host it over HTTPS via `kickstart_url` or use the ISO
 route described in the rebuild guide.

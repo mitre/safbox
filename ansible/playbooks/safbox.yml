@@ -1,0 +1,24 @@
+---
+# SAFBox appliance layer entrypoint (ADR-0001 §Decision, appliance layer).
+# Turns any booted RHEL 10 family (or, untested, Debian family) host with
+# SSH and sudo into a SAFBox. Platform-agnostic by design: nothing here may
+# name a hypervisor or cloud; tests/platform-discipline.sh enforces it.
+#
+# The build runs this playbook, then checks the result from outside with the
+# inspec-safbox profile (verify/), then runs seal.yml. This playbook is
+# idempotent: a second run reports changed=0 (tests/ansible/idempotence.sh).
+#
+# group_vars are loaded explicitly so the pins apply regardless of which
+# inventory the caller supplies (the image builder generates its own).
+- name: Build the SAFBox appliance layer
+  hosts: all
+  become: true
+  gather_facts: true
+  vars_files:
+    - ../group_vars/all/main.yml
+  roles:
+    - role: platform
+    - role: base
+    - role: tools
+    # Later phases add service roles here (Heimdall, Vulcan, the proxy) and
+    # Phase 3 extends tools; hardening is the last role (ADR-0001 §Decision).

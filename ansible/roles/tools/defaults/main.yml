@@ -1,0 +1,6 @@
+---
+# tools role: the assessment and build tools a SAFBox ships (ADR-0001
+# Phase 3). CINC Auditor now; the SAF CLI, Ansible and Packer follow. Pins
+# live in group_vars/all/main.yml and are overridable per site. Task groups
+# are tagged safbox-tools-<n> and switched off by setting safbox_tools_<n>
+# to false.

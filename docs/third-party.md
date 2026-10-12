@@ -12,8 +12,8 @@ license, and this file records the ones that need an explicit note.
   restriction. SAFBox is free and open source, is not a Packer-as-a-service,
   and bundles unmodified Packer binaries so the appliance can build hardened
   images. Bundling is therefore within the grant as published at the time of
-  this build. The Ansible role that installs Packer (Phase 3) is planned to
-  be skippable with a variable so a downstream distributor can exclude it.
+  this build. Packer is installed by its own switchable group of the
+  `tools` role (Phase 3), so a downstream distributor can exclude it.
   Phase 1 images do not yet contain Packer. Re-check the license text if
   SAFBox is ever sold or offered as a hosted service.
 

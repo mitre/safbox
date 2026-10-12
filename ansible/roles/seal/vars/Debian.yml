@@ -1,0 +1,15 @@
+---
+# Debian family names. Present per ADR-0001 but untested until the Ubuntu
+# source lands.
+seal_package_cache_clean_argv: [apt-get, clean]
+seal_installer_residue_find:
+  paths: [/root]
+  patterns: ['autoinstall-user-data']
+seal_installer_residue_paths:
+  - /var/log/installer
+seal_network_profiles_find:
+  paths: [/etc/netplan]
+  patterns: ['00-installer-config*.yaml']
+seal_glibc_package: libc6
+# amd64 packages target the x86-64 baseline.
+seal_x86_64_baseline_level: {}

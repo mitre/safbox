@@ -1,0 +1,53 @@
+---
+# seal role: the last play of a build. Records what the image is, removes
+# every piece of per-instance identity and build-time residue so each clone
+# is unique, deletes the build user, and verifies its own result
+# (ADR-0001 §Decision: seal; Phase 2 acceptance).
+# After a full seal the build user does not exist; run nothing afterwards.
+
+# full: a release template. Every group runs, ending with the deletion of
+# the build user, host keys and logs and the check of the result.
+# development: records the build and scrubs instance identity and residue
+# (groups 1 and 2) so clones boot as new instances, but keeps the build user,
+# its key and sudo rule, the SSH host keys and the logs, so the template can
+# be inspected. Not distributable; Packer tags such templates 'unsealed'.
+seal_mode: full
+
+# Build user created by the install layer, and its sudo drop-in, named the
+# way the install layer names it: /etc/sudoers.d/90-<user>.
+seal_build_user: "{{ safbox_build_user }}"
+seal_build_user_sudoers: "/etc/sudoers.d/90-{{ seal_build_user }}"
+
+# cloud-init writes sudo rules for the users it creates here. In a template
+# it can only hold rules for the build VM's own boot; a clone writes its own.
+seal_cloud_init_sudoers: /etc/sudoers.d/90-cloud-init-users
+
+# Written before anything is scrubbed. Not a secret, and read by `safbox
+# status` for any user, so it lives outside the root-only /etc/safbox. The build
+# runner passes the commit it built from: -e seal_git_commit=$(git rev-parse HEAD)
+seal_git_commit: unknown
+seal_build_info_path: /usr/local/share/safbox/build-info
+
+# Packages the install layer installs without a version pin; their exact
+# builds go into the build record until the content manifest pins them.
+seal_unpinned_packages:
+  - cloud-init
+  - qemu-guest-agent
+
+# Per-install state owned by first boot. Removed so the clone runs first
+# boot fresh and no build-time secret can survive (none should exist).
+seal_firstboot_state:
+  - /var/lib/safbox/firstboot.done
+seal_env_file_dir: /etc/safbox
+seal_env_file_pattern: '*.env'
+
+# Files cloud-init wrote for the build VM's own instance that `cloud-init
+# clean` leaves behind: root's authorized_keys (the users' keys behind a
+# "please log in as" prefix). A clone writes its own.
+seal_cloud_init_instance_files:
+  - /root/.ssh/authorized_keys
+
+# Files root's own tools leave in its home during the build.
+seal_root_tool_residue:
+  - /root/.ansible
+  - /root/.cache

@@ -1,0 +1,27 @@
+---
+# base role: SAFBox's own tooling on the box. The run-once first-boot
+# framework owns every per-install secret (ADR-0001 §Decision: secrets are
+# generated on first boot, not at build); the `safbox` command and its
+# subcommand registry give operators one entry point. Task groups are tagged
+# safbox-base-<n> and switched off by setting safbox_base_<n> to
+# false (see group_vars/all/main.yml).
+
+base_firstboot_etc_dir: /etc/safbox
+base_firstboot_hook_dir: /etc/safbox/firstboot.d
+base_firstboot_state_dir: /var/lib/safbox
+base_firstboot_done_marker: /var/lib/safbox/firstboot.done
+base_lib_dir: /usr/local/lib/safbox
+base_firstboot_script: /usr/local/sbin/safbox-firstboot
+base_firstboot_unit: safbox-firstboot.service
+
+# Units that must wait for first boot to finish (the service pods of later
+# phases). Service roles append their unit names; each Quadlet unit should
+# also declare After=safbox-firstboot.service on its own side.
+base_firstboot_before_units: []
+
+base_cli_bin: /usr/local/bin/safbox
+base_cli_commands_dir: /usr/local/lib/safbox/commands
+# Subcommands this role ships (files/commands/<name>). Later roles register
+# their own by installing an executable into base_cli_commands_dir.
+base_cli_commands:
+  - status

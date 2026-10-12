@@ -1,0 +1,31 @@
+---
+# platform role: the operating-system contract every SAFBox host meets (time,
+# SSH, firewall, SELinux) and the container runtime its services run on
+# (ADR-0001 §Decision: services run as podman Quadlets). Task groups are
+# tagged safbox-platform-<n> and switched off by setting safbox_platform_<n>
+# to false (see group_vars/all/main.yml).
+
+# SELinux must be enforcing on the RHEL family; the kickstart sets it and
+# this role only asserts it. The vars file for a family without SELinux
+# turns the assertion off.
+platform_selinux_required: true
+
+# Where journald keeps the journal. persistent survives reboots; see
+# templates/journald-safbox.conf.j2 for why the default needs overriding.
+platform_journald_storage: persistent
+
+# Rootful Quadlet unit directory. Service roles drop *.container, *.pod and
+# *.volume files here; systemd generates the units at daemon-reload.
+platform_container_quadlet_dir: /etc/containers/systemd
+
+# Registry policy. Every image the appliance uses is fully qualified, so
+# unqualified short names are refused rather than searched.
+platform_container_unqualified_search_registries: []
+platform_container_short_name_mode: enforcing
+
+# Trivial Quadlet unit that proves a container starts on boot of a clone.
+# Follows the project switch in group_vars/all/main.yml.
+platform_container_example_enabled: "{{ safbox_example_quadlet_enabled }}"
+platform_container_example_name: safbox-example
+platform_container_example_image: "{{ safbox_image_pause.name }}@{{ safbox_image_pause.digest }}"
+platform_container_example_memory_max: 64M

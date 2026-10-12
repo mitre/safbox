@@ -1,0 +1,31 @@
+# {{ ansible_managed }}
+# Runs once on the first boot of a deployed SAFBox and never again: the done
+# marker satisfies the condition on every later boot. The seal role removes
+# the marker from the template so each clone starts fresh. A failed run
+# leaves no marker and is retried next boot.
+#
+# Ordered after cloud-config.service: by then cloud-init has applied the
+# instance's network, hostname, users and keys. Not after cloud-init.target
+# or cloud-final.service: those are ordered after multi-user.target, which
+# wants this unit, and systemd breaks that cycle by deleting this job.
+[Unit]
+Description=SAFBox first boot: per-install secrets and service enablement
+Documentation=file:{{ base_firstboot_script }}
+ConditionPathExists=!{{ base_firstboot_done_marker }}
+Wants=network-online.target
+After=network-online.target cloud-config.service
+{% if base_firstboot_before_units | length > 0 %}
+Before={{ base_firstboot_before_units | join(' ') }}
+{% endif %}
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart={{ base_firstboot_script }}
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=safbox-firstboot
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

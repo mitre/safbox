@@ -9,7 +9,8 @@ Proxmox VE 8 or 9 cluster and a workstation with Packer.
 - **Development base:** AlmaLinux 10 x86_64_v2, for build hosts whose CPUs
   predate AVX2. Same kickstart, same STIG content, same appliance layer; only
   the ISO changes. Images built from it are development artifacts, and the
-  self-test records which distribution an image came from.
+  build record and `safbox status` show which distribution an image came
+  from.
 - **Firmware:** UEFI (OVMF, q35) with Secure Boot keys pre-enrolled. RHEL 10
   deprecates legacy BIOS installation.
 - **FIPS:** enabled at installation (`fips=1` on the installer command line
@@ -33,26 +34,16 @@ this is decided in the install layer. The fixed portion is about 32 GiB;
 `/var` takes the rest because container images live there. Give the disk at
 least 40G.
 
-## Minimum build host
+## Build host
 
-The install layer has been exercised on very small hardware, and several
-defaults (boot wait, key interval, install timeout) are tuned for it. Treat
-the following as the floor for a build host, not a recommendation:
-
-| Resource | Development build | Release build |
-|---|---|---|
-| CPU microarchitecture | x86-64-v2 (AlmaLinux 10 v2 ISO) | x86-64-v3 with AVX2 (Rocky 10) |
-| vCPUs for the build VM | 2 | 4 |
-| RAM for the build VM | 4 GiB | 8 GiB |
-| Free thin-pool space | 40 GiB plus EFI vars | 60 GiB plus EFI vars |
-| Host RAM headroom beyond the VM | 1 GiB | 2 GiB |
-| ISO storage | 2 GiB (minimal ISO) | 12 GiB (DVD ISO) |
-
-On a low-end host, expect UEFI firmware with Secure Boot to take 20 seconds
-or more to reach GRUB, the package install to take 15 to 30 minutes, and the
-`%post` download of the guest agent and cloud-init to depend on the host's
-internet speed. Timeouts and waits are variables; raise them before
+A Proxmox node with an x86-64-v3 CPU (AVX2, roughly 2013 or newer), room for
+a 4 vCPU, 8 GiB, 60 GiB VM, and the DVD or minimal ISO on its ISO storage.
+Timeouts and waits are variables; raise them on a slow host before
 suspecting the pipeline.
+
+Older x86-64-v2 hardware can build from the AlmaLinux `x86_64_v2` ISO with a
+few site overrides (CPU model, and third-party packages built for v3); see
+"Site overrides" below.
 
 ## Hypervisor prerequisites
 
@@ -64,6 +55,11 @@ file. Other targets get their own guide alongside their Packer source.
 ## Workstation prerequisites
 
 - Packer 1.12 or newer; plugins are pinned and installed by `packer init`
+- Ansible on the workstation (`pipx install ansible`); the build runs the
+  appliance playbooks from here against the build VM, and installs the
+  pinned collections from `ansible/requirements.yml` itself
+- CINC Auditor and the SAF CLI on the workstation; the build validates the
+  VM from here, and the clone test uses them as the release gate
 - `pipx install pykickstart` for the kickstart lint
 - `pre-commit install` after cloning (gitleaks, shellcheck, packer fmt,
   kickstart lint). If you also use beads, `bd init` sets `core.hooksPath`
@@ -100,6 +96,23 @@ footprint is 4 vCPU, 8 GiB, 60G. If your workstation has several network
 interfaces, set `http_interface` to the one that faces Proxmox, because the
 VM fetches its kickstart from a temporary HTTP server on the workstation.
 
+## Site overrides
+
+The repository describes the normal case. Anything particular to your site
+goes in two git-ignored files:
+
+- `packer/local.auto.pkrvars.hcl` for Packer variables (node, pool, storage,
+  ISO, CPU model, resources).
+- `ansible/local.yml` for Ansible variables. Pass it to every playbook by
+  adding `"@<absolute path>/ansible/local.yml"` to `ansible_extra_vars` in
+  the Packer file, or `-e @ansible/local.yml` when running a playbook by
+  hand. Values there replace the project's defaults in
+  `ansible/group_vars/all/main.yml`.
+
+Example: on x86-64-v2 hardware, set `cpu_type = "x86-64-v2-AES"` in the
+Packer file, and in `ansible/local.yml` replace `safbox_tool_cinc_auditor`
+with CINC's el9 build (its el10 build requires x86-64-v3).
+
 ## Kickstart delivery and locked-down networks
 
 During the install the VM fetches its kickstart over plain HTTP. By default
@@ -135,11 +148,43 @@ tests/kickstart/ks-lint.sh       # render and lint the kickstart
 scripts/build.sh                 # mints an ephemeral build key, runs packer
 ```
 
-The build types a short GRUB edit at the ISO menu, serves the kickstart,
-waits through the install and reboot, confirms FIPS and the guest agent over
-SSH, resets cloud-init, and converts the VM to a template.
+Each run writes a timestamped log under `.build/logs/`, and `last.log` in the
+repository root points at the newest one, so `tail -F last.log` follows the
+current build (and the next one, without restarting `tail`).
 
-## Prove the template
+The build types a short GRUB edit at the ISO menu, serves the kickstart,
+waits through the install and reboot, confirms FIPS, Secure Boot, and the
+guest agent over SSH, runs the appliance playbook, validates the VM from this
+machine (`scripts/validate.sh`: CINC Auditor over SSH, then the SAF CLI
+threshold), seals the image (deletes the build user, scrubs host identity and
+installer residue, asserts the seal's own post-conditions), and converts the VM to a
+template. Set `seal = false` in your local vars for a development build: the
+development seal still records the build and scrubs machine identity,
+cloud-init state and installer residue, but keeps the build user, its key,
+the SSH host keys and the logs for inspection. Such a template is tagged
+`unsealed`.
+
+## How a build is validated
+
+Three checks, at three moments:
+
+1. **During the build**, before the seal, `scripts/validate.sh` runs the
+   `verify/inspec-safbox` profile from your workstation against the build
+   VM over SSH, and `saf validate threshold` against `verify/threshold.yml`
+   decides whether the build continues. Nothing is installed on the image for
+   this. Results land in `.build/validate-build-<timestamp>.json`, readable
+   in Heimdall.
+2. **At the end of the seal**, the seal's own final script asserts that the
+   build user, its sudo rule, host keys, machine identity, cloud-init
+   instance state, installer residue, first-boot secrets, and build-VM
+   network profiles are all gone. Nothing outside can log in afterwards, so
+   the seal checks itself; any miss fails the build.
+3. **Before publishing an image** (the release gate), a clone is booted and
+   the same profile runs against it from outside as the deploy user, which
+   also proves what only a first boot does: fresh host keys and machine
+   identity, the consumer's cloud-init user, first boot running once.
+
+## Prove the template (release gate)
 
 ```
 SAFBOX_NODE=<node> SAFBOX_POOL=<pool> scripts/clone-and-ssh.sh <template-vmid> <clone-vmid>
@@ -147,11 +192,29 @@ SAFBOX_NODE=<node> SAFBOX_POOL=<pool> scripts/clone-and-ssh.sh <template-vmid> <
 
 Clones the template through the API into the pool, injects a cloud-init
 user and an RSA key, boots it, learns the IP from the guest agent, logs in
-as that user, and asserts FIPS mode is on and cloud-init applied the clone's
-hostname. Set `SAFBOX_CA_FILE` to the cluster CA, or `SAFBOX_INSECURE_TLS=1`
-for a throwaway lab. Pass `--keep` as a third argument to leave the clone
-running. A Phase 1 template is unsealed and not distributable; see the
-Proxmox guide.
+as that user, asserts FIPS mode is on and cloud-init applied the clone's
+hostname, then runs `scripts/validate.sh` against the clone. Set
+`SAFBOX_CA_FILE` to the cluster CA, or `SAFBOX_INSECURE_TLS=1` for a
+throwaway lab. Pass `--keep` as a third argument to leave the clone running;
+set `SAFBOX_SKIP_VALIDATE=1` to stop after the SSH check. The clone is only
+ever destroyed if it carries this run's ID. A template built with
+`seal = false` is unsealed and not distributable; see the Proxmox guide.
+
+## Choosing what the appliance layer does
+
+Every task group in the `platform`, `base`, and `tools` roles is a block
+tagged `safbox-<role>-<n>` with a switch `safbox_<role>_<n>` (default on),
+in the style of Ansible Lockdown. The switches and a one-line description of
+each group are listed in `ansible/group_vars/all/main.yml`.
+
+- Turn a group off for every build by setting its switch to `false` in
+  `ansible/local.yml` (site overrides, git-ignored).
+- Run or skip groups for one invocation with `--tags` / `--skip-tags`, for
+  example against an existing host:
+  `ansible-playbook -i <host>, -u <user> ansible/playbooks/safbox.yml -e @ansible/local.yml --tags safbox-platform-3`
+- The `seal` role's groups are tagged (`safbox-seal-<n>`) but have no
+  switch: a partially sealed image carries build identity, so the seal runs
+  whole or not at all.
 
 ## Inspecting a stuck install
 

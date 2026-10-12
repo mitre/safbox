@@ -1,0 +1,26 @@
+---
+# RHEL 10 family.
+seal_package_cache_clean_argv: [dnf, clean, all]
+
+# Installer residue: the kickstart copies and the %post log carry the build
+# user's name and public key; the installer logs describe the build host.
+seal_installer_residue_find:
+  paths: [/root]
+  patterns: ['*ks*.cfg', 'ks-post.log']
+seal_installer_residue_paths:
+  - /var/log/anaconda
+
+# Network profiles bound to the build VM: the installer's and the ones
+# cloud-init wrote on the build boot. A clone gets its own from cloud-init,
+# or NetworkManager's automatic DHCP profile when no datasource configures one.
+seal_network_profiles_find:
+  paths: [/etc/NetworkManager/system-connections]
+  patterns: ['*.nmconnection']
+
+# Package architecture glibc reports -> microarchitecture level. A plain
+# x86_64 build is the distribution's baseline: RHEL 10 and its rebuilds
+# target x86-64-v3; vendors that build for v2 say so in the architecture
+# (AlmaLinux x86_64_v2).
+seal_glibc_package: glibc
+seal_x86_64_baseline_level:
+  "10": x86-64-v3

@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+# Summary: Show distribution, microarchitecture level, FIPS, first-boot and build state
+#
+# safbox status: what this appliance is and where it came from. Reads only
+# public system state plus the build record the seal step writes; exits 0 even
+# when a field is unavailable so it is safe for unprivileged users and for
+# the validation profile.
+set -euo pipefail
+export LC_ALL=C
+
+readonly BUILD_INFO="${SAFBOX_BUILD_INFO:-/usr/local/share/safbox/build-info}"
+readonly DONE_MARKER="${SAFBOX_DONE_MARKER:-/var/lib/safbox/firstboot.done}"
+readonly FIRSTBOOT_UNIT=safbox-firstboot.service
+readonly OS_RELEASE="${SAFBOX_OS_RELEASE:-/etc/os-release}"
+
+row() { printf '%-26s %s\n' "$1:" "$2"; }
+
+# Value of KEY in /etc/os-release without sourcing the file, quotes removed.
+os_release() {
+  [[ -r "$OS_RELEASE" ]] || return 0
+  sed -n "s/^$1=\"\{0,1\}\([^\"]*\)\"\{0,1\}\$/\1/p" "$OS_RELEASE" | head -n 1
+}
+
+distribution() {
+  local name version platform
+  name=$(os_release NAME)
+  [[ -n "$name" ]] || name=$(os_release ID)
+  version=$(os_release VERSION_ID)
+  platform=$(os_release PLATFORM_ID)
+  row "Distribution" "${name:-unknown} ${version}${platform:+ (${platform})}"
+}
+
+# Architecture of the installed packages: x86_64_v2 on the AlmaLinux v2
+# media, x86_64 on Rocky Linux, amd64 on the Debian family.
+package_arch() {
+  if command -v rpm >/dev/null 2>&1; then
+    rpm -q --qf '%{ARCH}' glibc 2>/dev/null || true
+  elif command -v dpkg >/dev/null 2>&1; then
+    dpkg --print-architecture 2>/dev/null || true
+  fi
+}
+
+# Microarchitecture level the image was built for. The seal step records it
+# in the build record; before seal it is derived from a package architecture
+# that names the level (x86_64_v2), otherwise it is not yet known.
+image_level() {
+  local level="" arch
+  arch=$(package_arch)
+  if [[ -r "$BUILD_INFO" ]]; then
+    level=$(sed -n 's/^SAFBOX_MICROARCH_LEVEL=//p' "$BUILD_INFO" | head -n 1)
+  fi
+  if [[ -z "$level" && "$arch" =~ ^x86_64_v([0-9])$ ]]; then
+    level="x86-64-v${BASH_REMATCH[1]}"
+  fi
+  row "Microarchitecture level" "${level:-not recorded (recorded when the image is sealed)}"
+  row "Package architecture" "${arch:-unknown}"
+}
+
+# Highest x86-64 microarchitecture level this CPU supports, as reported by
+# the dynamic loader's glibc-hwcaps listing. Other architectures report n/a.
+cpu_level() {
+  local loader level=""
+  for loader in /lib64/ld-linux-x86-64.so.2 /usr/lib64/ld-linux-x86-64.so.2; do
+    if [[ -x "$loader" ]]; then
+      level=$("$loader" --help 2>/dev/null | sed -n 's/^[[:space:]]*\(x86-64-v[0-9]\) (supported.*/\1/p' | head -n 1 || true)
+      break
+    fi
+  done
+  row "CPU supports up to" "${level:-n/a ($(uname -m))}"
+}
+
+fips_state() {
+  local state="unknown"
+  if [[ -r /proc/sys/crypto/fips_enabled ]]; then
+    case "$(cat /proc/sys/crypto/fips_enabled)" in
+      1) state="enabled" ;;
+      0) state="disabled" ;;
+    esac
+  fi
+  row "FIPS mode" "$state"
+}
+
+# The marker lives in the root-only state directory; other users read the
+# unit's own state instead. The unit is skipped by its condition once the
+# marker exists, and stays active after the boot it ran on.
+firstboot_state() {
+  local state active condition condition_time
+  if [[ -r "$DONE_MARKER" ]]; then
+    state="completed at $(cat "$DONE_MARKER")"
+  elif ! systemctl cat "$FIRSTBOOT_UNIT" >/dev/null 2>&1; then
+    state="unit not installed"
+  else
+    active=$(systemctl show -p ActiveState --value "$FIRSTBOOT_UNIT" 2>/dev/null || true)
+    condition=$(systemctl show -p ConditionResult --value "$FIRSTBOOT_UNIT" 2>/dev/null || true)
+    condition_time=$(systemctl show -p ConditionTimestamp --value "$FIRSTBOOT_UNIT" 2>/dev/null || true)
+    if [[ "$active" == failed ]]; then
+      state="failed; see journalctl -u ${FIRSTBOOT_UNIT}"
+    elif [[ "$active" == active ]]; then
+      state="completed on this boot"
+    elif [[ -n "$condition_time" && "$condition" == no ]]; then
+      state="completed on an earlier boot"
+    elif [[ "$active" == activating ]]; then
+      state="running"
+    else
+      state="pending (runs on next boot)"
+    fi
+  fi
+  row "First boot" "$state"
+}
+
+build_info() {
+  if [[ -r "$BUILD_INFO" ]]; then
+    local line key value
+    while IFS= read -r line; do
+      [[ -z "$line" || "$line" == \#* ]] && continue
+      key=${line%%=*}
+      value=${line#*=}
+      row "Build ${key#SAFBOX_}" "$value"
+    done < "$BUILD_INFO"
+  elif [[ -e "$BUILD_INFO" ]]; then
+    row "Build info" "not readable as this user (${BUILD_INFO})"
+  else
+    row "Build info" "absent (${BUILD_INFO}); image not sealed"
+  fi
+}
+
+distribution
+image_level
+cpu_level
+fips_state
+firstboot_state
+build_info

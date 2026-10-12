@@ -1,0 +1,5 @@
+---
+# openssl supplies `openssl rand` for first-boot secret generation.
+base_packages:
+  - openssl
+  - bash
