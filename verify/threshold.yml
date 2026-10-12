@@ -10,12 +10,14 @@
 #
 # passed.total.min is a floor on how many controls must actually pass, so a
 # run in which controls are silently skipped (an only_if gone wrong, a wrong
-# input) fails instead of passing on what little ran. It is the build scan's
-# count: controls for the build record and the finished first boot only
-# apply to a clone. Raise it when controls are added.
+# input) fails instead of passing on what little ran. It is what a build
+# with the repository defaults passes: controls for the build record and the
+# finished first boot only apply to a clone, and the smoke-test Quadlet
+# control only to builds that opt in (safbox_example_quadlet_enabled). Raise
+# it when controls are added.
 passed:
   total:
-    min: 17
+    min: 16
 failed:
   critical:
     max: 0
