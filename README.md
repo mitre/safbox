@@ -16,6 +16,13 @@ What's inside (v1 target):
 - A Rocky Linux 10 base, FIPS mode enabled from installation, hardened to the
   RHEL 10 STIG with every deviation documented
 
+**Encryption at rest.** SAFBox does not presently have a way to build disk
+encryption into the VM itself: a template that boots unattended would share
+its key with every copy. In most deployment contexts the STIG's data-at-rest
+requirement is inherited from the hypervisor or storage layer instead, and
+SAFBox's STIG overlay marks it Not Applicable on that basis. Make sure the
+storage that holds your SAFBox is encrypted.
+
 The design is recorded in [docs/adrs/0001-safbox-appliance-pipeline.md](docs/adrs/0001-safbox-appliance-pipeline.md).
 
 ## Two ways to use it

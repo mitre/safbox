@@ -1,5 +1,5 @@
-# Session handoff notes, local only
-HANDOFF.local.md
+# Local-only notes (session handoff, drafts to file upstream)
+*.local.md
 
 # Packer
 packer_cache/

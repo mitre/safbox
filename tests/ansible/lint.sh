@@ -42,4 +42,7 @@ tests/ansible/structure.sh
 echo "== validation profile"
 tests/verify/profile.sh
 
+echo "== RHEL 10 STIG overlay"
+tests/verify/overlay.sh
+
 echo "PASS: appliance layer lint"

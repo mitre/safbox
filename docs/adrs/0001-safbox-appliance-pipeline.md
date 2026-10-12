@@ -125,7 +125,7 @@ SSH, validate the result from outside, then seal the image.
    same profile runs against it from outside as the deploy user. This is a
    release step, not a per-build step.
 
-Scheduled self-scans of a deployed box against the hardening overlay are a
+Scheduled self-scans of a deployed box against the STIG overlay are a
 separate feature and do not use the build profile.
 
 **Role layout and task groups** (amended 2026-10-11): the appliance layer
@@ -172,10 +172,11 @@ Within the appliance layer:
   (for example the account lockout policy) are disabled through the Lockdown
   role's per-rule variables in a single `deviations.yml`, each entry carrying
   the STIG ID and a justification. The same deviations appear on the
-  validation side: the validation profile is an InSpec **overlay profile** that depends
-  on the MITRE SAF STIG baseline for the base OS, adds the SAFBox
-  infrastructure controls, and marks each deviated requirement Not Applicable
-  with the same justification, following the SAF overlay pattern. One list of
+  validation side: an InSpec **overlay profile** (`verify/rhel10-stig-overlay`)
+  depends on the MITRE SAF STIG baseline for the base OS and marks each
+  deviated requirement Not Applicable with the same justification, following
+  the SAF overlay pattern; the SAFBox infrastructure controls stay in their
+  own profile (`verify/inspec-safbox`). One list of
   deviations, consumed by both sides, so hardening and validation cannot
   drift apart. Hardening runs as the last play before validation and the seal.
   The goal is not a box hardened to the hilt by default: no two environments
@@ -443,8 +444,9 @@ credible FIPS path for regulated networks; small footprint.
 - Content manifest covering major OS STIG profiles and matching Ansible
   Lockdown playbooks.
 - First-boot secrets, self-signed TLS, landing page.
-- Outside-in InSpec validation from the build runner, as an overlay profile
-  over the base OS STIG baseline once hardening lands, with SAF CLI
+- Outside-in InSpec validation from the build runner: the infrastructure
+  profile every build, plus the STIG overlay over the base OS baseline once
+  hardening lands, with SAF CLI
   threshold gate; seal self-assertions; clone validation as the release
   gate.
 - STIG hardening of the appliance via the Ansible Lockdown role, with a
@@ -544,7 +546,8 @@ safbox/
   content/
     manifest.yml
   verify/
-    inspec-safbox/             overlay: infra controls + STIG baseline dependency
+    inspec-safbox/             SAFBox infrastructure controls (every build)
+    rhel10-stig-overlay/       STIG overlay over the pinned MITRE baseline, deviations N/A
     threshold.yml
   scripts/
     build.sh                   runs Packer; logs to .build/logs, last.log
@@ -687,9 +690,10 @@ hook generating `POSTGRES_PASSWORD`, `SECRET_KEY_BASE`, `CIPHER_PASSWORD`,
 
 #### Phase 7: STIG hardening with documented deviations (blocked by 3, 4)
 **Files:** role `hardening` wrapping the pinned Ansible Lockdown STIG role,
-`ansible/roles/hardening/vars/deviations.yml`, overlay profile
-`verify/inspec-safbox/` depending on the pinned MITRE STIG baseline,
-`threshold.yml` updated.
+`ansible/roles/hardening/vars/deviations.yml`, the STIG overlay profile
+`verify/rhel10-stig-overlay/` (created early for the encryption-at-rest
+deviation; depends on the pinned MITRE STIG baseline) wired into the build
+and release-gate validation, `threshold.yml` updated.
 **Acceptance criteria:**
 - [ ] Lockdown role and MITRE baseline for the base release pinned in the
       manifest at matching STIG releases.
@@ -729,7 +733,7 @@ walkthrough of both guides.
   conversion. GitHub-hosted Ubuntu runners expose KVM, so this can run in CI
   without self-hosted hardware.
 - Hardening the nginx proxy against its CIS benchmark with the SAF nginx
-  profile added to the overlay.
+  profile added as an overlay of its own, alongside the STIG overlay.
 - `site_config` role, driven by cloud-init user-data or a `safbox site`
   subcommand, covering package mirror, corporate proxy, DNS, NTP, routing,
   and CA bundles, so a deployed appliance can be adopted into the local
@@ -756,14 +760,34 @@ requirement is expected to pass, not to be deviated.
 When Ubuntu is added as the second base, its STIG availability and its FIPS
 story (Ubuntu Pro entitlement) are decided in that phase, under this ADR.
 
+### Decision: encryption at rest
+(Amended 2026-10-12.) SAFBox does not encrypt at the operating-system level,
+and in-image encryption is not planned. A distributable template cannot hold
+a per-deployment secret: any LUKS keyslot that lets the template boot
+unattended is shared by every copy. Data at rest is protected by the layer
+beneath the guest, the hypervisor datastore, storage array, or cloud volume
+service, which is the case the RHEL 10 STIG names in RHEL-10-000510
+(SV-280935): "If there is a documented and approved reason for not having
+data-at-rest encryption at the operating system level, such as encryption
+provided by a hypervisor or a disk storage array in a virtualized
+environment, this requirement is not applicable."
+
+The STIG overlay (`verify/rhel10-stig-overlay`) sets the baseline's
+`data_at_rest_exempt` input, so the control reports Not Applicable, and
+carries the justification as its caveat. SAFBox supplies the documented
+reason; approval rests with the deploying organization's authorizing
+official. This is a `deploy-time` deviation and joins `deviations.yml` when
+Phase 7 creates it.
+
 ### Verification Strategy
 - **Static:** `packer fmt -check`, `packer validate`, `ansible-lint`,
   `yamllint`, `gitleaks`, platform-discipline grep. Runs in GitHub Actions on
   every push; no hypervisor needed.
 - **Build:** `packer build` from a workstation against a Proxmox target for
   now; later from a self-hosted runner or the `qemu` lane.
-- **Image:** outside-in InSpec overlay profile (infrastructure controls plus
-  the base OS STIG baseline with deviations marked Not Applicable) run from
+- **Image:** outside-in InSpec profiles (the infrastructure controls, plus
+  from Phase 7 the STIG overlay over the base OS baseline with deviations
+  marked Not Applicable) run from
   the build runner before the seal, gated by the SAF CLI threshold, every
   build; seal self-assertions every build.
 - **Release:** a booted clone passes the same profile from outside before an
