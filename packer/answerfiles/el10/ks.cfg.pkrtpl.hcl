@@ -94,4 +94,11 @@ visudo -cf /etc/sudoers.d/90-${build_user}
 cat > /etc/cloud/cloud.cfg.d/90-safbox-datasource.cfg <<'EOC'
 datasource_list: [ ${datasource_list}, None ]
 EOC
+
+# No distribution default user, even when the None datasource applies
+# defaults on the build VM's own boot. Users come only from the deploy-time
+# datasource.
+cat > /etc/cloud/cloud.cfg.d/80-safbox-users.cfg <<'EOC'
+users: []
+EOC
 %end
