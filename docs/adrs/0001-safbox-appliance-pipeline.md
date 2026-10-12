@@ -102,7 +102,41 @@ Build SAFBox as a **two-layer pipeline with a hard seam between them**:
    and it is the part consumers are most likely to reuse on their own.
 
 A shared `build` block in Packer chains the two: run the Ansible playbook over
-SSH, run an in-guest self-test, then seal the image.
+SSH, validate the result from outside, then seal the image.
+
+**Validation stages** (amended 2026-10-11 after the Phase 2 build work):
+
+1. *Build-time gate.* Between the appliance playbook and the seal, Packer
+   runs the `verify/inspec-safbox` profile from the build runner against the
+   build VM over SSH with CINC Auditor, and `saf validate threshold` gates
+   the build. Nothing is installed or staged on the image for this.
+2. *Seal self-assertion.* After the seal nothing can log in to check the
+   template, so the seal's final privileged script asserts its own
+   post-conditions (no build user, sudo rule, host keys, initialised
+   machine-id, cloud-init instance state, installer residue, first-boot
+   secrets, or build-VM network profiles) and fails the build otherwise.
+   A development build runs the same seal in its development mode, which
+   scrubs identity and residue but stops before deleting the build user,
+   host keys and logs; the build record names the mode, and the release
+   gate requires `full`.
+3. *Release gate.* Some promises only exist on a deployed instance: fresh
+   host keys and machine-id, the consumer's cloud-init user, first boot
+   running once. Before an image is published, a clone is booted and the
+   same profile runs against it from outside as the deploy user. This is a
+   release step, not a per-build step.
+
+Scheduled self-scans of a deployed box against the hardening overlay are a
+separate feature and do not use the build profile.
+
+**Role layout and task groups** (amended 2026-10-11): the appliance layer
+has `platform` (OS contract and container runtime), `base` (first-boot
+framework and the `safbox` command), `tools` (CINC Auditor now; the SAF CLI,
+Ansible, and Packer in Phase 3), and `seal`; service roles and `hardening`
+follow in later phases. Every task group is a block tagged
+`safbox-<role>-<n>` and gated by a `safbox_<role>_<n>` switch (default on),
+in the style of Ansible Lockdown, so consumers can turn groups off or run
+them selectively. The seal is tagged but not switchable: it runs whole or
+not at all.
 
 Within the appliance layer:
 
@@ -125,11 +159,12 @@ Within the appliance layer:
   the same manifest format. The initial manifest is seeded from the SAF
   content library data in the `saf-site` repository, which already records the
   GitHub URL for each library entry.
-- **The appliance validates itself.** The final build step runs a small InSpec
-  profile, with CINC Auditor inside the image, asserting that the expected
-  tools, versions, units, ports, and content are present, and gates the build
-  with a SAF CLI threshold. The appliance's first job is to prove it works
-  using its own tools.
+- **The build validates the appliance with the SAF tools.** Before sealing,
+  the build runs a small InSpec profile from the build runner against the
+  build VM with CINC Auditor, asserting that the expected tools, versions,
+  units, ports, and content are present, and gates the build with a SAF CLI
+  threshold (see Validation stages). The same tools the appliance ships are
+  the ones that prove it works.
 - **The appliance is hardened against the DISA STIG for its base release,
   with documented deviations.** A `hardening` role applies the Ansible
   Lockdown STIG role for the base OS, pinned in the manifest like any other
@@ -137,12 +172,12 @@ Within the appliance layer:
   (for example the account lockout policy) are disabled through the Lockdown
   role's per-rule variables in a single `deviations.yml`, each entry carrying
   the STIG ID and a justification. The same deviations appear on the
-  validation side: the self-test is an InSpec **overlay profile** that depends
+  validation side: the validation profile is an InSpec **overlay profile** that depends
   on the MITRE SAF STIG baseline for the base OS, adds the SAFBox
   infrastructure controls, and marks each deviated requirement Not Applicable
   with the same justification, following the SAF overlay pattern. One list of
   deviations, consumed by both sides, so hardening and validation cannot
-  drift apart. Hardening runs as the last play before the self-test and seal.
+  drift apart. Hardening runs as the last play before validation and the seal.
   The goal is not a box hardened to the hilt by default: no two environments
   make the same risk decisions, so the shipped posture is a sensible,
   usable baseline and the real product is that every control is a documented
@@ -308,7 +343,8 @@ credible FIPS path for regulated networks; small footprint.
   with upstream releases.
 - Two package ecosystems (apt and dnf) must be carried in every role from the
   first Rocky commit onward.
-- The build runner needs Ansible installed locally for the remote provisioner.
+- The build runner needs Ansible for the remote provisioner, and CINC Auditor
+  and the SAF CLI for the outside-in validation that gates the seal.
 
 **Risks and mitigations**
 - *RHEL 10 content is young.* The Lockdown role is at its first release and
@@ -320,7 +356,7 @@ credible FIPS path for regulated networks; small footprint.
   AVX2-class CPUs and refuse to boot on older ones. Development hosts that
   lack it build the AlmaLinux 10 x86-64-v2 variant instead; release builds
   run on capable hardware. The two must not drift: the kickstart and
-  appliance layer are shared, and the self-test records which distribution
+  appliance layer are shared, and the build record and validation profile note which distribution
   and microarchitecture level an image was built from so a lab artifact is
   never mistaken for a release artifact.
 - *Constrained hosts cannot run the full appliance.* Expose `vm_cores`,
@@ -332,14 +368,15 @@ credible FIPS path for regulated networks; small footprint.
   products, and explicitly excludes free products from that restriction.
   SAFBox is free and open source and does not compete with a paid Packer, so
   bundling the unmodified binary is within the grant. Record this in
-  `docs/third-party.md`, keep Packer in its own role so it can be excluded by a
-  variable, and re-check if SAFBox is ever sold.
+  `docs/third-party.md`, keep Packer in its own switchable group of the
+  `tools` role so a distributor can exclude it, and re-check if SAFBox is
+  ever sold.
 - *Secrets and build identity leak into the image.* The seal role is
   mandatory and runs last. It deletes the build user's authorized key, its
   sudoers drop-in, and the account itself; removes SSH host keys,
   `machine-id`, the installer's kickstart copies and logs under `/root` and
   `/var/log/anaconda`, and the installer-created NetworkManager profile. The
-  self-test asserts all of that plus the absence of `/etc/safbox/*.env` in
+  seal asserts all of that plus the absence of `/etc/safbox/*.env` in
   the template. The build user authenticates only by an ephemeral per-build
   key minted outside the repository; there is no build password. Until the
   seal exists, templates are tagged `unsealed`, say so in their description,
@@ -400,15 +437,16 @@ credible FIPS path for regulated networks; small footprint.
   FIPS enabled at install, build to a Proxmox template in a dedicated
   resource pool. Rocky 10 for release, AlmaLinux 10 x86-64-v2 for
   development hosts without AVX2, selected by the ISO variable.
-- Ansible appliance layer with roles: `base`, `container_runtime`,
-  `cinc_auditor`, `saf_cli`, `ansible_tooling`, `packer_tool`, `content`,
-  `heimdall`, `vulcan`, `proxy`, `firstboot`, `safbox_cli`, `hardening`,
-  `seal`.
+- Ansible appliance layer with roles: `platform`, `base`, `tools`,
+  `content`, `heimdall`, `vulcan`, `proxy`, `hardening`, `seal`, with
+  tagged, switchable task groups.
 - Content manifest covering major OS STIG profiles and matching Ansible
   Lockdown playbooks.
 - First-boot secrets, self-signed TLS, landing page.
-- In-image InSpec self-test as an overlay profile over the base OS STIG
-  baseline, with SAF CLI threshold gate.
+- Outside-in InSpec validation from the build runner, as an overlay profile
+  over the base OS STIG baseline once hardening lands, with SAF CLI
+  threshold gate; seal self-assertions; clone validation as the release
+  gate.
 - STIG hardening of the appliance via the Ansible Lockdown role, with a
   single deviations file consumed by both hardening and validation.
 - A cloud-init clone booted from the template as the acceptance test.
@@ -448,7 +486,9 @@ credible FIPS path for regulated networks; small footprint.
   `verify/`, the appliance tests) may name a hypervisor or cloud. The install
   layer (`packer/`, its tests, `scripts/`) and the documentation necessarily
   do; new platforms are added there as new source files and answer files. A test greps the
-  appliance layer for this.
+  appliance layer for this. The one exemption is the
+  `qemu-guest-agent` package and unit name, which the guest-agent contract
+  requires the appliance layer to manage.
 - **Pinned inputs.** Tool versions in `ansible/group_vars/all/main.yml`,
   content in `content/manifest.yml`, container images by tag. No `latest`
   anywhere in a built image.
@@ -456,9 +496,11 @@ credible FIPS path for regulated networks; small footprint.
   `PKR_VAR_*` environment variables or the Proxmox env file, never on a
   command line. `gitleaks` runs as a pre-commit hook on each developer's
   clone and, once CI exists, on every push; the hook alone does not travel
-  with the repository. The seal role and self-test enforce the image side.
-- **Self-test is the gate.** `packer build` fails if the in-image InSpec
-  profile does not meet `verify/threshold.yml`.
+  with the repository. The seal's self-assertions and the validation profile enforce the image side.
+- **Validation is the gate.** `packer build` fails if the outside-in InSpec
+  run against the build VM does not meet `verify/threshold.yml`, or if the
+  seal's post-conditions are unmet. The threshold is evaluated by the SAF
+  CLI, never reimplemented.
 - **Two-audience docs.** Every user-facing feature lands with a line in the
   deploy guide and, if it changes the build, the rebuild guide.
 - **Security by design.** Services bind to the proxy, not to all interfaces,
@@ -469,12 +511,12 @@ credible FIPS path for regulated networks; small footprint.
 
 | Shared need | Used by | Built in |
 |---|---|---|
-| `packer/build.pkr.hcl` shared provisioner chain (Ansible, self-test, seal) and `variables.pkr.hcl` | every source, every phase | Phase 1 |
-| `ansible/playbooks/safbox.yml` entrypoint and `group_vars/all/main.yml` | all roles | Phase 2 |
-| `base` and `container_runtime` roles | all service roles | Phase 2 |
-| `firstboot` framework: `/etc/safbox/`, `safbox-firstboot.service`, drop-in hooks per service | heimdall, vulcan, proxy | Phase 2 |
-| `safbox_cli` skeleton with subcommand registration | content, services, status | Phase 2 |
-| `seal` role and `verify/` InSpec smoke profile plus threshold | every build | Phase 2 |
+| `packer/build.pkr.hcl` shared provisioner chain (Ansible, outside-in validation, seal) and `variables.pkr.hcl` | every source, every phase | Phase 1 |
+| `ansible/playbooks/safbox.yml` entrypoint and `group_vars/all/main.yml` (pins, group switches) | all roles | Phase 2 |
+| `platform` role (OS contract, podman, Quadlet) | all service roles | Phase 2 |
+| `base` role: first-boot framework (`/etc/safbox/`, `safbox-firstboot.service`, hooks) and the `safbox` command registry | heimdall, vulcan, proxy, content | Phase 2 |
+| `tools` role | Phases 2 and 3 | Phase 2 (CINC Auditor) |
+| `seal` role with self-assertions; `verify/` profile, threshold, `scripts/validate.sh` | every build and release | Phase 2 |
 | `content/manifest.yml` schema and loader | content role, `safbox content` | Phase 4 |
 
 ### Repository layout
@@ -492,8 +534,8 @@ safbox/
       (ubuntu/user-data, meta-data later; delivery is a variable, not a folder)
   ansible/
     playbooks/safbox.yml
-    playbooks/verify.yml
-    roles/<role>/{tasks,vars,templates,files,defaults}
+    playbooks/seal.yml
+    roles/<role>/{tasks,vars,templates,files,defaults}   platform, base, tools, seal, ...
     group_vars/all/main.yml
     requirements.yml           collections, pinned
   deploy/
@@ -504,6 +546,10 @@ safbox/
   verify/
     inspec-safbox/             overlay: infra controls + STIG baseline dependency
     threshold.yml
+  scripts/
+    build.sh                   runs Packer; logs to .build/logs, last.log
+    validate.sh                outside-in validation (CINC Auditor + saf)
+    clone-and-ssh.sh           clone smoke test and release gate
   ansible/roles/hardening/
     vars/deviations.yml        STIG IDs excluded, with justification
   docs/
@@ -532,7 +578,7 @@ safbox/
       variable. Verified on Alma in the lab; Rocky verified when a v3 host is
       available.
 - [ ] The template boots with `fips=1` on the kernel command line and
-      `/proc/sys/crypto/fips_enabled` reads 1; the self-test asserts this
+      `/proc/sys/crypto/fips_enabled` reads 1; the validation profile asserts this
       from Phase 2 onward.
 - [ ] A clone of the template boots, receives a cloud-init user and key, and
       is reachable over SSH.
@@ -547,9 +593,11 @@ safbox/
 followed by a scripted clone-and-ssh check.
 
 #### Phase 2: Appliance foundation (blocked by Phase 1)
-**Files:** `ansible/playbooks/safbox.yml`, `ansible/playbooks/verify.yml`,
-roles `base`, `container_runtime`, `firstboot`, `safbox_cli`, `seal`,
-`verify/inspec-safbox/`, `verify/threshold.yml`, `ansible/requirements.yml`.
+**Files:** `ansible/playbooks/safbox.yml`, `ansible/playbooks/seal.yml`,
+roles `platform`, `base`, `tools`, `seal`, `verify/inspec-safbox/`,
+`verify/threshold.yml`, `scripts/validate.sh`, `ansible/requirements.yml`.
+(Amended 2026-10-11: originally `base`, `container_runtime`, `firstboot`,
+`safbox_cli`, and an in-image `selftest` with `verify.yml`.)
 **Acceptance criteria:**
 - [ ] Playbook runs from the runner against the Packer VM via the `ansible`
       provisioner; second run reports zero changes.
@@ -562,29 +610,34 @@ roles `base`, `container_runtime`, `firstboot`, `safbox_cli`, `seal`,
       state, shell history, logs, `/root/*ks*.cfg`, `/var/log/anaconda`, and
       the installer's NetworkManager profile; drops the `unsealed` tag; a
       clone regenerates host keys and machine-id.
-- [ ] Self-test profile runs in-image under CINC Auditor and gates the build;
-      it asserts FIPS (kernel flag, crypto policy, OpenSSL provider), Secure
-      Boot, no build-user key or sudoers drop-in, no SSH host keys, no
-      kickstart copies, qemu-guest-agent's default RPC block list intact, and
-      records distribution and microarchitecture level.
+- [ ] The validation profile runs from the build runner against the build
+      VM before the seal and gates the build through `saf validate
+      threshold`; it asserts FIPS (kernel flag, crypto policy, OpenSSL
+      provider), Secure Boot, qemu-guest-agent's default RPC block list
+      intact, and records distribution and microarchitecture level. The
+      seal asserts its own post-conditions. A clone passes the same profile
+      as the deploy user.
 - [ ] `ansible-lint` and `yamllint` clean.
-**Verification:** `packer build`; `ansible-playbook playbooks/verify.yml`
-against the clone; `cinc-auditor exec verify/inspec-safbox` on the clone.
+**Verification:** `packer build`; `scripts/clone-and-ssh.sh` (runs
+`scripts/validate.sh` against the clone).
 
 #### Phase 3: Tooling roles (blocked by Phase 2)
-**Files:** roles `cinc_auditor`, `saf_cli`, `ansible_tooling`, `packer_tool`;
+**Files:** the `tools` role (one switchable group per tool: CINC Auditor
+already exists as `safbox-tools-1`; SAF CLI, Ansible, Packer added here);
 `group_vars/all/main.yml`; `docs/third-party.md` updated for Packer.
+(Amended 2026-10-11: originally four roles `cinc_auditor`, `saf_cli`,
+`ansible_tooling`, `packer_tool`.)
 **Acceptance criteria:**
 - [ ] `cinc-auditor`, `saf`, `ansible`, `packer` present at pinned versions;
       `safbox status` prints them.
 - [ ] Ansible collections required by Lockdown playbooks installed and pinned.
-- [ ] `packer_tool` role is skippable via a variable.
-- [ ] Each role has `vars/RedHat.yml` and `vars/Debian.yml`, the latter
-      untested but present.
+- [ ] The Packer group is switchable like every group (`safbox_tools_<n>`).
+- [ ] The role's `vars/RedHat.yml` and `vars/Debian.yml` cover every tool,
+      the latter untested but present.
 - [ ] Every installed tool is exercised once under FIPS enforcement (a
       trivial invocation that performs TLS or hashing) and the result is
       recorded; failures become tracked issues, not silent gaps.
-**Verification:** self-test profile extended with version checks.
+**Verification:** validation profile extended with version checks.
 
 #### Phase 4: Content manifest and updater (blocked by Phase 3)
 **Files:** `content/manifest.yml`, role `content`, `safbox content`
@@ -604,7 +657,7 @@ subcommands.
       offline with a clear message.
 - [ ] One profile executes against localhost with CINC Auditor and produces
       HDF the SAF CLI can summarize.
-**Verification:** self-test asserts manifest and checksums; smoke scan.
+**Verification:** validation profile asserts manifest and checksums; smoke scan.
 
 #### Phase 5: Heimdall (blocked by Phase 2)
 **Files:** role `heimdall` with Quadlet units for postgres and Heimdall, a
@@ -644,13 +697,13 @@ hook generating `POSTGRES_PASSWORD`, `SECRET_KEY_BASE`, `CIPHER_PASSWORD`,
       hardening role disables exactly those rules and the overlay marks
       exactly those controls Not Applicable with the same text. A check fails
       the build if the two sets differ.
-- [ ] Hardening runs after all other roles and before self-test and seal; the
+- [ ] Hardening runs after all other roles and before validation and the seal; the
       Packer SSH session survives it.
-- [ ] Self-test passes `threshold.yml` on a clean build; the remaining
+- [ ] Validation passes `threshold.yml` on a clean build; the remaining
       failures, if any, are listed and justified in the deploy guide.
 - [ ] Heimdall, Vulcan, podman, and the proxy still work on a hardened clone.
 **Verification:** `packer build`; overlay profile result summarized with
-`saf summary`; deviation-set consistency check in `verify.yml`.
+`saf summary`; deviation-set consistency check in `scripts/deviations-check.sh`.
 
 #### Phase 8: Proxy, landing page, and release gate (blocked by 5, 6, 7)
 **Files:** role `proxy` (nginx Quadlet, self-signed cert at first boot,
@@ -661,7 +714,7 @@ cloud-init user data, outputs), `docs/deploy.md`, `docs/rebuild.md`.
 - [ ] HTTPS landing page on 443 shows service status and links; Heimdall and
       Vulcan on their configured ports behind TLS.
 - [ ] Firewall allows only SSH and proxy ports.
-- [ ] Full build on the reference footprint passes the self-test; a reduced
+- [ ] Full build on the reference footprint passes validation; a reduced
       build on a constrained host passes with Vulcan disabled.
 - [ ] `terraform apply` in `deploy/terraform/proxmox/` deploys a SAFBox from
       the template with a cloud-init user and key and outputs its address;
@@ -709,16 +762,19 @@ story (Ubuntu Pro entitlement) are decided in that phase, under this ADR.
   every push; no hypervisor needed.
 - **Build:** `packer build` from a workstation against a Proxmox target for
   now; later from a self-hosted runner or the `qemu` lane.
-- **Image:** in-image InSpec overlay profile (infrastructure controls plus
-  the base OS STIG baseline with deviations marked Not Applicable), gated by
-  SAF CLI threshold, every build.
+- **Image:** outside-in InSpec overlay profile (infrastructure controls plus
+  the base OS STIG baseline with deviations marked Not Applicable) run from
+  the build runner before the seal, gated by the SAF CLI threshold, every
+  build; seal self-assertions every build.
+- **Release:** a booted clone passes the same profile from outside before an
+  image is published.
 - **Deployment:** clone the template via cloud-init; scripted checks for SSH,
   first-boot completion, service health, Heimdall upload, Vulcan registration.
 - **Edge cases:** second Ansible run is a no-op; clone of a clone still gets
   fresh secrets and host keys; offline `safbox content update` fails cleanly;
   reduced-footprint build with services disabled; template retains no
   secrets; Alma and Rocky builds from the same inputs differ only in
-  distribution branding, which the self-test reports.
+  distribution branding, which the build record reports.
 
 ### CI and runner strategy
 Static checks run on GitHub-hosted runners from day one. Image builds need a
