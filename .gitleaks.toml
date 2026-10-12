@@ -1,0 +1,34 @@
+# gitleaks configuration (ADR-0001 Quality Standards: no secrets in the
+# repository). Extends the default rules with Proxmox API token secrets: a
+# bare UUID has no recognisable prefix, and the generic rule only flags it
+# when its entropy happens to clear the threshold. These rules match on the
+# context instead. tests/secrets/gitleaks-rules.sh proves both.
+title = "SAFBox gitleaks configuration"
+
+[extend]
+useDefault = true
+
+# The Authorization header value: PVEAPIToken=<user>@<realm>!<token id>=<secret>.
+[[rules]]
+id = "proxmox-api-token-header"
+description = "Proxmox VE API token in an Authorization header value"
+regex = '''PVEAPIToken=[^=\s"']+=([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})'''
+secretGroup = 1
+keywords = ["pveapitoken"]
+
+[[rules.allowlists]]
+description = "All-zero placeholder used for validation"
+regexes = ['''^0{8}-0{4}-0{4}-0{4}-0{12}$''']
+
+# The token secret assigned to PROXMOX_TOKEN (shell, env files) or
+# proxmox_token (Packer variables).
+[[rules]]
+id = "proxmox-token-assignment"
+description = "Proxmox VE API token secret assigned to PROXMOX_TOKEN or proxmox_token"
+regex = '''(?i)\bproxmox_token\b["']?\s*[:=]\s*["']?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})'''
+secretGroup = 1
+keywords = ["proxmox_token"]
+
+[[rules.allowlists]]
+description = "All-zero placeholder used for validation"
+regexes = ['''^0{8}-0{4}-0{4}-0{4}-0{12}$''']

@@ -22,7 +22,7 @@ for f in "$PROFILE"/controls/*.rb; do
 done
 [ "$fails" -eq 0 ] || exit 1
 
-declared=$(grep -hcE "^control '" "$PROFILE"/controls/*.rb | paste -sd+ - | bc)
+declared=$(cat "$PROFILE"/controls/*.rb | grep -cE "^control '")
 loaded=$(cinc-auditor json "$PROFILE" --chef-license accept-silent 2>/dev/null \
   | "$RUBY" -rjson -e "puts JSON.parse(\$stdin.read)['controls'].length")
 if [ "$declared" != "$loaded" ]; then

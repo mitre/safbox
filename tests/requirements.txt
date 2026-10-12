@@ -1,0 +1,9 @@
+# Python tools the static suite needs, pinned to the versions the suite was
+# last verified with. CI installs these; a workstation may use pipx instead
+# (see docs/rebuild.md).
+ansible==14.5.0
+ansible-lint==26.9.0
+yamllint==1.38.0
+pykickstart==3.78
+pre-commit==4.6.0
+shellcheck-py==0.11.0.1

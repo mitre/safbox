@@ -1,0 +1,97 @@
+# Static suite (ADR-0001 Verification Strategy: Static; CI and runner
+# strategy): secret scanning and every check that needs no hypervisor, on
+# every push and pull request. No credentials: the suite never connects to a
+# hypervisor, and the Packer validate step supplies inert placeholders.
+#
+# Every input is pinned: actions by commit SHA, downloads by version and
+# sha256, Python tools in tests/requirements.txt, Packer plugins by the
+# required_plugins block in packer/build.pkr.hcl (packer init honours it).
+name: static
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: static-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GITLEAKS_VERSION: 8.30.1
+  GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+  # Packer CLI; satisfies required_version in packer/build.pkr.hcl.
+  PACKER_VERSION: 1.16.1
+  # Same release as the appliance's own pin (ansible/group_vars/all/main.yml),
+  # Ubuntu build for the runner.
+  CINC_AUDITOR_URL: https://packages.cinc.sh/files/stable/cinc-auditor/7.2.1/ubuntu/24.04/cinc-auditor_7.2.1-1_amd64.deb
+  CINC_AUDITOR_SHA256: 371108577ccb9499041a6d052c56f91175468fda4d60963c1fd0ece4b70c23d9
+
+jobs:
+  secrets:
+    name: secret scan
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install gitleaks
+        run: |
+          curl -fsSLo "$RUNNER_TEMP/gitleaks.tar.gz" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP" gitleaks
+          sudo install -m 0755 "$RUNNER_TEMP/gitleaks" /usr/local/bin/gitleaks
+
+      - name: Scan the full history
+        run: gitleaks git --no-banner --redact --config .gitleaks.toml --exit-code 1 .
+
+      - name: Prove the hypervisor API token rules
+        run: tests/secrets/gitleaks-rules.sh
+
+  static:
+    name: static checks
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: '3.13'
+
+      - name: Install Python tools
+        run: python -m pip install --disable-pip-version-check -r tests/requirements.txt
+
+      - uses: hashicorp/setup-packer@ce93c3c08a6c2ff2275bf4b54ff0d9a75f6c9789  # v3.4.0
+        with:
+          version: ${{ env.PACKER_VERSION }}
+
+      - name: Install CINC Auditor
+        run: |
+          curl -fsSLo "$RUNNER_TEMP/cinc-auditor.deb" "$CINC_AUDITOR_URL"
+          echo "${CINC_AUDITOR_SHA256}  $RUNNER_TEMP/cinc-auditor.deb" | sha256sum -c -
+          sudo apt-get install -y --no-install-recommends "$RUNNER_TEMP/cinc-auditor.deb"
+
+      - name: Install Ansible collections
+        run: ansible-galaxy collection install -r ansible/requirements.yml
+
+      - name: pre-commit hooks
+        run: pre-commit run --all-files --show-diff-on-failure
+
+      - name: Packer validate
+        run: tests/packer/validate.sh
+
+      - name: Kickstart lint
+        run: tests/kickstart/ks-lint.sh
+
+      - name: Ansible and validation profile lint
+        run: tests/ansible/lint.sh
+
+      - name: Platform discipline
+        run: tests/platform-discipline.sh

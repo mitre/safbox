@@ -1,5 +1,7 @@
 # SAFBox
 
+[![static](https://github.com/mitre/safbox/actions/workflows/static.yml/badge.svg)](https://github.com/mitre/safbox/actions/workflows/static.yml)
+
 SAF in a box: a pre-built virtual machine image carrying the MITRE Security
 Automation Framework toolchain and a curated library of validation profiles
 and hardening content, ready to deploy into a network as an assessment and
@@ -25,5 +27,8 @@ The design is recorded in [docs/adrs/0001-safbox-appliance-pipeline.md](docs/adr
 
 ## Status
 
-Phase 1 of 8: the install layer builds a FIPS-enabled RHEL 10 family template
-on Proxmox. The appliance layer follows.
+Phases 1 and 2 of 8: the install layer builds a FIPS-enabled RHEL 10 family
+template on Proxmox, and the appliance foundation (platform, first-boot
+framework, seal, outside-in validation) turns it into a sealed SAFBox base.
+Every push runs the static suite and secret scan in CI (see
+[docs/rebuild.md](docs/rebuild.md#continuous-integration)).

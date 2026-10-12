@@ -60,7 +60,8 @@ file. Other targets get their own guide alongside their Packer source.
   pinned collections from `ansible/requirements.yml` itself
 - CINC Auditor and the SAF CLI on the workstation; the build validates the
   VM from here, and the clone test uses them as the release gate
-- `pipx install pykickstart` for the kickstart lint
+- `pipx install pykickstart` for the kickstart lint. The versions the
+  static suite is verified with are pinned in `tests/requirements.txt`
 - `pre-commit install` after cloning (gitleaks, shellcheck, packer fmt,
   kickstart lint). If you also use beads, `bd init` sets `core.hooksPath`
   to `.beads/hooks` and `pre-commit install` refuses to run. Unset the
@@ -214,7 +215,29 @@ each group are listed in `ansible/group_vars/all/main.yml`.
   `ansible-playbook -i <host>, -u <user> ansible/playbooks/safbox.yml -e @ansible/local.yml --tags safbox-platform-3`
 - The `seal` role's groups are tagged (`safbox-seal-<n>`) but have no
   switch: a partially sealed image carries build identity, so the seal runs
-  whole or not at all.
+  whole. The one exception is the development seal (`seal = false`), which
+  stops before the final group and marks the template `unsealed`.
+
+## Continuous integration
+
+`.github/workflows/static.yml` runs on every push and pull request on
+GitHub-hosted runners. It needs no hypervisor and no credentials.
+
+- **secret scan:** gitleaks over the full history with `.gitleaks.toml`,
+  which adds rules for Proxmox API token secrets to the defaults, then
+  `tests/secrets/gitleaks-rules.sh`, which proves those rules catch a
+  generated fake token and pass the repository's placeholders.
+- **static checks:** `pre-commit run --all-files`, `tests/packer/validate.sh`,
+  `tests/kickstart/ks-lint.sh`, `tests/ansible/lint.sh` (including the
+  validation profile check, which needs CINC Auditor) and
+  `tests/platform-discipline.sh`.
+
+Every input is pinned: actions by commit SHA, gitleaks and CINC Auditor by
+version and sha256, the Packer CLI by version (its plugins by
+`packer/build.pkr.hcl`), the Python tools in `tests/requirements.txt`, and
+the pre-commit hooks by commit SHA. To run the same suite locally, install
+`tests/requirements.txt` into a virtual environment, or run the workflow
+under [act](https://github.com/nektos/act).
 
 ## Inspecting a stuck install
 
