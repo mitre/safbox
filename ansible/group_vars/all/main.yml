@@ -56,6 +56,9 @@ safbox_base_2: true  # the safbox command
 
 # tools
 safbox_tools_1: true      # CINC Auditor
+safbox_tools_2: true      # SAF CLI on the distribution's Node.js
+safbox_tools_3: true      # Ansible (ansible-core) and the Lockdown STIG collections
+safbox_tools_4: true      # HashiCorp Packer (BSL 1.1; distributors may switch it off, see docs/third-party.md)
 
 # ---------------------------------------------------------------------------
 # Pins: container images
@@ -91,3 +94,42 @@ safbox_tool_cinc_auditor:
   release: 1.el10
   url: https://packages.cinc.sh/files/stable/cinc-auditor/7.2.1/el/10/cinc-auditor-7.2.1-1.el10.x86_64.rpm
   sha256: cd83f06159efdb05686457644926cbe976e9023730ec90fe9f21fb1530e25f2d
+
+# The SAF CLI (tools group 2), installed from the npm registry and run by
+# the distribution's Node.js so its crypto is the system OpenSSL. Pinned at
+# the root dependency: this version is exact and npm resolves the SAF CLI's
+# own dependencies at build time (ADR-0001 Quality Standards).
+safbox_tool_saf_cli:
+  version: 1.7.0
+
+# ansible-core from the distribution (tools group 3), so it runs on the
+# system Python and OpenSSL. The version is the upstream ansible-core
+# version the distribution package carries; the build fails if the
+# distribution no longer offers it. The Lockdown RHEL10-STIG role needs
+# ansible-core 2.16.1 or newer.
+safbox_tool_ansible_core:
+  version: 2.16.16
+
+# Collections the Ansible Lockdown RHEL10-STIG role requires (its
+# collections/requirements.yml at tag 1.1.0: community.general,
+# community.crypto, ansible.posix), installed from Galaxy system-wide for the
+# on-box ansible-core. Each is the newest release whose requires_ansible
+# admits the ansible-core pinned above. Pinned at the root: the version is
+# exact and Galaxy resolves dependencies (none declares any today).
+safbox_tool_ansible_collections:
+  - name: ansible.posix
+    version: 2.2.2
+  - name: community.crypto
+    version: 2.26.9
+  - name: community.general
+    version: 11.4.9
+
+# HashiCorp Packer (tools group 4), the release zip for linux/amd64. The
+# checksum is the one in packer_<version>_SHA256SUMS, whose detached
+# signature verifies against HashiCorp's release key, and was verified
+# against a download. Packer is under the Business Source License 1.1; see
+# docs/third-party.md before redistributing an image with this group on.
+safbox_tool_packer:
+  version: 1.16.1
+  url: https://releases.hashicorp.com/packer/1.16.1/packer_1.16.1_linux_amd64.zip
+  sha256: af38a9e93e4ed1b9ca68206ae969c64c300c82a3dde46a780dfa629f0867f651

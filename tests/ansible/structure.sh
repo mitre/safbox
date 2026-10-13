@@ -34,6 +34,24 @@ for role in ["platform", "base", "tools"]:
             errors.append(f"group_vars: switch {switch} for {tag} is missing")
         if tag in seen: errors.append(f"{role}: tag {tag} used twice")
         seen.append(tag)
+# Every OS-family name a role defines for the RHEL family is defined for the
+# Debian family too (ADR-0001: Debian untested but present), so a Debian run
+# fails on a wrong value rather than an undefined variable.
+for vars_rh in sorted((root / "ansible/roles").glob("*/vars/RedHat.yml")):
+    vars_deb = vars_rh.with_name("Debian.yml")
+    rh_names = set(yaml.safe_load(vars_rh.read_text()) or {})
+    deb_names = set(yaml.safe_load(vars_deb.read_text()) or {}) if vars_deb.exists() else set()
+    for name in sorted(rh_names - deb_names):
+        errors.append(f"{vars_rh.parts[-3]}: {name} is in vars/RedHat.yml but not vars/Debian.yml")
+# Every tools group installs a tool the validation profile checks at its
+# pinned version (ADR-0001 Phase 3 verification), in a control named after
+# the group so a switched-off group maps to the control that skips.
+tools_controls = (root / "verify/inspec-safbox/controls/tools.rb")
+tools_controls = tools_controls.read_text() if tools_controls.exists() else ""
+for switch in sorted(k for k in gv if re.fullmatch(r"safbox_tools_\d+", k)):
+    n = switch.rsplit("_", 1)[1]
+    if f"control 'safbox-tools-{n}'" not in tools_controls:
+        errors.append(f"verify: no control safbox-tools-{n} checks the tool group {switch} installs")
 seal = yaml.safe_load((root / "ansible/roles/seal/tasks/main.yml").read_text())
 for t in seal:
     if t.get("name") == "Load OS family variables":
@@ -68,5 +86,5 @@ if 'seal_mode=${var.seal ? "full" : "development"}' not in hcl:
     errors.append("packer: the seal provisioner must pass seal_mode from var.seal")
 if errors:
     print("\n".join("FAIL: " + e for e in errors), file=sys.stderr); sys.exit(1)
-print("PASS: task groups are tagged and switched; variable loads are tagged always; seal modes gated")
+print("PASS: task groups are tagged and switched; variable loads are tagged always; Debian vars cover RedHat; tools groups have controls; seal modes gated")
 PY

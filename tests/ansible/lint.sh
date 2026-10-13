@@ -31,10 +31,13 @@ echo "== ansible-playbook --syntax-check"
 
 echo "== shellcheck"
 find ansible/roles -path '*/files/*' -type f -print0 | xargs -0 shellcheck --shell=bash --external-sources
-shellcheck tests/ansible/*.sh tests/platform-discipline.sh
+shellcheck tests/ansible/*.sh tests/fips/*.sh tests/platform-discipline.sh
 
 echo "== seal finalize template"
 tests/ansible/seal-static.sh
+
+echo "== pinned inputs"
+tests/ansible/pins.sh
 
 echo "== task-group structure"
 tests/ansible/structure.sh

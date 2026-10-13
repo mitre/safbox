@@ -1,4 +1,19 @@
 ---
-# Debian family. Present per ADR-0001 but untested; the pinned CINC Auditor
-# artifact is an RPM, so the Debian install method is Phase 3's.
+# Debian family. Present per ADR-0001 but untested: the pinned CINC Auditor
+# artifact is an RPM, and the distribution's ansible-core and Node.js
+# versions differ from the RHEL family's, so a Debian site overrides the
+# CINC Auditor and ansible-core pins in its local vars file.
 tools_cinc_auditor_package: cinc-auditor
+
+# Node.js from the distribution, linked against the system OpenSSL; npm is
+# packaged separately.
+tools_saf_cli_packages:
+  - nodejs
+  - npm
+
+# apt package spec for the pinned upstream ansible-core version; the
+# trailing glob matches the distribution's revision suffix.
+tools_ansible_core_package: "ansible-core={{ safbox_tool_ansible_core.version }}*"
+
+tools_packer_packages:
+  - unzip

@@ -217,6 +217,49 @@ each group are listed in `ansible/group_vars/all/main.yml`.
   switch: a partially sealed image carries build identity, so the seal runs
   whole. The one exception is the development seal (`seal = false`), which
   stops before the final group and marks the template `unsealed`.
+- Each `tools` group (CINC Auditor, SAF CLI, Ansible with the Lockdown
+  collections, Packer) has a validation control `safbox-tools-<n>`. The
+  profile's `expected_tools` input lists the tools the image ships (default
+  `cinc-auditor`, `saf-cli`, `ansible`, `packer`); a tool expected but
+  missing fails its control. When you switch a tools group off, also drop
+  its tool from that input so its control skips, for example
+  `scripts/validate.sh <target> <key> <label> 'expected_tools=["cinc-auditor","saf-cli","ansible"]'`
+  (and `SAFBOX_EXPECTED_TOOLS` for the FIPS exercise). A skipped control
+  does not pass, so lower `passed.total.min` in `verify/threshold.yml` by
+  one for each tools group you switch off. A distributor who does not want
+  to ship Packer's Business Source License sets `safbox_tools_4: false`; see
+  `docs/third-party.md`. The Packer build's own validation step passes no
+  such input today, so a build with a tools group off fails that step.
+
+## Tools on the box
+
+The `tools` role installs each tool at the version pinned in
+`ansible/group_vars/all/main.yml`; `safbox status` on the box prints them.
+To change a pin, update the version there (and, for a downloaded
+artifact, its sha256), and
+the matching expected-version input default in
+`verify/inspec-safbox/inspec.yml` (`tests/ansible/pins.sh` fails while
+they differ). A site that overrides a pin in `ansible/local.yml` passes
+the matching input to `scripts/validate.sh`, for example
+`packer_version=<version>`. CINC Auditor's control compares the version
+only, so a different build of the same version (the el9 release on
+x86-64-v2 hardware) needs no input. The SAF CLI (from npm) and the
+Ansible collections (from Galaxy) are pinned at the root: their versions
+are exact, and the package manager resolves their dependencies when the
+image is built, so two builds from the same tag can carry different
+releases of those dependencies.
+
+FIPS is not a toggle, so every tool must work under FIPS enforcement. After
+changing a tool, run the exercise against a FIPS-mode build VM or clone:
+
+```
+tests/fips/exercise-tools.sh <user>@<host> <private-key>
+```
+
+It runs each tool once doing TLS or SHA-256 hashing and prints PASS, FAIL
+or SKIP per tool, plus a WARN where a tool's crypto does not go through the
+system OpenSSL FIPS provider (CINC Auditor's embedded OpenSSL, Packer's Go
+crypto). A FAIL is a tool that cannot ship on a FIPS image as it stands.
 
 ## Continuous integration
 

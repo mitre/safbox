@@ -32,5 +32,11 @@ control 'safbox-cli-1' do
     its('stdout') { should match(/^Microarchitecture level:\s+\S/) }
     its('stdout') { should match(/^FIPS mode:\s+enabled/) }
     its('stdout') { should match(/^First boot:/) }
+    # One row per tool group, with the version or 'not installed'; the
+    # versions themselves are checked by the safbox-tools-<n> controls.
+    its('stdout') { should match(/^CINC Auditor:\s+\S/) }
+    its('stdout') { should match(/^SAF CLI:\s+\S/) }
+    its('stdout') { should match(/^Ansible core:\s+\S/) }
+    its('stdout') { should match(/^Packer:\s+\S/) }
   end
 end

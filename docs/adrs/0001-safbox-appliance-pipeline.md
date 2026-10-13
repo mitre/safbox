@@ -199,7 +199,9 @@ Within the appliance layer:
   follow their Packer sources in later phases. Terraform is not used to build
   the image (see Alternative J).
 - **Tool versions are pinned** in one variables file. Distributable images
-  must be reproducible from a tag.
+  must be reproducible from a tag at the level of what is pinned: the same
+  tag installs the same tool versions, while a package manager may resolve
+  different releases of those tools' own dependencies (see Pinned inputs).
 
 Why this shape rather than a single Proxmox-centric template: the install
 layer is the part that changes per target and is small. The appliance layer is
@@ -493,7 +495,17 @@ credible FIPS path for regulated networks; small footprint.
   requires the appliance layer to manage.
 - **Pinned inputs.** Tool versions in `ansible/group_vars/all/main.yml`,
   content in `content/manifest.yml`, container images by tag. No `latest`
-  anywhere in a built image.
+  anywhere in a built image. A downloaded artifact is pinned by exact
+  version and sha256. A package installed through a language package
+  manager (the SAF CLI from npm, the Ansible collections from Galaxy) is
+  pinned at its root: the package's own
+  version is exact, and the package manager resolves its dependencies at
+  build time within the ranges the package declares. SAFBox carries no
+  lockfile for a tool's dependency tree.
+  (Amended 2026-10-12 by the owner: root-dependency pinning replaces a
+  committed lockfile for the SAF CLI. A full-tree lockfile's extra
+  guarantee did not justify regenerating it, checking it against the pin,
+  and the idempotence machinery `npm ci` needs.)
 - **No secrets in the repository or the image.** Build credentials arrive via
   `PKR_VAR_*` environment variables or the Proxmox env file, never on a
   command line. `gitleaks` runs as a pre-commit hook on each developer's

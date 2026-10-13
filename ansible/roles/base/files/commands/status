@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Summary: Show distribution, microarchitecture level, FIPS, first-boot and build state
+# Summary: Show distribution, microarchitecture level, FIPS, first-boot, tool versions and build state
 #
 # safbox status: what this appliance is and where it came from. Reads only
 # public system state plus the build record the seal step writes; exits 0 even
@@ -12,6 +12,10 @@ readonly BUILD_INFO="${SAFBOX_BUILD_INFO:-/usr/local/share/safbox/build-info}"
 readonly DONE_MARKER="${SAFBOX_DONE_MARKER:-/var/lib/safbox/firstboot.done}"
 readonly FIRSTBOOT_UNIT=safbox-firstboot.service
 readonly OS_RELEASE="${SAFBOX_OS_RELEASE:-/etc/os-release}"
+# Where the tools role installs each tool (ansible/roles/tools/defaults).
+readonly CINC_MANIFEST="${SAFBOX_CINC_MANIFEST:-/opt/cinc-auditor/version-manifest.txt}"
+readonly SAF_CLI_PACKAGE="${SAFBOX_SAF_CLI_PACKAGE:-/usr/local/lib/node_modules/@mitre/saf/package.json}"
+readonly PACKER_BIN="${SAFBOX_PACKER_BIN:-/usr/local/bin/packer}"
 
 row() { printf '%-26s %s\n' "$1:" "$2"; }
 
@@ -108,6 +112,46 @@ firstboot_state() {
   row "First boot" "$state"
 }
 
+# Installed version of each tool the tools role ships, or "not installed"
+# when its group was switched off. Read from each tool's install metadata or
+# a fast version command; CINC Auditor's Ruby and the SAF CLI take seconds
+# to start, so neither is run. The validation profile runs each tool.
+tool_versions() {
+  local version
+  version=""
+  if [[ -r "$CINC_MANIFEST" ]]; then
+    version=$(sed -n '1s/^cinc-auditor //p' "$CINC_MANIFEST")
+  fi
+  row "CINC Auditor" "${version:-not installed}"
+
+  version=""
+  if [[ -r "$SAF_CLI_PACKAGE" ]] && command -v node >/dev/null 2>&1; then
+    version=$(node -p 'require(process.argv[1]).version' "$SAF_CLI_PACKAGE" 2>/dev/null || true)
+    if [[ -n "$version" ]]; then version="$version (Node.js $(node --version 2>/dev/null))"; fi
+  fi
+  row "SAF CLI" "${version:-not installed}"
+
+  # `ansible --version` fails for a user without a writable home (it creates
+  # ~/.ansible/tmp), so ask ansible-core's own interpreter for the release.
+  version=""
+  local ansible_bin python python_argv
+  if ansible_bin=$(command -v ansible 2>/dev/null); then
+    python=$(sed -n '1s/^#![[:space:]]*//p' "$ansible_bin")
+    if [[ -n "$python" ]]; then
+      # The shebang may carry interpreter flags (#!/usr/bin/python3 -sP).
+      read -r -a python_argv <<<"$python"
+      version=$("${python_argv[@]}" -c 'from ansible.release import __version__; print(__version__)' 2>/dev/null || true)
+    fi
+  fi
+  row "Ansible core" "${version:-not installed}"
+
+  version=""
+  if [[ -x "$PACKER_BIN" ]]; then
+    version=$(CHECKPOINT_DISABLE=1 "$PACKER_BIN" version 2>/dev/null | sed -n '1s/^Packer v//p' || true)
+  fi
+  row "Packer" "${version:-not installed}"
+}
+
 build_info() {
   if [[ -r "$BUILD_INFO" ]]; then
     local line key value
@@ -129,4 +173,5 @@ image_level
 cpu_level
 fips_state
 firstboot_state
+tool_versions
 build_info

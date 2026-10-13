@@ -7,13 +7,14 @@ copyright_email: saf@mitre.org
 license: Apache-2.0
 summary: >-
   Asserts that a SAFBox image or clone carries the appliance foundation
-  (ADR-0001 Phase 2): FIPS mode, Secure Boot, the expected OS family,
-  enabled units, the guest agent's RPC filter, podman and Quadlet, the
-  safbox CLI, the first-boot framework, no distribution default user and,
-  once sealed, the build record and the absence of build residue. Runs from
+  (ADR-0001 Phases 2 and 3): FIPS mode, Secure Boot, the expected OS
+  family, enabled units, the guest agent's RPC filter, podman and Quadlet,
+  the safbox CLI, the first-boot framework, the pinned tools (CINC Auditor,
+  SAF CLI, Ansible and the Lockdown collections, Packer), no distribution
+  default user and, once sealed, the build record and the absence of build residue. Runs from
   the build runner over SSH; the sealed template's own invariants are
   asserted by the seal step itself.
-version: 0.3.0
+version: 0.4.0
 inspec_version: ">= 5.0"
 supports:
   - platform-family: redhat
@@ -88,3 +89,46 @@ inputs:
       - guest-file-write
       - guest-file-seek
       - guest-file-flush
+  - name: expected_tools
+    description: >-
+      Tools the image ships, one per tools task group: cinc-auditor
+      (safbox_tools_1), saf-cli (2), ansible (3), packer (4). A site that
+      switches a tools group off removes its tool here, and that tool's
+      control skips; an expected tool that is missing fails. On the command
+      line pass a JSON array, e.g.
+      'expected_tools=["cinc-auditor","saf-cli","ansible"]'
+    type: Array
+    value:
+      - cinc-auditor
+      - saf-cli
+      - ansible
+      - packer
+  # Expected tool versions. Each default equals its pin in
+  # ansible/group_vars/all/main.yml (tests/ansible/pins.sh fails on drift);
+  # a site that overrides a pin passes the matching input.
+  - name: cinc_auditor_version
+    description: CINC Auditor version (safbox_tool_cinc_auditor.version). The release is not compared.
+    type: String
+    value: 7.2.1
+  - name: saf_cli_version
+    description: SAF CLI version (safbox_tool_saf_cli.version).
+    type: String
+    value: 1.7.0
+  - name: ansible_core_version
+    description: ansible-core version (safbox_tool_ansible_core.version).
+    type: String
+    value: 2.16.16
+  - name: ansible_collections
+    description: >-
+      Collections the Lockdown RHEL10-STIG role needs, name to version
+      (safbox_tool_ansible_collections), installed in
+      /usr/share/ansible/collections.
+    type: Hash
+    value:
+      ansible.posix: 2.2.2
+      community.crypto: 2.26.9
+      community.general: 11.4.9
+  - name: packer_version
+    description: HashiCorp Packer version (safbox_tool_packer.version).
+    type: String
+    value: 1.16.1

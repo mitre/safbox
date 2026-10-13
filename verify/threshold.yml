@@ -14,10 +14,14 @@
 # with the repository defaults passes: controls for the build record and the
 # finished first boot only apply to a clone, and the smoke-test Quadlet
 # control only to builds that opt in (safbox_example_quadlet_enabled). Raise
-# it when controls are added.
+# it when controls are added. The four tools controls (safbox-tools-1..4,
+# one per tools group) count because every tools group is on by default and
+# the expected_tools input lists all four. A build that switches a tools
+# group off drops its tool from expected_tools, so that control skips, and
+# must lower this floor by one to match (19 with Packer off).
 passed:
   total:
-    min: 16
+    min: 20
 failed:
   critical:
     max: 0
