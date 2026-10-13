@@ -14,8 +14,6 @@ platform_services_enabled:
   - firewalld
   - qemu-guest-agent
   - cloud-init
-platform_firewalld_services:
-  - ssh
 platform_container_packages:
   - podman
   - golang-github-containers-common

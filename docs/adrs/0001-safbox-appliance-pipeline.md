@@ -484,8 +484,11 @@ credible FIPS path for regulated networks; small footprint.
   rebuilding upstream containers.
 - **Idempotent, linted Ansible.** Every role passes `ansible-lint` and
   `yamllint`. A second run of the playbook against a built box reports zero
-  changed tasks. Package names and paths come from `vars/<os_family>.yml`; no
-  bare `apt` or `dnf` module calls in task files.
+  changed tasks. Package names and paths come from role vars: a name common
+  to every OS family lives once in `vars/main.yml`, and `vars/<os_family>.yml`
+  holds only what that family changes. No bare `apt` or `dnf` module calls
+  in task files. (Amended 2026-10-12: OS family files previously repeated
+  the common names.)
 - **Platform discipline.** Nothing in the appliance layer (`ansible/`,
   `verify/`, the appliance tests) may name a hypervisor or cloud. The install
   layer (`packer/`, its tests, `scripts/`) and the documentation necessarily

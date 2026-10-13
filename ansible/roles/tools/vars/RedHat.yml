@@ -1,5 +1,5 @@
 ---
-tools_cinc_auditor_package: cinc-auditor
+# RHEL 10 family names.
 
 # The distribution's Node.js 22 stream, built against the system OpenSSL, so
 # the SAF CLI's crypto runs through the OpenSSL FIPS provider.
@@ -9,7 +9,3 @@ tools_saf_cli_packages:
 
 # dnf package spec for the pinned upstream ansible-core version.
 tools_ansible_core_package: "ansible-core-{{ safbox_tool_ansible_core.version }}"
-
-# unarchive needs unzip to unpack the Packer release zip.
-tools_packer_packages:
-  - unzip

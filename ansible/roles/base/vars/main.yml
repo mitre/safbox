@@ -1,0 +1,9 @@
+---
+# Names common to every OS family. This role has no family differences; one
+# that appears goes in vars/<os_family>.yml files with a task that loads
+# them (tests/ansible/structure.sh checks the two exist together).
+
+# openssl supplies `openssl rand` for first-boot secret generation.
+base_packages:
+  - openssl
+  - bash

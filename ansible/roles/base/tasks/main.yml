@@ -1,15 +1,4 @@
 ---
-- name: Load OS family variables
-  tags: [always]
-  ansible.builtin.include_vars:
-    file: "{{ lookup('ansible.builtin.first_found', base_vars_lookup) }}"
-  vars:
-    base_vars_lookup:
-      files:
-        - "{{ ansible_facts['os_family'] }}.yml"
-      paths:
-        - "{{ role_path }}/vars"
-
 - name: First-boot framework
   when: safbox_base_1 | default(true) | bool
   tags: [safbox-base-1]

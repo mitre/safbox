@@ -34,15 +34,38 @@ for role in ["platform", "base", "tools"]:
             errors.append(f"group_vars: switch {switch} for {tag} is missing")
         if tag in seen: errors.append(f"{role}: tag {tag} used twice")
         seen.append(tag)
-# Every OS-family name a role defines for the RHEL family is defined for the
-# Debian family too (ADR-0001: Debian untested but present), so a Debian run
-# fails on a wrong value rather than an undefined variable.
-for vars_rh in sorted((root / "ansible/roles").glob("*/vars/RedHat.yml")):
-    vars_deb = vars_rh.with_name("Debian.yml")
-    rh_names = set(yaml.safe_load(vars_rh.read_text()) or {})
-    deb_names = set(yaml.safe_load(vars_deb.read_text()) or {}) if vars_deb.exists() else set()
-    for name in sorted(rh_names - deb_names):
-        errors.append(f"{vars_rh.parts[-3]}: {name} is in vars/RedHat.yml but not vars/Debian.yml")
+# OS-family variables (ADR-0001 "Role layout and task groups"): a name
+# common to every family lives once in vars/main.yml, and vars/<family>.yml
+# holds only what that family changes (the role's include_vars outranks
+# vars/main.yml). Every name the RHEL family defines is defined for the
+# Debian family too, in its own file or in vars/main.yml (Debian untested
+# but present), so a Debian run fails on a wrong value rather than an
+# undefined variable. A name with the same value in every family file, or
+# repeating vars/main.yml's value, belongs in vars/main.yml alone.
+for role_dir in sorted(p for p in (root / "ansible/roles").iterdir() if (p / "vars").is_dir()):
+    role = role_dir.name
+    main = role_dir / "vars/main.yml"
+    common = (yaml.safe_load(main.read_text()) or {}) if main.exists() else {}
+    families = {f.stem: yaml.safe_load(f.read_text()) or {}
+                for f in sorted((role_dir / "vars").glob("*.yml")) if f.name != "main.yml"}
+    tasks = yaml.safe_load((role_dir / "tasks/main.yml").read_text()) or []
+    loads = any(t.get("name") == "Load OS family variables" for t in tasks)
+    if loads != bool(families):
+        errors.append(f"{role}: a 'Load OS family variables' task and vars/<family>.yml files must exist together")
+    if not families:
+        continue
+    if set(families) != {"RedHat", "Debian"}:
+        errors.append(f"{role}: vars/ must hold RedHat.yml and Debian.yml (found {sorted(families)})")
+        continue
+    for name in sorted(set(families["RedHat"]) - set(families["Debian"]) - set(common)):
+        errors.append(f"{role}: {name} is in vars/RedHat.yml but not vars/Debian.yml or vars/main.yml")
+    for name in sorted(set(families["RedHat"]) & set(families["Debian"])):
+        if families["RedHat"][name] == families["Debian"][name]:
+            errors.append(f"{role}: {name} is the same in every family file; move it to vars/main.yml")
+    for fam, values in families.items():
+        for name in sorted(set(values) & set(common)):
+            if values[name] == common[name]:
+                errors.append(f"{role}: vars/{fam}.yml repeats vars/main.yml's value for {name}")
 # Every tools group installs a tool the validation profile checks at its
 # pinned version (ADR-0001 Phase 3 verification), in a control named after
 # the group so a switched-off group maps to the control that skips.
@@ -86,5 +109,5 @@ if 'seal_mode=${var.seal ? "full" : "development"}' not in hcl:
     errors.append("packer: the seal provisioner must pass seal_mode from var.seal")
 if errors:
     print("\n".join("FAIL: " + e for e in errors), file=sys.stderr); sys.exit(1)
-print("PASS: task groups are tagged and switched; variable loads are tagged always; Debian vars cover RedHat; tools groups have controls; seal modes gated")
+print("PASS: task groups are tagged and switched; variable loads are tagged always; OS vars cover both families without duplicates; tools groups have controls; seal modes gated")
 PY
