@@ -15,8 +15,18 @@ errors = []
 def check_load(role, t):
     if "always" not in (t.get("tags") or []):
         errors.append(f"{role}: '{t['name']}' must be tagged always")
-for role in ["platform", "base", "tools"]:
-    tasks = yaml.safe_load((root / f"ansible/roles/{role}/tasks/main.yml").read_text())
+# The switchable roles, in playbook order. Each service (Heimdall, Vulcan,
+# the TLS proxy) is its own role so a site can switch one off.
+SWITCHABLE = ["platform", "base", "tools", "heimdall", "vulcan", "proxy"]
+playbook = yaml.safe_load((root / "ansible/playbooks/safbox.yml").read_text())
+in_play = [r["role"] if isinstance(r, dict) else r for r in playbook[0].get("roles") or []]
+if [r for r in in_play if r in SWITCHABLE] != SWITCHABLE:
+    errors.append(f"playbook: safbox.yml must apply {SWITCHABLE} in that order (has {in_play})")
+for role in SWITCHABLE:
+    tasks_file = root / f"ansible/roles/{role}/tasks/main.yml"
+    if not tasks_file.exists():
+        errors.append(f"{role}: role missing ({tasks_file.relative_to(root)})"); continue
+    tasks = yaml.safe_load(tasks_file.read_text())
     seen = []
     for t in tasks:
         if t.get("name") == "Load OS family variables":

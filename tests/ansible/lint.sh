@@ -31,7 +31,8 @@ echo "== ansible-playbook --syntax-check"
 
 echo "== shellcheck"
 find ansible/roles -path '*/files/*' -type f -print0 | xargs -0 shellcheck --shell=bash --external-sources
-shellcheck tests/ansible/*.sh tests/verify/*.sh tests/platform-discipline.sh scripts/*.sh
+shellcheck --external-sources tests/ansible/*.sh tests/verify/*.sh tests/services/*.sh \
+  tests/platform-discipline.sh scripts/*.sh
 
 echo "== seal finalize template"
 tests/ansible/seal-static.sh

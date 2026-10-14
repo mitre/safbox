@@ -1,0 +1,42 @@
+# {{ ansible_managed }}
+# Heimdall's PostgreSQL: the database service of upstream's
+# docker-compose.yml (https://github.com/mitre/heimdall2/blob/master/docker-compose.yml).
+#   image postgres:17                  -> pinned by digest (safbox_image_heimdall_db)
+#   restart: unless-stopped            -> Restart=always
+#   healthcheck pg_isready -U postgres -> the same command and timings; the
+#     every 30s, timeout 60s,             unit is ready once healthy, so
+#     5 retries, start period 80s         Heimdall starts after it (upstream:
+#                                         depends_on condition service_healthy)
+#   volumes ./data                     -> the heimdall-db named volume
+#   POSTGRES_DB, PGDATA                -> the same values
+#   POSTGRES_PASSWORD=${DATABASE_PASSWORD} -> heimdall-db.env, written by first boot
+#   expose "5432"                      -> reachable inside the pod only
+[Unit]
+Description=Heimdall PostgreSQL
+After=safbox-firstboot.service
+ConditionPathExists={{ heimdall_db_env_file }}
+
+[Container]
+Image={{ heimdall_db_image }}
+ContainerName=heimdall-db
+Pod=heimdall.pod
+Volume=heimdall-db.volume:/var/lib/postgresql/data
+Environment=POSTGRES_DB=heimdall-server-production
+Environment=PGDATA=/var/lib/postgresql/data/pgdata
+EnvironmentFile={{ heimdall_db_env_file }}
+HealthCmd=pg_isready -U postgres
+HealthInterval=30s
+HealthTimeout=60s
+HealthRetries=5
+HealthStartPeriod=80s
+Notify=healthy
+Memory={{ heimdall_db_memory }}
+NoNewPrivileges=true
+
+[Service]
+Restart=always
+# The first start initialises the database and waits for a healthy check.
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target

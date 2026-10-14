@@ -60,6 +60,31 @@ safbox_tools_2: true      # SAF CLI on the distribution's Node.js
 safbox_tools_3: true      # Ansible (ansible-core) and the Lockdown STIG collections
 safbox_tools_4: true      # HashiCorp Packer (BSL 1.1; distributors may switch it off, see docs/third-party.md)
 
+# heimdall
+safbox_heimdall_1: true   # Heimdall and its PostgreSQL as a Quadlet pod, secrets from first boot
+
+# vulcan
+safbox_vulcan_1: true     # Vulcan and its PostgreSQL as a Quadlet pod, secrets from first boot
+
+# proxy
+safbox_proxy_1: true      # nginx TLS proxy for the enabled applications, certificate from first boot
+
+# ---------------------------------------------------------------------------
+# Services
+# ---------------------------------------------------------------------------
+# Each application's pod publishes its port on the host's loopback address
+# only; the TLS proxy (nginx on the host network) serves it to the network
+# on the application's HTTPS port, and the firewall opens exactly those
+# ports. 443 is reserved for the landing page (ADR-0001 Phase 8). Both
+# applications listen on 3000 inside their pods (upstream); Vulcan's
+# loopback port is 3001, the port its compose file documents for running
+# beside another service on 3000. The validation profile's proxy_ports and
+# loopback_ports inputs default to these values (tests/ansible/pins.sh).
+safbox_heimdall_loopback_port: 3000
+safbox_heimdall_https_port: 8443
+safbox_vulcan_loopback_port: 3001
+safbox_vulcan_https_port: 9443
+
 # ---------------------------------------------------------------------------
 # Pins: container images
 # ---------------------------------------------------------------------------
@@ -75,6 +100,50 @@ safbox_image_pause:
   name: registry.k8s.io/pause
   tag: 3.10.2
   digest: sha256:f548e0e8e3dc1896ca956272154dde3314e8cc4fde0a57577ee9fa1c63f5baf4
+
+# Service images. Each is the image the upstream compose file names, at an
+# exact release, unless noted. The validation profile's service_images input
+# lists the same name@digest references (tests/ansible/pins.sh fails on
+# drift). Bump deliberately, reviewing the Quadlet unit against the new
+# upstream compose file (ADR-0001 Risks: upstream images change shape).
+
+# Heimdall (mitre/heimdall2 docker-compose.yml: server, mitre/heimdall2:
+# release-latest, which is 2.14.0).
+safbox_image_heimdall:
+  name: docker.io/mitre/heimdall2
+  tag: 2.14.0
+  digest: sha256:06f6e72d416a71e8939da341f78681891aa531765a9d4c62dcc224d3044d0347
+
+# Heimdall's database (heimdall2 compose: database, postgres:17).
+safbox_image_heimdall_db:
+  name: docker.io/library/postgres
+  tag: '17.11'
+  digest: sha256:2d2b8998d31037bf721cfdf764d76ba74171b4fab3431b7f72c27c56ddbdf9e3
+
+# Vulcan (mitre/vulcan docker-compose.yml: web; its compose builds the image,
+# so this is the published release image, mitre/vulcan:release-latest, which
+# is 2.4.1).
+safbox_image_vulcan:
+  name: docker.io/mitre/vulcan
+  tag: 2.4.1
+  digest: sha256:f2087e590a48c921542bf403aba7238ba0a4d1e0b81f16d844fab4c70eac135e
+
+# Vulcan's database (vulcan compose: db, postgres:18-alpine).
+safbox_image_vulcan_db:
+  name: docker.io/library/postgres
+  tag: 18.6-alpine
+  digest: sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+
+# The TLS proxy. Both upstream compose files use nginx:alpine, whose OpenSSL
+# has no FIPS provider. Red Hat's UBI 9 nginx image links the image's
+# OpenSSL, which runs its FIPS provider on a FIPS host and follows the FIPS
+# system crypto policy podman maps into the container (ADR-0001 Reverse
+# proxy: nginx chosen for its FIPS path). UBI 9, not UBI 10: UBI 10 images
+# need an x86-64-v3 CPU, and the development base runs on x86-64-v2.
+safbox_image_proxy:
+  name: registry.access.redhat.com/ubi9/nginx-126
+  tag: 9.8-1791881018
+  digest: sha256:ede0e7a8623c1d6a7db313b4b8e7a4bfcc86cbdd47f2d62798d50aba86066cdc
 
 # ---------------------------------------------------------------------------
 # Pins: downloaded tools

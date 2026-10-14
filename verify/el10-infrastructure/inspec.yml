@@ -12,12 +12,16 @@ summary: >-
   Quadlet, the safbox CLI, the first-boot framework, the pinned tools (CINC
   Auditor, SAF CLI, Ansible and the Lockdown collections, Packer), no
   distribution default user and, once sealed, the build record and the
-  absence of build residue. Every control is impact 1.0, so the thresholds
-  in verify/thresholds/ can name each one in the critical bucket, which no
-  STIG control uses. Runs alone or through the verify/inspec-safbox
-  wrapper, from the build runner over SSH; the sealed template's own
-  invariants are asserted by the seal step itself.
-version: 0.5.0
+  absence of build residue; and the services (Phases 5 and 6, and the TLS
+  proxy): Heimdall and Vulcan as Quadlet pods on the loopback address with
+  secrets from first boot, behind an nginx TLS proxy with a first-boot
+  certificate. Every control is impact 1.0, so the thresholds in
+  verify/thresholds/ can name each one in the critical bucket, which no STIG
+  control uses, except documented findings: known weaknesses kept visible as
+  low-impact controls that fail, tagged finding. Runs alone or through the
+  verify/inspec-safbox wrapper, from the build runner over SSH; the sealed
+  template's own invariants are asserted by the seal step itself.
+version: 0.6.0
 inspec_version: ">= 5.0"
 supports:
   - platform-family: redhat
@@ -137,3 +141,57 @@ inputs:
     description: HashiCorp Packer version (safbox_tool_packer.version).
     type: String
     value: 1.16.1
+  # Services (ADR-0001 Phases 5, 6 and the TLS proxy). Each default equals
+  # its setting in ansible/group_vars/all/main.yml (tests/ansible/pins.sh
+  # fails on drift); a site that changes one sets the matching input in its
+  # site inputs file.
+  - name: expected_services
+    description: >-
+      Services the image ships, one per service role: heimdall
+      (safbox_heimdall_1), vulcan (safbox_vulcan_1) and proxy
+      (safbox_proxy_1). A site that switches a service off removes it here,
+      and that service's controls skip; it also needs a site threshold
+      without them.
+    type: Array
+    value:
+      - heimdall
+      - vulcan
+      - proxy
+  - name: service_images
+    description: >-
+      Container image of each service, name and digest, as pinned in
+      group_vars (safbox_image_<key>); each Quadlet unit runs
+      <name>@<digest>.
+    type: Hash
+    value:
+      heimdall:
+        name: docker.io/mitre/heimdall2
+        digest: sha256:06f6e72d416a71e8939da341f78681891aa531765a9d4c62dcc224d3044d0347
+      heimdall_db:
+        name: docker.io/library/postgres
+        digest: sha256:2d2b8998d31037bf721cfdf764d76ba74171b4fab3431b7f72c27c56ddbdf9e3
+      vulcan:
+        name: docker.io/mitre/vulcan
+        digest: sha256:f2087e590a48c921542bf403aba7238ba0a4d1e0b81f16d844fab4c70eac135e
+      vulcan_db:
+        name: docker.io/library/postgres
+        digest: sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+      proxy:
+        name: registry.access.redhat.com/ubi9/nginx-126
+        digest: sha256:ede0e7a8623c1d6a7db313b4b8e7a4bfcc86cbdd47f2d62798d50aba86066cdc
+  - name: proxy_ports
+    description: >-
+      HTTPS port the proxy serves each application on
+      (safbox_<service>_https_port). 443 stays free for the landing page.
+    type: Hash
+    value:
+      heimdall: 8443
+      vulcan: 9443
+  - name: loopback_ports
+    description: >-
+      Port each application's pod publishes on the host loopback address
+      only, for the proxy (safbox_<service>_loopback_port).
+    type: Hash
+    value:
+      heimdall: 3000
+      vulcan: 3001

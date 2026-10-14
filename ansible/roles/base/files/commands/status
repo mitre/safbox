@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Summary: Show distribution, microarchitecture level, FIPS, first-boot, tool versions and build state
+# Summary: Show distribution, microarchitecture level, FIPS, first-boot, tool versions, services and build state
 #
 # safbox status: what this appliance is and where it came from. Reads only
 # public system state plus the build record the seal step writes; exits 0 even
@@ -152,6 +152,26 @@ tool_versions() {
   row "Packer" "${version:-not installed}"
 }
 
+# State of each service's main unit (the heimdall, vulcan and proxy roles)
+# as systemd reports it to any user: active once first boot has written the
+# secrets and the unit runs, inactive before; not installed when the role
+# was switched off.
+services() {
+  local label unit state
+  while IFS='|' read -r label unit; do
+    if systemctl cat "$unit" >/dev/null 2>&1; then
+      state=$(systemctl show -p ActiveState --value "$unit" 2>/dev/null || true)
+    else
+      state="not installed"
+    fi
+    row "$label" "${state:-unknown}"
+  done <<'UNITS'
+Heimdall|heimdall.service
+Vulcan|vulcan.service
+TLS proxy|safbox-proxy.service
+UNITS
+}
+
 build_info() {
   if [[ -r "$BUILD_INFO" ]]; then
     local line key value
@@ -174,4 +194,5 @@ cpu_level
 fips_state
 firstboot_state
 tool_versions
+services
 build_info

@@ -49,6 +49,7 @@ for f in "${residue[@]}"; do
 done
 envs=({{ seal_env_file_dir | quote }}/*.env)
 if [ -n "${envs[*]-}" ]; then fail "first-boot secrets present: ${envs[*]}"; fi
+if [ -e {{ seal_tls_dir | quote }} ]; then fail "TLS certificate or key present: {{ seal_tls_dir }}"; fi
 profiles=(/etc/NetworkManager/system-connections/*.nmconnection)
 if [ -n "${profiles[*]-}" ]; then fail "network profiles bound to the build VM: ${profiles[*]}"; fi
 echo "seal post-conditions met"

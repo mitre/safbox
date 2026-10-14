@@ -1,0 +1,44 @@
+# {{ ansible_managed }}
+# Heimdall: the server service of upstream's docker-compose.yml
+# (https://github.com/mitre/heimdall2/blob/master/docker-compose.yml).
+#   image mitre/heimdall2:release-latest -> pinned by digest (safbox_image_heimdall)
+#   restart: unless-stopped              -> Restart=always
+#   NODE_ENV=production                  -> the same
+#   DATABASE_HOST=database               -> 127.0.0.1: the pod shares one network
+#                                           namespace with the database
+#   DATABASE_PASSWORD, env_file .env     -> heimdall.env, written by first boot
+#                                           (DATABASE_PASSWORD, JWT_SECRET,
+#                                           API_KEY_SECRET); JWT_EXPIRE_TIME,
+#                                           which upstream's setup script asks
+#                                           for, is set here
+#   ports "3000"                         -> published by the pod on 127.0.0.1
+#   depends_on database (healthy)        -> Requires and After heimdall-db.service
+#   cert_bundles volume (certs sidecar)  -> not reproduced: Heimdall starts
+#                                           without it; consumer CA bundles are
+#                                           separate work
+# The nginx service is the proxy role's safbox-proxy unit. In production
+# mode Heimdall trusts the proxy's X-Forwarded-* headers itself.
+[Unit]
+Description=Heimdall
+Documentation=https://github.com/mitre/heimdall2
+Requires=heimdall-db.service
+After=heimdall-db.service safbox-firstboot.service
+ConditionPathExists={{ heimdall_env_file }}
+
+[Container]
+Image={{ heimdall_image }}
+ContainerName=heimdall
+Pod=heimdall.pod
+Environment=NODE_ENV=production
+Environment=DATABASE_HOST=127.0.0.1
+Environment=JWT_EXPIRE_TIME={{ heimdall_jwt_expire_time }}
+EnvironmentFile={{ heimdall_env_file }}
+Memory={{ heimdall_memory }}
+NoNewPrivileges=true
+DropCapability=all
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

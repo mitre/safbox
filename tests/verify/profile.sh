@@ -6,7 +6,8 @@
 #                                includes each one's controls, declares no
 #                                platform support of its own and no controls
 #   verify/el10-infrastructure   SAFBox infrastructure controls for the RHEL 10
-#                                family, every one impact 1.0 (critical); its
+#                                family, impact 1.0 (critical) except documented
+#                                findings, which are low and tagged finding; its
 #                                supports clause is the only platform gate, so
 #                                no control branches on the OS family
 #   verify/safbox-rhel10-stig-overlay   the STIG overlay (tests/verify/overlay.sh)
@@ -175,9 +176,19 @@ if infra.get("supports") != [{"platform-family": "redhat", "release": "10.*"}]:
 controls = infra_json.get("controls") or []
 if not controls:
     errors.append("el10-infrastructure: no controls loaded")
+# A documented finding (a known weakness kept visible as a failing control,
+# never hidden or waived) is low severity, 0.1 to below 0.4, and says so
+# with a finding tag naming the weakness.
 for c in controls:
-    if c.get("impact") != 1.0:
-        errors.append(f"el10-infrastructure: {c['id']} has impact {c.get('impact')}; every infrastructure control is 1.0")
+    finding = (c.get("tags") or {}).get("finding")
+    if finding:
+        if not 0.1 <= (c.get("impact") or 0) < 0.4:
+            errors.append(f"el10-infrastructure: finding {c['id']} has impact {c.get('impact')}; a finding is low (0.1 to 0.39)")
+        if not isinstance(finding, str) or not finding.strip():
+            errors.append(f"el10-infrastructure: finding {c['id']} must name the weakness in its finding tag")
+    elif c.get("impact") != 1.0:
+        errors.append(f"el10-infrastructure: {c['id']} has impact {c.get('impact')}; every infrastructure control "
+                      "is 1.0 unless it is a documented finding (tag finding)")
 ids = [c["id"] for c in controls]
 if len(ids) != len(set(ids)):
     errors.append("el10-infrastructure: duplicate control IDs")
@@ -208,8 +219,8 @@ if re.search(r"^\s*control '", src, re.M) or "skip_control" in src or "require_c
 
 if errors:
     print("\n".join("FAIL: " + e for e in errors), file=sys.stderr); sys.exit(1)
-print(f"PASS: el10-infrastructure loads all {len(ids)} declared controls at impact 1.0 for redhat 10.* "
-      "with no OS family branch; "
+print(f"PASS: el10-infrastructure loads all {len(ids)} declared controls (impact 1.0 or tagged low findings) "
+      "for redhat 10.* with no OS family branch; "
       "inspec-safbox depends on and includes both children")
 PY
 

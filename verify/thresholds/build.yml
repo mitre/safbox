@@ -6,15 +6,18 @@
 # A site that changes what the image carries names a replacement through the
 # Packer variable build_gate_site_threshold_file (docs/rebuild.md).
 #
-# Infrastructure (verify/el10-infrastructure, every control impact 1.0, the
-# only controls in the critical bucket): exactly the controls a
-# repository-default image passes here. The list is an exact set: a listed
-# control that fails, skips or is missing, or an unlisted one that passes,
-# fails the gate. Not listed: safbox-build-info-1, safbox-seal-1,
-# safbox-seal-2 and safbox-firstboot-2, which need a sealed, deployed clone,
-# and safbox-podman-2, which skips unless the build opts in to the
-# smoke-test Quadlet unit. tests/verify/thresholds.sh fails if this list
-# differs from the controls that apply.
+# Infrastructure (verify/el10-infrastructure, impact 1.0, the only controls
+# in the critical bucket): exactly the controls a repository-default image
+# passes here. The list is an exact set: a listed control that fails, skips
+# or is missing, or an unlisted one that passes, fails the gate. Not listed:
+# safbox-build-info-1, safbox-seal-1, safbox-seal-2, safbox-firstboot-2 and
+# the running-service controls (safbox-heimdall-3, safbox-vulcan-3,
+# safbox-proxy-2, -3 and -6), which need a sealed, deployed clone whose first
+# boot wrote the services' secrets and certificate; and safbox-podman-2,
+# which skips unless the build opts in to the smoke-test Quadlet unit. The
+# documented findings (low-impact infrastructure controls) also need a
+# deployed clone, so none applies here. tests/verify/thresholds.sh fails if
+# this list differs from the controls that apply.
 #
 # STIG (verify/safbox-rhel10-stig-overlay, never critical) before Phase 7: locked
 # at the documented state. passed.<sev>.controls and failed.<sev>.controls
@@ -24,8 +27,8 @@
 # visible as failures. To change the documented state on purpose, run
 # scripts/lock-stig-threshold.sh on a results file and review the diff.
 # STIG lists: generated 2026-10-14 by scripts/lock-stig-threshold.sh
-# STIG lists: from a scan taken 20261013T013720Z
-# STIG lists: high 15/10, medium 147/216, low 2/2 (passed/failed)
+# STIG lists: from a scan taken 20261014T025546Z
+# STIG lists: high 15/10, medium 146/217, low 2/2 (passed/failed)
 passed:
   critical:
     controls:
@@ -38,9 +41,14 @@ passed:
       - safbox-firstboot-1
       - safbox-firstboot-3
       - safbox-guest-agent-1
+      - safbox-heimdall-1
+      - safbox-heimdall-2
       - safbox-platform-1
       - safbox-platform-2
       - safbox-podman-1
+      - safbox-proxy-1
+      - safbox-proxy-4
+      - safbox-proxy-5
       - safbox-secureboot-1
       - safbox-services-1
       - safbox-services-2
@@ -49,6 +57,8 @@ passed:
       - safbox-tools-2
       - safbox-tools-3
       - safbox-tools-4
+      - safbox-vulcan-1
+      - safbox-vulcan-2
   high:
     controls:
       - SV-280932
@@ -123,7 +133,6 @@ passed:
       - SV-281042
       - SV-281043
       - SV-281044
-      - SV-281045
       - SV-281046
       - SV-281047
       - SV-281048
@@ -266,6 +275,7 @@ failed:
       - SV-281005
       - SV-281006
       - SV-281038
+      - SV-281045
       - SV-281064
       - SV-281077
       - SV-281078

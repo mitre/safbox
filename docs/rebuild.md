@@ -195,7 +195,7 @@ includes every child profile whole.
 
 | Profile | Holds | Runs on |
 |---|---|---|
-| `verify/el10-infrastructure` | the SAFBox infrastructure controls (`safbox-*`), every one impact 1.0 | redhat family, release 10.* |
+| `verify/el10-infrastructure` | the SAFBox infrastructure controls (`safbox-*`), impact 1.0 except documented findings (low, tagged `finding`) | redhat family, release 10.* |
 | `verify/safbox-rhel10-stig-overlay` | the pinned MITRE RHEL 10 STIG baseline with SAFBox's deviations marked | redhat family, release 10.* (the baseline's) |
 
 Each child declares the platforms it supports, and CINC Auditor skips a
@@ -237,13 +237,26 @@ and holds `failed.critical.max: 0` and `error.total.max: 0`. The list is an
 exact set: a control that fails, is skipped, is missing, or passes without
 being listed fails the gate.
 
-- **build** (the build VM before the seal): every control except the four
+- **build** (the build VM before the seal): every control except those
   that need a sealed, deployed clone (`safbox-build-info-1`,
-  `safbox-seal-1`, `safbox-seal-2`, `safbox-firstboot-2`).
-- **release** (a deployed clone of a full-sealed template): those four as
-  well.
+  `safbox-seal-1`, `safbox-seal-2`, `safbox-firstboot-2`, and the
+  running-service controls `safbox-heimdall-3`, `safbox-vulcan-3`,
+  `safbox-proxy-2`, `-3` and `-6`). The service units and their absent
+  secrets are checked here (`safbox-heimdall-1` and `-2`, `safbox-vulcan-1`
+  and `-2`, `safbox-proxy-1`, `-4` and `-5`).
+- **release** (a deployed clone of a full-sealed template): those as well.
 - `safbox-podman-2` (the smoke-test Quadlet unit) is in neither: it skips
   unless the build opts in with `safbox_example_quadlet_enabled=true`.
+
+**Documented findings.** A known weakness SAFBox ships with is recorded as
+an infrastructure control of low impact (0.1 to 0.39) with a `finding` tag,
+which fails on every image it applies to; it is never waived or skipped.
+Being low, it is not in the critical bucket: it sits in
+`failed.low.controls` with the STIG controls, where
+`scripts/lock-stig-threshold.sh` puts it, and `tests/verify/thresholds.sh`
+requires it there in each context where it applies. The current findings
+are crypto inside the service containers that does not go through a FIPS
+provider (see "Services on the box").
 
 STIG controls are held at their documented state until Phase 7 hardens
 the image: for each of high, medium and low, `passed.<sev>.controls` and
@@ -356,7 +369,8 @@ ever destroyed if it carries this run's ID. A template built with
 
 ## Choosing what the appliance layer does
 
-Every task group in the `platform`, `base`, and `tools` roles is a block
+Every task group in the `platform`, `base`, `tools`, `heimdall`, `vulcan`
+and `proxy` roles is a block
 tagged `safbox-<role>-<n>` with a switch `safbox_<role>_<n>` (default on),
 in the style of Ansible Lockdown. The switches and a one-line description of
 each group are listed in `ansible/group_vars/all/main.yml`.
@@ -383,6 +397,14 @@ each group are listed in `ansible/group_vars/all/main.yml`.
   controls. A distributor who does not
   want to ship Packer's Business Source License sets `safbox_tools_4:
   false`; see `docs/third-party.md`.
+- Each service is its own role with one group: `safbox_heimdall_1`,
+  `safbox_vulcan_1`, `safbox_proxy_1`. A host short of memory runs Heimdall
+  alone with `safbox_vulcan_1: false`; the proxy then serves Heimdall only
+  and closes Vulcan's port. The profile's `expected_services` input lists
+  the services the image ships (default `heimdall`, `vulcan`, `proxy`):
+  drop a switched-off service there in a site inputs file, and its
+  controls (`safbox-vulcan-*`, and `safbox-proxy-3` for Vulcan's proxy
+  port) from a site threshold, as for a tools group.
 
 ## Tools on the box
 
@@ -423,6 +445,113 @@ tool that stops working fails it. A failing exercise is a tool that
 cannot ship on a FIPS image as it stands. The box needs outbound HTTPS to
 `fips_exercise_url` (`verify/inputs/fips-exercise.yml`); on a restricted
 network, name a reachable endpoint in a site inputs file.
+
+## Services on the box
+
+The `heimdall` and `vulcan` roles run each application and its PostgreSQL
+as a podman pod of Quadlet units, in the service shape of the
+application's upstream `docker-compose.yml` (each unit file cites the
+compose service it reproduces). The `proxy` role runs one nginx container
+that terminates TLS for both. Images are pinned by digest in
+`ansible/group_vars/all/main.yml` and pulled at build, so a clone starts
+offline.
+
+| Service | Pod publishes (loopback only) | Browser URL |
+|---|---|---|
+| Heimdall | `127.0.0.1:3000` | `https://<box>:8443/` |
+| Vulcan | `127.0.0.1:3001` | `https://<box>:9443/` |
+
+The ports are `safbox_<service>_loopback_port` and
+`safbox_<service>_https_port` in group_vars. Port 443 is reserved for the
+landing page, nothing listens on 80, and the firewall opens exactly the
+HTTPS ports of the services the image ships. Each pod has its own podman
+network, so neither database is reachable from the other pod or from the
+network.
+
+**First boot.** The units are installed and enabled at build but start only
+once their secrets exist (`ConditionPathExists`, ordered after
+`safbox-firstboot.service`). First boot runs one hook per service, the only
+place its secrets are generated:
+
+- `20-heimdall.sh` writes `/etc/safbox/heimdall.env` (`DATABASE_PASSWORD`,
+  `JWT_SECRET`, `API_KEY_SECRET`) and `/etc/safbox/heimdall-db.env`;
+- `30-vulcan.sh` writes `/etc/safbox/vulcan.env` (`POSTGRES_PASSWORD`,
+  `SECRET_KEY_BASE`, `CIPHER_PASSWORD`, `CIPHER_SALT`) and
+  `/etc/safbox/vulcan-db.env`;
+- `40-proxy.sh` writes a self-signed certificate for the host name and its
+  addresses to `/etc/safbox/tls/safbox.crt` and its RSA 3072 key to
+  `safbox.key` (root only).
+
+All of them are root-owned and mode 0600 (the certificate 0644), use the
+same random strength as the upstream setup scripts, and never overwrite an
+existing value. The seal removes and then asserts the absence of every
+`/etc/safbox/*.env` file and of `/etc/safbox/tls`, so the template holds
+none.
+
+**Your own certificate.** Replace both files in `/etc/safbox/tls/` with your
+certificate (PEM, with any intermediates after it) and unencrypted key,
+owned by root, the key mode 0600, then `systemctl restart
+safbox-proxy.service`. To regenerate the self-signed one after the host's
+name or address changes, delete both files, run
+`/etc/safbox/firstboot.d/40-proxy.sh` as root, and restart the proxy.
+
+**Accounts.** Heimdall creates an administrator `admin@heimdall.local` with a
+random password on its first start, and prints that password in its log
+(`journalctl -u heimdall.service`); change it at first login. Anyone may
+register. In Vulcan, local login and registration are on and the first
+registered user becomes administrator: register before handing the
+appliance out. OIDC, LDAP and SMTP are site settings
+(`vulcan_settings` in the vulcan role's defaults).
+
+**Footprint.** Measured on a 2 vCPU, 4 GiB development clone with both
+applications idle after the service tests: about 750 MB in the containers
+(Heimdall 290 MB, Vulcan 280 MB, the databases 75 and 80 MB, nginx 25 MB),
+2.5 GiB of the host's memory still available. The container memory limits
+(`heimdall_memory`, `vulcan_memory`, 1g; the databases 512m; nginx 512m)
+sum to under 4 GiB.
+
+**Applying the roles to a box that has already booted.** The first-boot
+runner does nothing once `/var/lib/safbox/firstboot.done` exists, so on
+such a box run it over the new hooks with its marker in a scratch
+directory, which leaves the box's own marker alone, then start the
+services (or reboot):
+
+```
+sudo env SAFBOX_STATE_DIR="$(sudo mktemp -d)" /usr/local/sbin/safbox-firstboot
+sudo systemctl start heimdall.service vulcan.service safbox-proxy.service
+```
+
+**Testing.** The release gate's controls check the units, secrets,
+loopback-only ports, TLS on each port and the firewall from a shell on the
+box. Two tests act as a browser would, from your workstation over HTTPS
+only: they check the proxy's TLS (TLS 1.3 negotiated; TLS 1.0, 1.1 and
+ChaCha20 refused), load each application's page with its scripts and
+stylesheets, and drive the API. Both create accounts and data, so run them
+against a clone:
+
+```
+tests/services/heimdall-upload.sh <box>    # register, log in, upload an HDF file
+tests/services/vulcan-register.sh <box>    # first user is admin, create a project
+```
+
+They need curl, jq and OpenSSL 3 (`OPENSSL=/path/to/openssl` where the
+system `openssl` is LibreSSL, as on macOS).
+
+**FIPS.** Each container carries its own userspace crypto. Heimdall, Vulcan
+and the proxy are built on Red Hat UBI 9, whose OpenSSL loads its FIPS
+provider on a FIPS host (MD5 is refused inside them), and podman gives
+them the host's FIPS crypto policy, which the proxy's TLS follows. Their
+FIPS module is the RHEL 9 one inside each image, not the host's RHEL 10
+module; that is documented here rather than recorded as a finding, because
+the containers run a FIPS provider under the host's policy. The proxy uses
+`ubi9/nginx-126` rather than upstream Heimdall's `nginx:alpine` for this
+reason: Alpine's OpenSSL has no FIPS provider. Three
+weaknesses remain and are recorded as findings (`safbox-heimdall-4`,
+`safbox-heimdall-5`, `safbox-vulcan-4`): Heimdall hashes passwords and API
+keys with bcrypt in pure JavaScript, outside any FIPS provider (the finding
+observes passwords, since a fresh box has no API keys), and both
+upstream PostgreSQL images (Debian and Alpine) have no OpenSSL FIPS
+provider at all.
 
 ## Continuous integration
 

@@ -1,0 +1,7 @@
+# {{ ansible_managed }}
+# Vulcan's own network. Upstream's docker-compose.yml
+# (https://github.com/mitre/vulcan/blob/master/docker-compose.yml) puts its
+# services on the project's default network; here the vulcan pod is alone
+# on this one, so no other container can reach its database.
+[Network]
+NetworkName=vulcan

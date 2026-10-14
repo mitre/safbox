@@ -20,5 +20,9 @@
     - role: platform
     - role: base
     - role: tools
-    # Later phases add service roles here (Heimdall, Vulcan, the proxy) and
-    # Phase 3 extends tools; hardening is the last role (ADR-0001 §Decision).
+    # Services (ADR-0001 Phases 5 and 6) and the TLS proxy in front of them.
+    # Each is its own switchable role; the proxy fronts whichever
+    # applications are on. Hardening is the last role (ADR-0001 §Decision).
+    - role: heimdall
+    - role: vulcan
+    - role: proxy

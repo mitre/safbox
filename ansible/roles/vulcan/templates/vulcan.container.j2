@@ -1,0 +1,56 @@
+# {{ ansible_managed }}
+# Vulcan: the web service of upstream's docker-compose.yml
+# (https://github.com/mitre/vulcan/blob/master/docker-compose.yml).
+#   image (built from the Dockerfile)  -> the published release image,
+#                                         pinned by digest (safbox_image_vulcan)
+#   restart: unless-stopped            -> Restart=always
+#   DATABASE_URL with the password     -> DATABASE_HOST=127.0.0.1 (the pod
+#                                         shares one network namespace with the
+#                                         database), POSTGRES_USER and
+#                                         POSTGRES_PASSWORD, which Vulcan's
+#                                         config/database.yml reads
+#   NODE_ENV=production                -> the same
+#   RAILS_FORCE_SSL                    -> true: the TLS proxy terminates HTTPS
+#                                         and sends X-Forwarded-Proto, as
+#                                         upstream's proxy profiles do
+#   env_file .env                      -> secrets in vulcan.env, written by
+#                                         first boot (setup-docker-secrets.sh's
+#                                         four); settings below (vulcan_settings)
+#   ports 3000 (expose behind a proxy) -> published by the pod on 127.0.0.1
+#   depends_on db (healthy)            -> Requires and After vulcan-db.service
+#   healthcheck curl /up, every 30s,   -> the same; with RAILS_FORCE_SSL /up
+#     timeout 10s, 3 retries, start       answers plain HTTP with a redirect,
+#     period 60s                          which curl -f accepts
+# The caddy and nginx profiles are the proxy role's safbox-proxy unit.
+[Unit]
+Description=Vulcan
+Documentation=https://github.com/mitre/vulcan
+Requires=vulcan-db.service
+After=vulcan-db.service safbox-firstboot.service
+ConditionPathExists={{ vulcan_env_file }}
+
+[Container]
+Image={{ vulcan_image }}
+ContainerName=vulcan
+Pod=vulcan.pod
+Environment=NODE_ENV=production
+Environment=DATABASE_HOST=127.0.0.1
+Environment=POSTGRES_USER=postgres
+{% for name, value in vulcan_settings | dictsort %}
+Environment={{ name }}={{ value }}
+{% endfor %}
+EnvironmentFile={{ vulcan_env_file }}
+HealthCmd=curl -f http://localhost:3000/up || exit 1
+HealthInterval=30s
+HealthTimeout=10s
+HealthRetries=3
+HealthStartPeriod=60s
+Memory={{ vulcan_memory }}
+NoNewPrivileges=true
+DropCapability=all
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,30 @@
+---
+# heimdall role: MITRE Heimdall and its PostgreSQL as a podman pod of Quadlet
+# units (ADR-0001 Phase 5), in the service shape of Heimdall's upstream
+# docker-compose.yml (cited in each unit). Secrets come from first boot: the
+# hook files/20-heimdall.sh writes them, and the units start only once they
+# exist, so the template carries none. Task group safbox-heimdall-1,
+# switched off by setting safbox_heimdall_1 to false (group_vars).
+
+heimdall_image: "{{ safbox_image_heimdall.name }}@{{ safbox_image_heimdall.digest }}"
+heimdall_db_image: "{{ safbox_image_heimdall_db.name }}@{{ safbox_image_heimdall_db.digest }}"
+
+# Port the pod publishes on 127.0.0.1 for the TLS proxy (group_vars).
+heimdall_loopback_port: "{{ safbox_heimdall_loopback_port }}"
+
+# Env files the first-boot hook writes (root, 0600): the application's
+# secrets, and the database password alone for the PostgreSQL container.
+heimdall_env_file: /etc/safbox/heimdall.env
+heimdall_db_env_file: /etc/safbox/heimdall-db.env
+heimdall_firstboot_hook: /etc/safbox/firstboot.d/20-heimdall.sh
+
+# Lifetime of the login token Heimdall issues. Upstream's setup script asks
+# for it ("ex. 1d or 25m") and Heimdall falls back to 60 seconds without it.
+heimdall_jwt_expire_time: 1d
+
+# Container memory limits. The sum over every service stays inside the
+# reference 4 GiB appliance with room for the host and a scan. Heimdall
+# parses each uploaded HDF file (up to the proxy's 100 MB body limit) in
+# memory.
+heimdall_memory: 1g
+heimdall_db_memory: 512m

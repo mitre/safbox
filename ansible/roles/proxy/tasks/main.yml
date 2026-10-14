@@ -1,0 +1,78 @@
+---
+- name: TLS proxy
+  when: safbox_proxy_1 | default(true) | bool
+  tags: [safbox-proxy-1]
+  block:
+    # Pulled at build so a clone starts the proxy offline.
+    - name: Pull the nginx image
+      containers.podman.podman_image:
+        name: "{{ proxy_image }}"
+        state: present
+
+    - name: Install the first-boot hook that generates the certificate
+      ansible.builtin.copy:
+        src: 40-proxy.sh
+        dest: "{{ proxy_firstboot_hook }}"
+        owner: root
+        group: root
+        mode: '0755'
+
+    # Read before the configuration is written, so the restart handler
+    # knows whether this is a deployed box (certificate exists) or a build.
+    - name: Check whether first boot has generated the certificate
+      ansible.builtin.stat:
+        path: "{{ proxy_key }}"
+      register: proxy_tls
+
+    - name: Create the proxy configuration directory
+      ansible.builtin.file:
+        path: "{{ proxy_conf_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Configure nginx for the enabled applications
+      ansible.builtin.template:
+        src: nginx.conf.j2
+        dest: "{{ proxy_conf_dir }}/nginx.conf"
+        owner: root
+        group: root
+        mode: '0644'
+      notify: Restart the proxy
+
+    - name: Install the proxy Quadlet unit
+      ansible.builtin.template:
+        src: safbox-proxy.container.j2
+        dest: "{{ platform_container_quadlet_dir }}/safbox-proxy.container"
+        owner: root
+        group: root
+        mode: '0644'
+      notify:
+        - Reload systemd units
+        - Restart the proxy
+
+    - name: Generate the unit from the Quadlet file
+      ansible.builtin.meta: flush_handlers
+
+    # Exactly the proxy ports of the enabled applications; a switched-off
+    # application's port is closed.
+    - name: Open the firewall for the proxy ports
+      ansible.posix.firewalld:
+        port: "{{ item.https_port }}/tcp"
+        permanent: true
+        immediate: true
+        state: "{{ 'enabled' if item.enabled | bool else 'disabled' }}"
+      loop: "{{ proxy_apps }}"
+      loop_control:
+        label: "{{ item.name }} {{ item.https_port }}/tcp"
+
+    # Quadlet-generated units are enabled by their [Install] section through
+    # the generator; they are started, never enabled, with systemctl. At
+    # build there is no certificate and nothing starts: first boot writes
+    # it and the unit follows.
+    - name: Start the proxy on a deployed box
+      ansible.builtin.systemd_service:
+        name: safbox-proxy.service
+        state: started
+      when: proxy_tls.stat.exists

@@ -1,0 +1,44 @@
+# {{ ansible_managed }}
+# The SAFBox TLS proxy: the nginx service of upstream Heimdall's
+# docker-compose.yml (https://github.com/mitre/heimdall2/blob/master/docker-compose.yml)
+# and the nginx profile of Vulcan's
+# (https://github.com/mitre/vulcan/blob/master/docker-compose.yml), as one
+# container for both applications (ADR-0001 §Decision: a single nginx
+# reverse proxy).
+#   image nginx:alpine                 -> Red Hat UBI 9 nginx, pinned by digest
+#                                         (safbox_image_proxy): its OpenSSL runs
+#                                         the FIPS provider on a FIPS host
+#   ports 80, 443                      -> one HTTPS port per application on the
+#                                         host network (nginx.conf); 443 is the
+#                                         landing page's, and there is no plain
+#                                         HTTP
+#   templates and certs volumes        -> nginx.conf from the proxy role and the
+#                                         certificate first boot generates, both
+#                                         read-only
+# The host network lets nginx reach the pods' loopback-only ports. It runs as
+# root (master) to read the root-only key, with every capability dropped but
+# the three nginx needs to hand work to its nginx-user workers.
+[Unit]
+Description=SAFBox TLS proxy (nginx)
+After=safbox-firstboot.service
+ConditionPathExists={{ proxy_key }}
+
+[Container]
+Image={{ proxy_image }}
+ContainerName=safbox-proxy
+Network=host
+User=root
+Exec=nginx -c /etc/nginx/safbox/nginx.conf
+Volume={{ proxy_conf_dir }}:/etc/nginx/safbox:ro,Z
+Volume={{ proxy_tls_dir }}:/etc/nginx/tls:ro,Z
+ReadOnly=true
+NoNewPrivileges=true
+DropCapability=all
+AddCapability=CAP_CHOWN CAP_SETGID CAP_SETUID
+Memory={{ proxy_memory }}
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

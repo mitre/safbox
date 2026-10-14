@@ -14,6 +14,10 @@ repos:
     rev: a23f6b85d0fdd5bb9d564e2579e678033debbdff  # frozen: v0.10.0.1
     hooks:
       - id: shellcheck
+        # Follow sourced files (the first-boot hooks source the base role's
+        # secrets.sh), as tests/ansible/lint.sh does with --external-sources,
+        # so a commit that stages a hook without its library still passes.
+        args: [--external-sources]
   - repo: local
     hooks:
       - id: packer-fmt

@@ -1,0 +1,7 @@
+# {{ ansible_managed }}
+# Heimdall's database files. Upstream's docker-compose.yml
+# (https://github.com/mitre/heimdall2/blob/master/docker-compose.yml) binds
+# ./data; a named volume keeps them under podman's storage instead. Created
+# on the first start, which is after first boot, so the template holds none.
+[Volume]
+VolumeName=heimdall-db

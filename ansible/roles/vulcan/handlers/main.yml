@@ -1,0 +1,16 @@
+---
+- name: Reload systemd units
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+
+# Only on a deployed box (its secrets exist); at build nothing runs. The pod
+# first, so a changed published port takes effect, then its containers.
+- name: Restart Vulcan
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    state: restarted
+  loop:
+    - vulcan-pod.service
+    - vulcan-db.service
+    - vulcan.service
+  when: vulcan_secrets.stat.exists | default(false)

@@ -4,13 +4,20 @@
 # full-sealed template, with verify/inputs/release.yml.
 #   scripts/clone-and-ssh.sh -> scripts/validate.sh ... verify/thresholds/release.yml
 #
-# Infrastructure (verify/el10-infrastructure, every control impact 1.0, the
-# only controls in the critical bucket): exactly the controls a
-# repository-default image passes here. The list is an exact set: a listed
-# control that fails, skips or is missing, or an unlisted one that passes,
-# fails the gate. Not listed: safbox-podman-2, which skips unless the build
-# opts in to the smoke-test Quadlet unit. tests/verify/thresholds.sh fails
-# if this list differs from the controls that apply.
+# Infrastructure (verify/el10-infrastructure, impact 1.0, the only controls
+# in the critical bucket): exactly the controls a repository-default image
+# passes here. The list is an exact set: a listed control that fails, skips
+# or is missing, or an unlisted one that passes, fails the gate. Not listed:
+# safbox-podman-2, which skips unless the build opts in to the smoke-test
+# Quadlet unit. tests/verify/thresholds.sh fails if this list differs from
+# the controls that apply.
+#
+# Documented findings: known weaknesses kept visible as low-impact
+# infrastructure controls that fail (safbox-heimdall-4 and -5,
+# safbox-vulcan-4: crypto in the service containers that bypasses the FIPS
+# provider). They sit in failed.low.controls beside the STIG controls, where
+# scripts/lock-stig-threshold.sh puts them; tests/verify/thresholds.sh
+# requires them there.
 #
 # STIG (verify/safbox-rhel10-stig-overlay, never critical) before Phase 7: locked
 # at the documented state. passed.<sev>.controls and failed.<sev>.controls
@@ -20,8 +27,8 @@
 # visible as failures. To change the documented state on purpose, run
 # scripts/lock-stig-threshold.sh on a results file and review the diff.
 # STIG lists: generated 2026-10-14 by scripts/lock-stig-threshold.sh
-# STIG lists: from a scan taken 20261013T011934Z
-# STIG lists: high 15/10, medium 147/216, low 2/2 (passed/failed)
+# STIG lists: from a scan taken 20261014T023608Z
+# STIG lists: high 15/10, medium 146/217, low 2/5 (passed/failed)
 passed:
   critical:
     controls:
@@ -36,9 +43,18 @@ passed:
       - safbox-firstboot-2
       - safbox-firstboot-3
       - safbox-guest-agent-1
+      - safbox-heimdall-1
+      - safbox-heimdall-2
+      - safbox-heimdall-3
       - safbox-platform-1
       - safbox-platform-2
       - safbox-podman-1
+      - safbox-proxy-1
+      - safbox-proxy-2
+      - safbox-proxy-3
+      - safbox-proxy-4
+      - safbox-proxy-5
+      - safbox-proxy-6
       - safbox-seal-1
       - safbox-seal-2
       - safbox-secureboot-1
@@ -49,6 +65,9 @@ passed:
       - safbox-tools-2
       - safbox-tools-3
       - safbox-tools-4
+      - safbox-vulcan-1
+      - safbox-vulcan-2
+      - safbox-vulcan-3
   high:
     controls:
       - SV-280932
@@ -123,7 +142,6 @@ passed:
       - SV-281042
       - SV-281043
       - SV-281044
-      - SV-281045
       - SV-281046
       - SV-281047
       - SV-281048
@@ -266,6 +284,7 @@ failed:
       - SV-281005
       - SV-281006
       - SV-281038
+      - SV-281045
       - SV-281064
       - SV-281077
       - SV-281078
@@ -456,6 +475,9 @@ failed:
     controls:
       - SV-280995
       - SV-281203
+      - safbox-heimdall-4
+      - safbox-heimdall-5
+      - safbox-vulcan-4
 error:
   total:
     max: 0

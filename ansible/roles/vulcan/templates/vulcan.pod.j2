@@ -1,0 +1,21 @@
+# {{ ansible_managed }}
+# The vulcan pod: Vulcan and its PostgreSQL share one network namespace, as
+# the web and db services of upstream's docker-compose.yml
+# (https://github.com/mitre/vulcan/blob/master/docker-compose.yml) share a
+# network. Upstream publishes web on ${VULCAN_PORT:-3000} and, behind a
+# proxy, only exposes it; here the pod publishes it on the loopback address
+# only, for the TLS proxy, on the port upstream suggests for running beside
+# another service (VULCAN_PORT=3001). The database is published nowhere.
+# Starts only after first boot has written Vulcan's secrets.
+[Unit]
+Description=Vulcan pod (Vulcan and its PostgreSQL)
+After=safbox-firstboot.service
+ConditionPathExists={{ vulcan_env_file }}
+
+[Pod]
+PodName=vulcan
+Network=vulcan.network
+PublishPort=127.0.0.1:{{ vulcan_loopback_port }}:3000
+
+[Install]
+WantedBy=multi-user.target

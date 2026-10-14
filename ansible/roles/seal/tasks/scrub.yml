@@ -20,11 +20,11 @@
     file_type: file
   register: seal_env_files
 
-- name: Remove first-boot state and env files
+- name: Remove first-boot state, env files and TLS material
   ansible.builtin.file:
     path: "{{ item }}"
     state: absent
-  loop: "{{ seal_firstboot_state + (seal_env_files.files | map(attribute='path') | list) }}"
+  loop: "{{ seal_firstboot_state + (seal_env_files.files | map(attribute='path') | list) + [seal_tls_dir] }}"
 
 - name: Find network profiles bound to the build VM
   ansible.builtin.find:

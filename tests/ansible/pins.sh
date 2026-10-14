@@ -6,8 +6,10 @@
 # version; the package manager resolves its dependencies. The validation
 # profile's expected-version
 # inputs must default to the same pins, and every tools group switch must
-# have its tool in the expected_tools input default. Static; no target host
-# is needed.
+# have its tool in the expected_tools input default. Container images are
+# pinned by digest, and the profile's service_images, proxy_ports and
+# loopback_ports inputs default to the group_vars values. Static; no target
+# host is needed.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 read -r -a PY <<<"$(head -1 "$(command -v ansible-playbook)" | sed 's/^#!//')"
@@ -100,7 +102,49 @@ for switch in sorted(k for k in gv if re.fullmatch(r"safbox_tools_\d+", k)):
     elif tool not in expected_default:
         errors.append(f"verify: {switch} exists but its tool {tool!r} is not in the expected_tools default")
 
+# Container images (ADR-0001 Pinned inputs): every safbox_image_<key> pin
+# names a fully qualified image, an exact tag recorded for review, and the
+# sha256 digest roles must use. The service images (every pin but the
+# platform smoke test's) are a profile input, service_images, keyed the same
+# way, whose defaults carry the same name and digest.
+SMOKE_TEST_IMAGES = {"safbox_image_pause"}
+images = {k: v for k, v in gv.items() if k.startswith("safbox_image_")}
+for name, pin in images.items():
+    if not isinstance(pin, dict):
+        errors.append(f"{name}: must be a mapping of name, tag and digest"); continue
+    if not re.fullmatch(r"[a-z0-9.-]+\.[a-z]+(:\d+)?/[a-z0-9._/-]+", str(pin.get("name", ""))):
+        errors.append(f"{name}: name {pin.get('name')!r} is not a fully qualified image name")
+    if not re.fullmatch(r"[0-9A-Za-z][0-9A-Za-z._-]*", str(pin.get("tag", ""))):
+        errors.append(f"{name}: no tag recorded")
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", str(pin.get("digest", ""))):
+        errors.append(f"{name}: digest {pin.get('digest')!r} is not sha256:<64 hex>")
+service_images = inputs.get("service_images")
+if not isinstance(service_images, dict):
+    errors.append("verify: inspec.yml has no service_images input (image key to name and digest)")
+    service_images = {}
+want_keys = {k[len("safbox_image_"):] for k in images if k not in SMOKE_TEST_IMAGES}
+if set(service_images) != want_keys:
+    errors.append(f"verify: service_images keys {sorted(service_images)} differ from the service image pins {sorted(want_keys)}")
+for key in sorted(want_keys & set(service_images)):
+    pin = images[f"safbox_image_{key}"]
+    want = {"name": pin.get("name"), "digest": pin.get("digest")}
+    if service_images[key] != want:
+        errors.append(f"verify: input service_images.{key} is {service_images[key]!r} but group_vars pins {want!r}")
+
+# Service ports: the proxy's HTTPS port and the application's loopback port
+# per service are group_vars settings the profile checks through inputs of
+# the same shape (proxy_ports, loopback_ports: service name to port).
+for input_name, suffix in (("proxy_ports", "https_port"), ("loopback_ports", "loopback_port")):
+    want = {k[len("safbox_"):-len(suffix) - 1]: v for k, v in gv.items()
+            if k.startswith("safbox_") and k.endswith(f"_{suffix}")}
+    got = inputs.get(input_name)
+    if not want:
+        errors.append(f"group_vars: no safbox_<service>_{suffix} settings")
+    if got != want:
+        errors.append(f"verify: input {input_name} defaults to {got!r} but group_vars sets {want!r}")
+
 if errors:
     print("\n".join("FAIL: " + e for e in errors), file=sys.stderr); sys.exit(1)
-print(f"PASS: {len(tools)} tool pins carry versions, downloads carry sha256; profile inputs match the pins")
+print(f"PASS: {len(tools)} tool pins carry versions, downloads carry sha256; {len(images)} images pinned by digest; "
+      "profile inputs match the pins and service ports")
 PY

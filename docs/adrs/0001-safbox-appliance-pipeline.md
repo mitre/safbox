@@ -152,7 +152,10 @@ script, one threshold per context.
   every child (proven against a clone). No caller passes `--input`.
 - *Critical-bucket thresholds.* Every infrastructure control is impact
   1.0, the SAF CLI's critical severity, and no STIG control uses it (CAT I
-  is 0.7). Each tracked threshold (`verify/thresholds/build.yml`,
+  is 0.7). The one exception is a documented finding: a known weakness
+  SAFBox ships with is a low-impact (below 0.4) infrastructure control
+  tagged `finding` that fails by design, listed by ID under
+  `failed.low.controls` so a new one fails the gate (amended 2026-10-14). Each tracked threshold (`verify/thresholds/build.yml`,
   `verify/thresholds/release.yml`) lists exactly the infrastructure
   controls a repository-default image passes in that context under
   `passed.critical.controls`, which the SAF CLI treats as an exact set,
@@ -210,12 +213,16 @@ Within the appliance layer:
   managed pod built from their upstream container images and the service
   shapes in their published compose files. A single nginx reverse proxy
   terminates TLS, serves a landing page, and fronts both applications on
-  distinct ports.
+  distinct ports. The proxy runs Red Hat's UBI 9 nginx image rather than
+  upstream Heimdall's `nginx:alpine`, whose OpenSSL has no FIPS provider
+  (owner decision 2026-10-14); it is still a published image, not rebuilt.
 - **Secrets are generated on first boot**, not at build. A `safbox-firstboot`
   systemd unit creates per-install credentials (Heimdall database password,
   JWT and API key secrets; Vulcan database password, `SECRET_KEY_BASE`,
-  cipher password and salt), writes them to root-only environment files, mints
-  a self-signed certificate, and only then enables the service pods. The seal
+  cipher password and salt), writes them to root-only environment files, and
+  mints a self-signed certificate; the service units are enabled at build but
+  start only once those files exist (`ConditionPathExists`, amended
+  2026-10-14). The seal
   step at build time removes SSH host keys, `machine-id`, cloud-init state,
   shell history, and the build user's credentials so each deployment is unique.
 - **Content is manifest-driven.** `content/manifest.yml` lists each InSpec
@@ -488,7 +495,10 @@ credible FIPS path for regulated networks; small footprint.
   accepted as a cross-the-bridge problem: Phase 5 either lands the upstream
   fix, pins a Heimdall build that works, or documents Heimdall as unavailable
   on FIPS images until it does. It must not be worked around by disabling
-  FIPS.
+  FIPS. Outcome (Phase 5, 2026-10-14): Heimdall 2.14.0's UBI 9 image runs
+  under FIPS enforcement with its OpenSSL FIPS provider active; its bcryptjs
+  password hashing, outside any FIPS provider, is a recorded low-severity
+  finding (upstream mitre/heimdall2#4145).
 - *FIPS cannot be toggled, so there is no partial path.* Every Rocky image is
   FIPS-on. Any tool that cannot work under FIPS is a tool that cannot ship in
   v1, not a reason to ship a non-FIPS variant.
@@ -630,7 +640,7 @@ safbox/
     manifest.yml
   verify/
     inspec-safbox/             root wrapper: includes every child; the build and release gates scan it
-    el10-infrastructure/       SAFBox infrastructure controls, RHEL 10 family, all impact 1.0
+    el10-infrastructure/       SAFBox infrastructure controls, RHEL 10 family, impact 1.0 (findings low)
     safbox-rhel10-stig-overlay/  STIG overlay over the pinned MITRE baseline, deviations N/A
     inputs/{build,release}.yml       tracked inputs per context (--input-file)
     thresholds/{build,release}.yml   SAF CLI thresholds per context

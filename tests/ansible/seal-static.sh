@@ -25,7 +25,7 @@ if [ -z "$assert_start" ] || [ "$assert_start" -lt "$del_line" ]; then
   echo "FAIL: $TPL has no '# Post-conditions' section after deleting the build user" >&2; exit 1
 fi
 post=$(tail -n +"$assert_start" "$TPL")
-for needle in 'getent passwd' 'ssh_host_' '/etc/machine-id' 'ks*.cfg' '/var/log/anaconda' '*.env' 'seal_firstboot_state' '/var/lib/cloud/instance' 'system-connections' 'sudoers'; do
+for needle in 'getent passwd' 'ssh_host_' '/etc/machine-id' 'ks*.cfg' '/var/log/anaconda' '*.env' 'seal_firstboot_state' '/var/lib/cloud/instance' 'system-connections' 'sudoers' 'seal_tls_dir'; do
   grep -qF -- "$needle" <<<"$post" || { echo "FAIL: post-conditions do not check '$needle'" >&2; exit 1; }
 done
 # fail() must stop the script, or every check below is decorative.

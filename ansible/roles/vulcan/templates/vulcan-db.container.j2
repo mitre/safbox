@@ -1,0 +1,40 @@
+# {{ ansible_managed }}
+# Vulcan's PostgreSQL: the db service of upstream's docker-compose.yml
+# (https://github.com/mitre/vulcan/blob/master/docker-compose.yml).
+#   image postgres:18-alpine           -> pinned by digest (safbox_image_vulcan_db)
+#   restart: unless-stopped            -> Restart=always
+#   volumes vulcan_dbdata:/var/lib/postgresql -> the vulcan-db named volume
+#   POSTGRES_USER, POSTGRES_DB         -> upstream's defaults (postgres, vulcan_production)
+#   POSTGRES_PASSWORD                  -> vulcan-db.env, written by first boot
+#   expose "5432"                      -> reachable inside the pod only
+#   healthcheck pg_isready, every 30s, -> the same; the unit is ready once
+#     timeout 10s, 5 retries              healthy, so Vulcan starts after it
+#                                         (upstream: depends_on service_healthy)
+[Unit]
+Description=Vulcan PostgreSQL
+After=safbox-firstboot.service
+ConditionPathExists={{ vulcan_db_env_file }}
+
+[Container]
+Image={{ vulcan_db_image }}
+ContainerName=vulcan-db
+Pod=vulcan.pod
+Volume=vulcan-db.volume:/var/lib/postgresql
+Environment=POSTGRES_USER=postgres
+Environment=POSTGRES_DB=vulcan_production
+EnvironmentFile={{ vulcan_db_env_file }}
+HealthCmd=pg_isready -U postgres
+HealthInterval=30s
+HealthTimeout=10s
+HealthRetries=5
+Notify=healthy
+Memory={{ vulcan_db_memory }}
+NoNewPrivileges=true
+
+[Service]
+Restart=always
+# The first start initialises the database and waits for a healthy check.
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target

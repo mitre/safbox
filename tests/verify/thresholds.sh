@@ -14,6 +14,10 @@
 # el10-infrastructure controls whose only_if conditions hold for the
 # profile's input defaults plus verify/inputs/<context>.yml, so adding,
 # removing or re-gating a control without updating the threshold fails here.
+# The exception is a documented finding: a known weakness recorded as a
+# low-impact infrastructure control that fails on a repository-default
+# image. Where it applies it must be listed in failed.low.controls, which
+# lock-stig-threshold.sh fills from the scan like any low-severity failure.
 #
 # With the SAF CLI against recorded results (tests/verify/fixtures/): the
 # critical clauses of each tracked threshold pass on the real result and
@@ -62,6 +66,10 @@ for expr, (var, _why) in TARGET_STATE.items():
 
 def condition(expr, inputs, cid):
     expr = expr.strip()
+    # One only_if may join conditions with && (InSpec reports a single skip
+    # message, so a control gated on two things says both in one place).
+    if "&&" in expr:
+        return all([condition(part, inputs, cid) for part in expr.split("&&")])
     m = re.fullmatch(r"input\('(\w+)'\)", expr)
     if m:
         if m.group(1) not in inputs:
@@ -71,6 +79,9 @@ def condition(expr, inputs, cid):
     m = re.fullmatch(r"tool_expected\.call\('([a-z-]+)'\)", expr)
     if m:
         return m.group(1) in [str(t) for t in inputs.get("expected_tools") or []]
+    m = re.fullmatch(r"service_expected\.call\('([a-z-]+)'\)", expr)
+    if m:
+        return m.group(1) in [str(s) for s in inputs.get("expected_services") or []]
     if expr in TARGET_STATE:
         return bool(group_vars.get(TARGET_STATE[expr][0]))
     errors.append(f"{cid}: unclassified only_if condition `{expr}`; teach tests/verify/thresholds.sh how a "
@@ -78,8 +89,12 @@ def condition(expr, inputs, cid):
     return False
 
 # Control ID -> list of only_if condition expressions, from the source.
+# Every infrastructure control is impact 1.0 except documented findings:
+# known weaknesses recorded as low-severity controls that fail on a
+# repository-default image (tests/verify/profile.sh checks their shape).
 MESSAGE = r"'(?:[^'\\]|\\.)*'"
 controls = {}
+findings = set()
 for path in sorted((verify / "el10-infrastructure/controls").glob("*.rb")):
     src = path.read_text()
     for m in re.finditer(r"^control '([^']+)' do\n(.*?)^end$", src, re.S | re.M):
@@ -92,6 +107,11 @@ for path in sorted((verify / "el10-infrastructure/controls").glob("*.rb")):
         if cid in controls:
             errors.append(f"{cid}: declared twice")
         controls[cid] = conds
+        impact = re.search(r"^\s*impact (\d+(?:\.\d+)?)\s*$", body, re.M)
+        if not impact:
+            errors.append(f"{cid}: no literal impact this test can read")
+        elif float(impact.group(1)) != 1.0:
+            findings.add(cid)
 if not controls:
     errors.append("el10-infrastructure: no controls found")
 
@@ -105,7 +125,9 @@ for ctx in ("build", "release"):
     for name in sorted(set(ctx_inputs) - known_inputs):
         errors.append(f"{ipath.relative_to(root)}: {name} is not an input of el10-infrastructure or the overlay")
     inputs = {**defaults, **ctx_inputs}
-    applicable = sorted(c for c, conds in controls.items() if all(condition(e, inputs, c) for e in conds))
+    applies = sorted(c for c, conds in controls.items() if all([condition(e, inputs, c) for e in conds]))
+    applicable = [c for c in applies if c not in findings]
+    applicable_findings = {c for c in applies if c in findings}
 
     t = yaml.safe_load(tpath.read_text()) or {}
     passed, failed, error = t.get("passed") or {}, t.get("failed") or {}, t.get("error") or {}
@@ -139,7 +161,14 @@ for ctx in ("build", "release"):
                 if cid in stig_ids:
                     errors.append(f"{ctx}: {cid} is listed under both {stig_ids[cid]} and {status}.{sev}")
                 stig_ids[cid] = f"{status}.{sev}"
-    for cid in sorted(set(stig_ids) & set(controls)):
+    # A documented finding that applies here fails on a repository-default
+    # image, so it sits in failed.low (where lock-stig-threshold.sh puts
+    # it) and nowhere else; any other infrastructure control in a STIG
+    # clause is an error.
+    for cid in sorted(applicable_findings):
+        if stig_ids.get(cid) != "failed.low":
+            errors.append(f"{ctx}: finding {cid} applies here but is not in failed.low.controls")
+    for cid in sorted((set(stig_ids) & set(controls)) - applicable_findings):
         errors.append(f"{ctx}: infrastructure control {cid} is listed in a STIG clause")
     if not stig_ids:
         errors.append(f"{ctx}: no STIG controls are locked")
