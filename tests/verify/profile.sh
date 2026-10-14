@@ -6,7 +6,9 @@
 #                                includes each one's controls, declares no
 #                                platform support of its own and no controls
 #   verify/el10-infrastructure   SAFBox infrastructure controls for the RHEL 10
-#                                family, every one impact 1.0 (critical)
+#                                family, every one impact 1.0 (critical); its
+#                                supports clause is the only platform gate, so
+#                                no control branches on the OS family
 #   verify/safbox-rhel10-stig-overlay   the STIG overlay (tests/verify/overlay.sh)
 #
 # `cinc-auditor check` skips a control file that fails to parse and still
@@ -39,11 +41,113 @@ for f in "$WRAPPER"/controls/*.rb "$INFRA"/controls/*.rb "$OVERLAY"/controls/*.r
 done
 [ "$fails" -eq 0 ] || exit 1
 
+# The supports clause is el10-infrastructure's only platform gate: no control
+# reads the OS family or carries another family's commands, unit or
+# architecture names. A later OS family brings its own child profile. The
+# check runs on Ruby's own tokens (Ripper, in CINC Auditor's Ruby), so
+# comments and string contents are never mistaken for code:
+#   - an `os` identifier must be followed by . and an allowed member (arch);
+#     any other member (family, families, family_hierarchy, name, release,
+#     params, to_h, a predicate such as redhat?), os[...] and a bare os (an
+#     alias) are rejected. ALLOWED lists the exact lines that use family,
+#     name or release as a recorded value, and fails when one goes stale.
+#   - any `platform` identifier is rejected (platform.family, platform[...]).
+#   - dpkg, apt, apt-get, aptitude, debian, ubuntu, amd64 and arm64 are
+#     rejected in identifiers and in code strings, with _ counting as a
+#     separator (/etc/debian_version, debian_units); the prose of desc and
+#     title statements and comments are not code.
+#   - ssh and chrony as the unit argument of service() or systemd_service().
+"$RUBY" -rripper - "$INFRA/controls" <<'RUBY'
+dir = ARGV[0]
+ALLOWED = {
+  ['platform.rb', 13, 'family'] => 'describe os.family do',
+  ['platform.rb', 22, 'release'] => 'describe os.release.to_s do',
+  ['platform.rb', 33, 'name'] => 'subject { os.name }',
+}
+SAFE_MEMBERS = %w[arch].freeze
+FOREIGN_WORD = /(?<![a-z0-9])(dpkg|apt|apt-get|aptitude|debian|ubuntu|amd64|arm64)(?![a-z0-9])/i
+SKIP = %i[on_sp on_ignored_sp on_comment on_embdoc_beg on_embdoc on_embdoc_end on_ignored_nl].freeze
+errors = []
+used = {}
+Dir.glob(File.join(dir, '*.rb')).sort.each do |path|
+  name = File.basename(path)
+  src = File.read(path)
+  lines = src.lines
+  toks = Ripper.lex(src).reject { |t| SKIP.include?(t[1]) }
+  report = ->(line, what) { errors << "controls/#{name}:#{line} has #{what}: #{lines[line - 1].to_s.strip}" }
+  # String contents of a desc or title statement (and of its heredoc, whose
+  # body Ripper yields after the statement's newline) are prose. Only
+  # string contents are exempt: identifiers there, including those
+  # interpolated into the prose, are still checked.
+  prose = false
+  pending_heredoc = false
+  heredoc = false
+  statement_start = true
+  toks.each_with_index do |(pos, type, text), i|
+    line = pos[0]
+    heredoc = false if type == :on_heredoc_end
+    if %i[on_nl on_semicolon].include?(type)
+      heredoc = true if pending_heredoc && type == :on_nl
+      pending_heredoc = false
+      prose = false
+      statement_start = true
+      next
+    end
+    prose = true if statement_start && type == :on_ident && %w[desc title].include?(text)
+    pending_heredoc = true if prose && type == :on_heredoc_beg
+    statement_start = %i[on_kw on_lbrace].include?(type) && %w[do {].include?(text)
+    nxt = toks[i + 1] || [[0, 0], :none, '']
+    after = toks[i + 2] || [[0, 0], :none, '']
+    case type
+    when :on_ident, :on_const
+      if text == 'os'
+        if %i[on_period].include?(nxt[1]) || (nxt[1] == :on_op && %w[&. ::].include?(nxt[2]))
+          member = after[2]
+          unless SAFE_MEMBERS.include?(member)
+            key = [name, line, member]
+            if ALLOWED[key] && lines[line - 1].strip == ALLOWED[key]
+              used[key] = true
+            else
+              report.call(line, "os.#{member}, which reads the OS family")
+            end
+          end
+        else
+          report.call(line, 'os used other than as os.<member> (os[...] or an alias)')
+        end
+      elsif text == 'platform'
+        report.call(line, 'the platform resource, which reads the OS family')
+      elsif text.match?(FOREIGN_WORD)
+        report.call(line, "a Debian-family name (#{text})")
+      elsif %w[service systemd_service].include?(text)
+        j = i + 1
+        j += 1 if toks[j] && toks[j][1] == :on_lparen
+        if toks[j] && toks[j][1] == :on_tstring_beg && toks[j + 1] && toks[j + 1][1] == :on_tstring_content &&
+           %w[ssh chrony].include?(toks[j + 1][2])
+          report.call(line, "a Debian-family unit name (#{toks[j + 1][2]})")
+        end
+      end
+    when :on_tstring_content
+      next if prose || heredoc
+
+      report.call(line, "a Debian-family name in a code string (#{text.strip[0, 40]})") if text.match?(FOREIGN_WORD)
+    end
+  end
+end
+ALLOWED.each_key do |key|
+  errors << "allowlist entry controls/#{key[0]}:#{key[1]} (os.#{key[2]}) no longer matches the source" unless used[key]
+end
+unless errors.empty?
+  errors.each { |e| warn "FAIL: el10-infrastructure: #{e}; the supports clause is the only platform gate" }
+  exit 1
+end
+RUBY
+
 # Every control declared in el10-infrastructure is loaded, and the loaded
 # profile is handed to the metadata checks below.
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-cinc-auditor json "$INFRA" --chef-license accept-silent 2>/dev/null >"$work/infra.json"
+cinc-auditor json "$INFRA" --chef-license accept-silent 2>/dev/null >"$work/infra.json" \
+  || { echo "FAIL: cinc-auditor json cannot load el10-infrastructure" >&2; exit 1; }
 declared=$(cat "$INFRA"/controls/*.rb | grep -cE "^control '")
 loaded=$("$RUBY" -rjson -e "puts JSON.parse(File.read(ARGV[0]))['controls'].length" "$work/infra.json")
 if [ "$declared" != "$loaded" ]; then
@@ -104,7 +208,8 @@ if re.search(r"^\s*control '", src, re.M) or "skip_control" in src or "require_c
 
 if errors:
     print("\n".join("FAIL: " + e for e in errors), file=sys.stderr); sys.exit(1)
-print(f"PASS: el10-infrastructure loads all {len(ids)} declared controls at impact 1.0 for redhat 10.*; "
+print(f"PASS: el10-infrastructure loads all {len(ids)} declared controls at impact 1.0 for redhat 10.* "
+      "with no OS family branch; "
       "inspec-safbox depends on and includes both children")
 PY
 

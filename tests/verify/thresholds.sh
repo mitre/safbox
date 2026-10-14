@@ -71,8 +71,6 @@ def condition(expr, inputs, cid):
     m = re.fullmatch(r"tool_expected\.call\('([a-z-]+)'\)", expr)
     if m:
         return m.group(1) in [str(t) for t in inputs.get("expected_tools") or []]
-    if expr == "os.redhat?":
-        return True  # el10-infrastructure supports the redhat family alone
     if expr in TARGET_STATE:
         return bool(group_vars.get(TARGET_STATE[expr][0]))
     errors.append(f"{cid}: unclassified only_if condition `{expr}`; teach tests/verify/thresholds.sh how a "

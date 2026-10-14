@@ -22,9 +22,7 @@ end
 control 'safbox-guest-agent-1' do
   impact 1.0
   title "The guest agent keeps the distribution's RPC filter: no in-guest exec or file access"
-  desc 'With guest-exec or guest-file-* enabled, anyone with administrative access to the hypervisor ' \
-       'can run commands and read or write files inside the appliance without logging in. The ' \
-       'distribution ships a filter that disables them; the image must keep it unmodified.'
+  desc 'With guest-exec or guest-file-* enabled, anyone with administrative access to the hypervisor can run commands and read or write files inside the appliance without logging in. The distribution ships a filter that disables them; the image must keep it unmodified.'
   # On platforms without a guest-agent channel the agent cannot run; the
   # deploy sets guest_agent_expected=false there. Everywhere else a stopped
   # agent is a failure, not a skip.
@@ -61,9 +59,7 @@ control 'safbox-guest-agent-1' do
     its('stdout.strip') { should be_empty }
   end
 
-  if os.redhat?
-    describe command('rpm -V --nomtime qemu-guest-agent') do
-      its('stdout') { should be_empty }
-    end
+  describe command('rpm -V --nomtime qemu-guest-agent') do
+    its('stdout') { should be_empty }
   end
 end
