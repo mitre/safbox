@@ -1,0 +1,26 @@
+---
+# SAF CLI threshold for the first-boot behaviour test (verify/el10-firstboot)
+# against a build VM or clone, with verify/inputs/firstboot.yml. Every
+# control is impact 1.0 and must pass: the list is an exact set, so a
+# control that fails, skips or is missing fails the gate.
+# tests/verify/onbox.sh fails if this list differs from the profile.
+passed:
+  critical:
+    controls:
+      - safbox-firstboot-runner-1
+      - safbox-firstboot-runner-2
+      - safbox-firstboot-runner-3
+      - safbox-firstboot-runner-4
+      - safbox-firstboot-secrets-1
+failed:
+  critical:
+    max: 0
+  high:
+    max: 0
+  medium:
+    max: 0
+  low:
+    max: 0
+error:
+  total:
+    max: 0

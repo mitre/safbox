@@ -184,6 +184,15 @@ script, one threshold per context.
   `build_gate_site_threshold_file`, the release gate through
   `SAFBOX_SITE_INPUTS` and `SAFBOX_SITE_THRESHOLD`; both default to none.
   Site files live in git-ignored `verify/local/` and are never committed.
+- *On-box exercise profiles.* Profiles that exercise the box rather than
+  inspect it live beside the children under `verify/` but are not in the
+  wrapper: `verify/el10-fips-exercise` (each tool doing TLS or hashing
+  under FIPS enforcement; needs outbound HTTPS) and `verify/el10-firstboot`
+  (the first-boot runner in a scratch tree it removes; writes files). Each
+  runs alone through `scripts/validate.sh` with its own
+  `verify/inputs/<name>.yml` and `verify/thresholds/<name>.yml`.
+  (Amended 2026-10-12 by the owner: every test that talks to the box over
+  SSH is an InSpec profile.)
 
 **Role layout and task groups** (amended 2026-10-11): the appliance layer
 has `platform` (OS contract and container runtime), `base` (first-boot
@@ -717,7 +726,8 @@ already exists as `safbox-tools-1`; SAF CLI, Ansible, Packer added here);
       the latter untested but present.
 - [ ] Every installed tool is exercised once under FIPS enforcement (a
       trivial invocation that performs TLS or hashing) and the result is
-      recorded; failures become tracked issues, not silent gaps.
+      recorded as HDF by `verify/el10-fips-exercise`; failures become
+      tracked issues, not silent gaps.
 **Verification:** validation profile extended with version checks.
 
 #### Phase 4: Content manifest and updater (blocked by Phase 3)
@@ -870,8 +880,20 @@ when Phase 7 creates it.
   by the build threshold, every build; seal self-assertions every build.
 - **Release:** a booted clone passes the same wrapper from outside, gated
   by the release threshold, before an image is published.
-- **Deployment:** clone the template via cloud-init; scripted checks for SSH,
-  first-boot completion, service health, Heimdall upload, Vulcan registration.
+- **On-box exercises:** every test that talks to the box over SSH is an
+  InSpec profile run from the build runner with its own threshold, so its
+  results are HDF. `verify/el10-fips-exercise` runs each tool doing TLS or
+  hashing under FIPS enforcement, with each tool whose crypto bypasses the
+  system FIPS provider recorded as a failing low-severity finding that the
+  threshold names; `verify/el10-firstboot` exercises the first-boot runner
+  and secrets library in a scratch tree it removes. Neither is in the
+  wrapper: one needs outbound HTTPS, the other writes files. Local tooling
+  (lint, Packer validate, kickstart lint, repository static checks, the
+  playbook idempotence run) stays shell. (Amended 2026-10-12 by the owner.)
+- **Deployment:** clone the template via cloud-init; InSpec checks run over
+  SSH (the release-gate wrapper and the on-box exercise profiles) for SSH
+  access, first-boot completion, service health, Heimdall upload, Vulcan
+  registration.
 - **Edge cases:** second Ansible run is a no-op; clone of a clone still gets
   fresh secrets and host keys; offline `safbox content update` fails cleanly;
   reduced-footprint build with services disabled; template retains no

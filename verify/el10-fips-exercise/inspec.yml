@@ -1,0 +1,45 @@
+---
+name: el10-fips-exercise
+title: SAFBox FIPS exercise of the shipped tools on the RHEL 10 family
+maintainer: MITRE SAF
+copyright: The MITRE Corporation
+copyright_email: saf@mitre.org
+license: Apache-2.0
+summary: >-
+  Runs each tool the tools role installs once doing TLS or SHA-256 hashing
+  on a FIPS-enforcing SAFBox (ADR-0001 Phase 3), and records whether each
+  tool's cryptography is the system OpenSSL FIPS provider. Per tools group
+  n: safbox-fips-exercise-n (impact 1.0) is the tool working under FIPS
+  enforcement; safbox-fips-provider-n (low) is its crypto going through the
+  validated provider. A tool whose crypto bypasses the provider is a known,
+  failing low finding linked to its issue, which
+  verify/thresholds/fips-exercise.yml names. Needs outbound HTTPS from the
+  box and writes a scratch directory under /root that each control removes,
+  so it runs alone through scripts/validate.sh, never in the release gate.
+version: 0.1.0
+inspec_version: ">= 5.0"
+supports:
+  - platform-family: redhat
+    release: 10.*
+inputs:
+  - name: expected_tools
+    description: >-
+      Tools the image ships, as verify/el10-infrastructure's input of the
+      same name: cinc-auditor (safbox_tools_1), saf-cli (2), ansible (3),
+      packer (4). A tool left out skips both its controls; an expected tool
+      that is missing fails its exercise. A site that switches a tools group
+      off removes the tool in a site inputs file and its controls in a site
+      threshold (see docs/rebuild.md).
+    type: Array
+    value:
+      - cinc-auditor
+      - saf-cli
+      - ansible
+      - packer
+  - name: fips_exercise_url
+    description: >-
+      HTTPS URL each tool fetches; the box must reach it. Set in
+      verify/inputs/fips-exercise.yml; a site on a restricted network names
+      a reachable endpoint in its site inputs file.
+    type: String
+    required: true

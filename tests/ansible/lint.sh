@@ -31,7 +31,7 @@ echo "== ansible-playbook --syntax-check"
 
 echo "== shellcheck"
 find ansible/roles -path '*/files/*' -type f -print0 | xargs -0 shellcheck --shell=bash --external-sources
-shellcheck tests/ansible/*.sh tests/fips/*.sh tests/verify/*.sh tests/platform-discipline.sh scripts/*.sh
+shellcheck tests/ansible/*.sh tests/verify/*.sh tests/platform-discipline.sh scripts/*.sh
 
 echo "== seal finalize template"
 tests/ansible/seal-static.sh
@@ -50,5 +50,8 @@ tests/verify/thresholds.sh
 
 echo "== RHEL 10 STIG overlay"
 tests/verify/overlay.sh
+
+echo "== on-box exercise profiles (FIPS exercise, first boot)"
+tests/verify/onbox.sh
 
 echo "PASS: appliance layer lint"

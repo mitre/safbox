@@ -1,0 +1,680 @@
+{
+ "platform": {
+  "name": "almalinux",
+  "release": "10.2"
+ },
+ "profiles": [
+  {
+   "attributes": [
+    {
+     "name": "expected_tools",
+     "options": {
+      "type": "Array",
+      "value": [
+       "cinc-auditor",
+       "saf-cli",
+       "ansible",
+       "packer"
+      ]
+     }
+    },
+    {
+     "name": "fips_exercise_url",
+     "options": {
+      "required": true,
+      "type": "String",
+      "value": "https://releases.hashicorp.com/"
+     }
+    }
+   ],
+   "controls": [
+    {
+     "code": "control 'safbox-fips-exercise-1' do\n  impact 1.0\n  title 'CINC Auditor does TLS and SHA-256 hashing under FIPS enforcement'\n  desc 'ADR-0001 Phase 3: each shipped tool is exercised once under FIPS enforcement. CINC Auditor runs a profile whose http resource fetches the exercise URL over TLS and whose file resource computes a SHA-256 digest.'\n  only_if('CINC Auditor is not in expected_tools (tools group safbox-tools-1 switched off)') do\n    tool_expected.call('cinc-auditor')\n  end\n\n  steps = instance_exec('CINC Auditor', 'cinc-auditor', { url: url }, <<~'SH', &exercise)\n    mkdir -p profile/controls\n    printf 'name: fips-exercise\\nversion: 0.1.0\\nsupports:\\n  - platform: os\\n' >profile/inspec.yml\n    cat >profile/controls/exercise.rb <<'RUBY'\n    control 'fips-exercise-1' do\n      describe http(ENV.fetch('EXERCISE_URL')) do\n        its('status') { should cmp 200 }\n      end\n      describe file('/etc/os-release') do\n        its('sha256sum') { should match(/\\A\\h{64}\\z/) }\n      end\n    end\n    RUBY\n    step exec env EXERCISE_URL=\"$url\" cinc-auditor exec \"$work/profile\" --no-color \\\n      --chef-license accept-no-persist --reporter \"json:$work/results.json\"\n    step results cat \"$work/results.json\"\n  SH\n  if steps\n    instance_exec(steps, 'exec', 'CINC Auditor exec of the exercise profile', &step_succeeded)\n    results = begin\n      JSON.parse(steps.dig('results', 'output').to_s).dig('profiles', 0, 'controls', 0, 'results') || []\n    rescue JSON::ParserError\n      []\n    end\n    { 'http' => 'CINC Auditor http resource: GET over TLS', 'file' => 'CINC Auditor file resource: sha256sum' }\n      .each do |resource, label|\n        describe label do\n          subject { results.find { |r| r['resource_class'] == resource }&.fetch('status', nil) }\n          it { should eq 'passed' }\n        end\n      end\n  end\nend\n",
+     "desc": "ADR-0001 Phase 3: each shipped tool is exercised once under FIPS enforcement. CINC Auditor runs a profile whose http resource fetches the exercise URL over TLS and whose file resource computes a SHA-256 digest.",
+     "descriptions": [
+      {
+       "data": "ADR-0001 Phase 3: each shipped tool is exercised once under FIPS enforcement. CINC Auditor runs a profile whose http resource fetches the exercise URL over TLS and whose file resource computes a SHA-256 digest.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-fips-exercise-1",
+     "impact": 1.0,
+     "refs": [],
+     "results": [
+      {
+       "code_desc": "FIPS enforcement: /proc/sys/crypto/fips_enabled is expected to cmp == \"1\"",
+       "resource_class": "Object",
+       "resource_id": "FIPS enforcement: /proc/sys/crypto/fips_enabled",
+       "resource_params": "[]",
+       "run_time": 0.000135,
+       "start_time": "2026-10-13T22:50:38-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "FIPS enforcement: system-wide crypto policy is expected to match /\\AFIPS(:|\\z)/",
+       "resource_class": "Object",
+       "resource_id": "FIPS enforcement: system-wide crypto policy",
+       "resource_params": "[]",
+       "run_time": 0.000672,
+       "start_time": "2026-10-13T22:50:38-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "FIPS enforcement: OpenSSL FIPS provider active is expected to eq true",
+       "resource_class": "Object",
+       "resource_id": "FIPS enforcement: OpenSSL FIPS provider active",
+       "resource_params": "[]",
+       "run_time": 0.002064,
+       "start_time": "2026-10-13T22:50:38-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "CINC Auditor (cinc-auditor) on the target is expected to eq true",
+       "resource_class": "Object",
+       "resource_id": "CINC Auditor (cinc-auditor) on the target",
+       "resource_params": "[]",
+       "run_time": 3.7e-05,
+       "start_time": "2026-10-13T22:50:38-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "scratch directory /root/safbox-fips-exercise.jHziKH removed after the exercise is expected to eq false",
+       "resource_class": "Object",
+       "resource_id": "scratch directory /root/safbox-fips-exercise.jHziKH removed after the exercise",
+       "resource_params": "[]",
+       "run_time": 0.101462,
+       "start_time": "2026-10-13T22:50:38-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "CINC Auditor exec of the exercise profile is expected to include {\"rc\" => 0}",
+       "resource_class": "Object",
+       "resource_id": "CINC Auditor exec of the exercise profile",
+       "resource_params": "[]",
+       "run_time": 0.002029,
+       "start_time": "2026-10-13T22:50:38-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "CINC Auditor http resource: GET over TLS is expected to eq \"passed\"",
+       "resource_class": "Object",
+       "resource_id": "CINC Auditor http resource: GET over TLS",
+       "resource_params": "[]",
+       "run_time": 4.6e-05,
+       "start_time": "2026-10-13T22:50:38-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "CINC Auditor file resource: sha256sum is expected to eq \"passed\"",
+       "resource_class": "Object",
+       "resource_id": "CINC Auditor file resource: sha256sum",
+       "resource_params": "[]",
+       "run_time": 3e-05,
+       "start_time": "2026-10-13T22:50:38-04:00",
+       "status": "passed"
+      }
+     ],
+     "source_location": {
+      "line": 116
+     },
+     "tags": {},
+     "title": "CINC Auditor does TLS and SHA-256 hashing under FIPS enforcement",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-fips-exercise-2' do\n  impact 1.0\n  title 'The SAF CLI converts results and hashes a profile with SHA-256 under FIPS enforcement'\n  desc \"ADR-0001 Phase 3: each shipped tool is exercised once under FIPS enforcement. The SAF CLI converts a recorded CINC Auditor result to a checklist and back; the checklist-to-HDF mapper hashes the profile with SHA-256 through Node.js crypto.\"\n  only_if('the SAF CLI is not in expected_tools (tools group safbox-tools-2 switched off)') do\n    tool_expected.call('saf-cli')\n  end\n\n  # files/saf-cli-input.json: the JSON result of safbox-fips-exercise-1's\n  # CINC Auditor exercise profile (same files, flags and scratch layout, run\n  # once by hand as root on a FIPS-mode clone), trimmed with\n  # tests/verify/fixtures/trim-onbox.py.\n  hdf = [inspec.profile.file('saf-cli-input.json')].pack('m0')\n  steps = instance_exec('SAF CLI', '/usr/local/bin/saf', { hdf_b64: hdf }, <<~'SH', &exercise)\n    printf '%s' \"$hdf_b64\" | base64 -d >input.json\n    step hdf2ckl /usr/local/bin/saf convert hdf2ckl -i input.json -o exercise.ckl\n    step ckl2hdf /usr/local/bin/saf convert ckl2hdf -i exercise.ckl -o roundtrip.json\n    step digest node -e 'process.stdout.write(require(process.argv[1]).profiles[0].sha256 || \"\")' \\\n      \"$work/roundtrip.json\"\n  SH\n  if steps\n    instance_exec(steps, 'hdf2ckl', 'SAF CLI convert hdf2ckl', &step_succeeded)\n    instance_exec(steps, 'ckl2hdf', 'SAF CLI convert ckl2hdf', &step_succeeded)\n    describe 'profile SHA-256 digest computed by the checklist-to-HDF mapper' do\n      subject { steps.dig('digest', 'output').to_s.strip }\n      it { should match(/\\A\\h{64}\\z/) }\n    end\n  end\nend\n",
+     "desc": "ADR-0001 Phase 3: each shipped tool is exercised once under FIPS enforcement. The SAF CLI converts a recorded CINC Auditor result to a checklist and back; the checklist-to-HDF mapper hashes the profile with SHA-256 through Node.js crypto.",
+     "descriptions": [
+      {
+       "data": "ADR-0001 Phase 3: each shipped tool is exercised once under FIPS enforcement. The SAF CLI converts a recorded CINC Auditor result to a checklist and back; the checklist-to-HDF mapper hashes the profile with SHA-256 through Node.js crypto.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-fips-exercise-2",
+     "impact": 1.0,
+     "refs": [],
+     "results": [
+      {
+       "code_desc": "FIPS enforcement: /proc/sys/crypto/fips_enabled is expected to cmp == \"1\"",
+       "resource_class": "Object",
+       "resource_id": "FIPS enforcement: /proc/sys/crypto/fips_enabled",
+       "resource_params": "[]",
+       "run_time": 7e-05,
+       "start_time": "2026-10-13T22:50:38-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "FIPS enforcement: system-wide crypto policy is expected to match /\\AFIPS(:|\\z)/",
+       "resource_class": "Object",
+       "resource_id": "FIPS enforcement: system-wide crypto policy",
+       "resource_params": "[]",
+       "run_time": 3.8e-05,
+       "start_time": "2026-10-13T22:50:38-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "FIPS enforcement: OpenSSL FIPS provider active is expected to eq true",
+       "resource_class": "Object",
+       "resource_id": "FIPS enforcement: OpenSSL FIPS provider active",
+       "resource_params": "[]",
+       "run_time": 3.1e-05,
+       "start_time": "2026-10-13T22:50:38-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "SAF CLI (/usr/local/bin/saf) on the target is expected to eq true",
+       "resource_class": "Object",
+       "resource_id": "SAF CLI (/usr/local/bin/saf) on the target",
+       "resource_params": "[]",
+       "run_time": 2.8e-05,
+       "start_time": "2026-10-13T22:50:38-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "scratch directory /root/safbox-fips-exercise.05t7F3 removed after the exercise is expected to eq false",
+       "resource_class": "Object",
+       "resource_id": "scratch directory /root/safbox-fips-exercise.05t7F3 removed after the exercise",
+       "resource_params": "[]",
+       "run_time": 0.132385,
+       "start_time": "2026-10-13T22:50:38-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "SAF CLI convert hdf2ckl is expected to include {\"rc\" => 0}",
+       "resource_class": "Object",
+       "resource_id": "SAF CLI convert hdf2ckl",
+       "resource_params": "[]",
+       "run_time": 7.6e-05,
+       "start_time": "2026-10-13T22:50:38-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "SAF CLI convert ckl2hdf is expected to include {\"rc\" => 0}",
+       "resource_class": "Object",
+       "resource_id": "SAF CLI convert ckl2hdf",
+       "resource_params": "[]",
+       "run_time": 3.4e-05,
+       "start_time": "2026-10-13T22:50:38-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "profile SHA-256 digest computed by the checklist-to-HDF mapper is expected to match /\\A\\h{64}\\z/",
+       "resource_class": "Object",
+       "resource_id": "profile SHA-256 digest computed by the checklist-to-HDF mapper",
+       "resource_params": "[]",
+       "run_time": 3.9e-05,
+       "start_time": "2026-10-13T22:50:38-04:00",
+       "status": "passed"
+      }
+     ],
+     "source_location": {
+      "line": 158
+     },
+     "tags": {},
+     "title": "The SAF CLI converts results and hashes a profile with SHA-256 under FIPS enforcement",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-fips-exercise-3' do\n  impact 1.0\n  title 'Ansible does TLS and SHA-256 hashing under FIPS enforcement'\n  desc 'ADR-0001 Phase 3: each shipped tool is exercised once under FIPS enforcement. The uri module fetches the exercise URL over TLS and the stat module computes a SHA-256 checksum (Python ssl and hashlib).'\n  only_if('Ansible is not in expected_tools (tools group safbox-tools-3 switched off)') do\n    tool_expected.call('ansible')\n  end\n\n  steps = instance_exec('Ansible', 'ansible', { url: url }, <<~'SH', &exercise)\n    export ANSIBLE_HOME=$work/ansible ANSIBLE_LOCAL_TEMP=$work/ansible/tmp ANSIBLE_REMOTE_TEMP=$work/ansible/tmp \\\n      ANSIBLE_LOCALHOST_WARNING=False ANSIBLE_INVENTORY_UNPARSED_WARNING=False ANSIBLE_NOCOLOR=1\n    step uri ansible localhost -c local -m ansible.builtin.uri -a \"url=$url\"\n    step stat ansible localhost -c local -m ansible.builtin.stat -a 'path=/etc/os-release follow=true checksum_algorithm=sha256'\n  SH\n  if steps\n    instance_exec(steps, 'uri', 'Ansible uri module: GET over TLS', &step_succeeded)\n    describe 'Ansible uri module response status' do\n      subject { steps.dig('uri', 'output').to_s }\n      it { should match(/\"status\": 200\\b/) }\n    end\n    instance_exec(steps, 'stat', 'Ansible stat module: sha256 checksum', &step_succeeded)\n    describe 'Ansible stat module checksum' do\n      subject { steps.dig('stat', 'output').to_s }\n      it { should match(/\"checksum\": \"\\h{64}\"/) }\n    end\n  end\nend\n",
+     "desc": "ADR-0001 Phase 3: each shipped tool is exercised once under FIPS enforcement. The uri module fetches the exercise URL over TLS and the stat module computes a SHA-256 checksum (Python ssl and hashlib).",
+     "descriptions": [
+      {
+       "data": "ADR-0001 Phase 3: each shipped tool is exercised once under FIPS enforcement. The uri module fetches the exercise URL over TLS and the stat module computes a SHA-256 checksum (Python ssl and hashlib).",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-fips-exercise-3",
+     "impact": 1.0,
+     "refs": [],
+     "results": [
+      {
+       "code_desc": "FIPS enforcement: /proc/sys/crypto/fips_enabled is expected to cmp == \"1\"",
+       "resource_class": "Object",
+       "resource_id": "FIPS enforcement: /proc/sys/crypto/fips_enabled",
+       "resource_params": "[]",
+       "run_time": 9.3e-05,
+       "start_time": "2026-10-13T22:50:38-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "FIPS enforcement: system-wide crypto policy is expected to match /\\AFIPS(:|\\z)/",
+       "resource_class": "Object",
+       "resource_id": "FIPS enforcement: system-wide crypto policy",
+       "resource_params": "[]",
+       "run_time": 3.1e-05,
+       "start_time": "2026-10-13T22:50:38-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "FIPS enforcement: OpenSSL FIPS provider active is expected to eq true",
+       "resource_class": "Object",
+       "resource_id": "FIPS enforcement: OpenSSL FIPS provider active",
+       "resource_params": "[]",
+       "run_time": 3.2e-05,
+       "start_time": "2026-10-13T22:50:38-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Ansible (ansible) on the target is expected to eq true",
+       "resource_class": "Object",
+       "resource_id": "Ansible (ansible) on the target",
+       "resource_params": "[]",
+       "run_time": 2.7e-05,
+       "start_time": "2026-10-13T22:50:38-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "scratch directory /root/safbox-fips-exercise.r2auq4 removed after the exercise is expected to eq false",
+       "resource_class": "Object",
+       "resource_id": "scratch directory /root/safbox-fips-exercise.r2auq4 removed after the exercise",
+       "resource_params": "[]",
+       "run_time": 0.134378,
+       "start_time": "2026-10-13T22:50:38-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Ansible uri module: GET over TLS is expected to include {\"rc\" => 0}",
+       "resource_class": "Object",
+       "resource_id": "Ansible uri module: GET over TLS",
+       "resource_params": "[]",
+       "run_time": 8e-05,
+       "start_time": "2026-10-13T22:50:39-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Ansible uri module response status is expected to match /\"status\": 200\\b/",
+       "resource_class": "Object",
+       "resource_id": "Ansible uri module response status",
+       "resource_params": "[]",
+       "run_time": 4e-05,
+       "start_time": "2026-10-13T22:50:39-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Ansible stat module: sha256 checksum is expected to include {\"rc\" => 0}",
+       "resource_class": "Object",
+       "resource_id": "Ansible stat module: sha256 checksum",
+       "resource_params": "[]",
+       "run_time": 3.5e-05,
+       "start_time": "2026-10-13T22:50:39-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Ansible stat module checksum is expected to match /\"checksum\": \"\\h{64}\"/",
+       "resource_class": "Object",
+       "resource_id": "Ansible stat module checksum",
+       "resource_params": "[]",
+       "run_time": 3e-05,
+       "start_time": "2026-10-13T22:50:39-04:00",
+       "status": "passed"
+      }
+     ],
+     "source_location": {
+      "line": 188
+     },
+     "tags": {},
+     "title": "Ansible does TLS and SHA-256 hashing under FIPS enforcement",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-fips-exercise-4' do\n  impact 1.0\n  title 'Packer does TLS and SHA-256 hashing under FIPS enforcement'\n  desc \"ADR-0001 Phase 3: each shipped tool is exercised once under FIPS enforcement. Packer's http data source fetches the exercise URL over TLS and the HCL sha256() function hashes the body, with Go's FIPS 140-3 mode requested (GODEBUG=fips140=on).\"\n  only_if('Packer is not in expected_tools (tools group safbox-tools-4 switched off)') do\n    tool_expected.call('packer')\n  end\n\n  steps = instance_exec('Packer', '/usr/local/bin/packer', { url: url }, <<~'SH', &exercise)\n    cat >exercise.pkr.hcl <<'HCL'\n    variable \"url\" {\n      type = string\n    }\n\n    data \"http\" \"exercise\" {\n      url = var.url\n    }\n\n    locals {\n      digest = sha256(data.http.exercise.body)\n    }\n\n    source \"null\" \"exercise\" {\n      communicator = \"none\"\n    }\n\n    build {\n      sources = [\"source.null.exercise\"]\n\n      post-processor \"shell-local\" {\n        inline = [\"echo exercise-digest=${local.digest}\"]\n      }\n    }\n    HCL\n    export CHECKPOINT_DISABLE=1 PACKER_CONFIG_DIR=$work/packer PACKER_PLUGIN_PATH=$work/packer/plugins \\\n      PACKER_CACHE_DIR=$work/packer/cache\n    step build env GODEBUG=fips140=on /usr/local/bin/packer build -color=false -var \"url=$url\" \\\n      \"$work/exercise.pkr.hcl\"\n  SH\n  if steps\n    # The http data source fails the build on any non-2xx response.\n    instance_exec(steps, 'build', 'Packer build with the http data source: GET over TLS', &step_succeeded)\n    describe 'SHA-256 digest of the response computed by Packer' do\n      subject { steps.dig('build', 'output').to_s }\n      it { should match(/exercise-digest=\\h{64}\\b/) }\n    end\n  end\nend\n",
+     "desc": "ADR-0001 Phase 3: each shipped tool is exercised once under FIPS enforcement. Packer's http data source fetches the exercise URL over TLS and the HCL sha256() function hashes the body, with Go's FIPS 140-3 mode requested (GODEBUG=fips140=on).",
+     "descriptions": [
+      {
+       "data": "ADR-0001 Phase 3: each shipped tool is exercised once under FIPS enforcement. Packer's http data source fetches the exercise URL over TLS and the HCL sha256() function hashes the body, with Go's FIPS 140-3 mode requested (GODEBUG=fips140=on).",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-fips-exercise-4",
+     "impact": 1.0,
+     "refs": [],
+     "results": [
+      {
+       "code_desc": "FIPS enforcement: /proc/sys/crypto/fips_enabled is expected to cmp == \"1\"",
+       "resource_class": "Object",
+       "resource_id": "FIPS enforcement: /proc/sys/crypto/fips_enabled",
+       "resource_params": "[]",
+       "run_time": 7.1e-05,
+       "start_time": "2026-10-13T22:50:39-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "FIPS enforcement: system-wide crypto policy is expected to match /\\AFIPS(:|\\z)/",
+       "resource_class": "Object",
+       "resource_id": "FIPS enforcement: system-wide crypto policy",
+       "resource_params": "[]",
+       "run_time": 2.9e-05,
+       "start_time": "2026-10-13T22:50:39-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "FIPS enforcement: OpenSSL FIPS provider active is expected to eq true",
+       "resource_class": "Object",
+       "resource_id": "FIPS enforcement: OpenSSL FIPS provider active",
+       "resource_params": "[]",
+       "run_time": 3.2e-05,
+       "start_time": "2026-10-13T22:50:39-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Packer (/usr/local/bin/packer) on the target is expected to eq true",
+       "resource_class": "Object",
+       "resource_id": "Packer (/usr/local/bin/packer) on the target",
+       "resource_params": "[]",
+       "run_time": 3.1e-05,
+       "start_time": "2026-10-13T22:50:39-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "scratch directory /root/safbox-fips-exercise.L50U1v removed after the exercise is expected to eq false",
+       "resource_class": "Object",
+       "resource_id": "scratch directory /root/safbox-fips-exercise.L50U1v removed after the exercise",
+       "resource_params": "[]",
+       "run_time": 0.137315,
+       "start_time": "2026-10-13T22:50:39-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Packer build with the http data source: GET over TLS is expected to include {\"rc\" => 0}",
+       "resource_class": "Object",
+       "resource_id": "Packer build with the http data source: GET over TLS",
+       "resource_params": "[]",
+       "run_time": 9.2e-05,
+       "start_time": "2026-10-13T22:50:39-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "SHA-256 digest of the response computed by Packer is expected to match /exercise-digest=\\h{64}\\b/",
+       "resource_class": "Object",
+       "resource_id": "SHA-256 digest of the response computed by Packer",
+       "resource_params": "[]",
+       "run_time": 4.6e-05,
+       "start_time": "2026-10-13T22:50:39-04:00",
+       "status": "passed"
+      }
+     ],
+     "source_location": {
+      "line": 216
+     },
+     "tags": {},
+     "title": "Packer does TLS and SHA-256 hashing under FIPS enforcement",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-fips-provider-1' do\n  impact 0.3\n  title \"CINC Auditor's cryptography is the system OpenSSL FIPS provider\"\n  desc \"Known finding. CINC Auditor runs on its own embedded Ruby and OpenSSL, so its TLS and hashing bypass the system's validated FIPS provider, even on a FIPS-enforcing host. Tracked as safbox-m5f.18.\"\n  tag issue: 'safbox-m5f.18'\n  only_if('CINC Auditor is not in expected_tools (tools group safbox-tools-1 switched off)') do\n    tool_expected.call('cinc-auditor')\n  end\n\n  instance_exec(&fips_precondition)\n  bin = command('readlink -f \"$(command -v cinc-auditor)\"').stdout.strip\n  ruby = \"#{File.dirname(bin)}/../embedded/bin/ruby\"\n  library = command(\"#{ruby} -ropenssl -e 'print OpenSSL::OPENSSL_LIBRARY_VERSION'\").stdout.strip\n  describe \"OpenSSL FIPS mode in CINC Auditor's embedded Ruby (#{library})\" do\n    subject { command(\"#{ruby} -ropenssl -e 'print OpenSSL.fips_mode'\").stdout.strip }\n    it { should cmp 'true' }\n  end\nend\n",
+     "desc": "Known finding. CINC Auditor runs on its own embedded Ruby and OpenSSL, so its TLS and hashing bypass the system's validated FIPS provider, even on a FIPS-enforcing host. Tracked as safbox-m5f.18.",
+     "descriptions": [
+      {
+       "data": "Known finding. CINC Auditor runs on its own embedded Ruby and OpenSSL, so its TLS and hashing bypass the system's validated FIPS provider, even on a FIPS-enforcing host. Tracked as safbox-m5f.18.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-fips-provider-1",
+     "impact": 0.3,
+     "refs": [],
+     "results": [
+      {
+       "code_desc": "FIPS enforcement: /proc/sys/crypto/fips_enabled is expected to cmp == \"1\"",
+       "resource_class": "Object",
+       "resource_id": "FIPS enforcement: /proc/sys/crypto/fips_enabled",
+       "resource_params": "[]",
+       "run_time": 7.5e-05,
+       "start_time": "2026-10-13T22:50:39-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "FIPS enforcement: system-wide crypto policy is expected to match /\\AFIPS(:|\\z)/",
+       "resource_class": "Object",
+       "resource_id": "FIPS enforcement: system-wide crypto policy",
+       "resource_params": "[]",
+       "run_time": 2.8e-05,
+       "start_time": "2026-10-13T22:50:39-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "FIPS enforcement: OpenSSL FIPS provider active is expected to eq true",
+       "resource_class": "Object",
+       "resource_id": "FIPS enforcement: OpenSSL FIPS provider active",
+       "resource_params": "[]",
+       "run_time": 3.1e-05,
+       "start_time": "2026-10-13T22:50:39-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "OpenSSL FIPS mode in CINC Auditor's embedded Ruby (OpenSSL 3.6.4 25 Aug 2026) is expected to cmp == \"true\"",
+       "message": "\nexpected: true\n     got: false\n\n(compared using `cmp` matcher)\n",
+       "resource_class": "Object",
+       "resource_id": "OpenSSL FIPS mode in CINC Auditor's embedded Ruby (OpenSSL 3.6.4 25 Aug 2026)",
+       "resource_params": "[]",
+       "run_time": 0.387653,
+       "start_time": "2026-10-13T22:50:39-04:00",
+       "status": "failed"
+      }
+     ],
+     "source_location": {
+      "line": 265
+     },
+     "tags": {
+      "issue": "safbox-m5f.18"
+     },
+     "title": "CINC Auditor's cryptography is the system OpenSSL FIPS provider",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-fips-provider-2' do\n  impact 0.3\n  title \"The SAF CLI's cryptography is the system OpenSSL FIPS provider\"\n  desc \"The SAF CLI runs on the distribution's Node.js, which uses the system OpenSSL; in FIPS mode Node.js must report its FIPS provider in use.\"\n  only_if('the SAF CLI is not in expected_tools (tools group safbox-tools-2 switched off)') do\n    tool_expected.call('saf-cli')\n  end\n\n  instance_exec(&fips_precondition)\n  describe command(%q(node -p \"require('crypto').getFips()\")) do\n    its('exit_status') { should eq 0 }\n    its('stdout.strip') { should cmp '1' }\n  end\nend\n",
+     "desc": "The SAF CLI runs on the distribution's Node.js, which uses the system OpenSSL; in FIPS mode Node.js must report its FIPS provider in use.",
+     "descriptions": [
+      {
+       "data": "The SAF CLI runs on the distribution's Node.js, which uses the system OpenSSL; in FIPS mode Node.js must report its FIPS provider in use.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-fips-provider-2",
+     "impact": 0.3,
+     "refs": [],
+     "results": [
+      {
+       "code_desc": "FIPS enforcement: /proc/sys/crypto/fips_enabled is expected to cmp == \"1\"",
+       "resource_class": "Object",
+       "resource_id": "FIPS enforcement: /proc/sys/crypto/fips_enabled",
+       "resource_params": "[]",
+       "run_time": 8.3e-05,
+       "start_time": "2026-10-13T22:50:39-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "FIPS enforcement: system-wide crypto policy is expected to match /\\AFIPS(:|\\z)/",
+       "resource_class": "Object",
+       "resource_id": "FIPS enforcement: system-wide crypto policy",
+       "resource_params": "[]",
+       "run_time": 4.6e-05,
+       "start_time": "2026-10-13T22:50:39-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "FIPS enforcement: OpenSSL FIPS provider active is expected to eq true",
+       "resource_class": "Object",
+       "resource_id": "FIPS enforcement: OpenSSL FIPS provider active",
+       "resource_params": "[]",
+       "run_time": 5.1e-05,
+       "start_time": "2026-10-13T22:50:39-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Command: `node -p \"require('crypto').getFips()\"` exit_status is expected to eq 0",
+       "resource_class": "command",
+       "resource_id": "Command: `node -p \"require('crypto').getFips()\"`",
+       "resource_params": "[\"node -p \\\"require('crypto').getFips()\\\"\"]",
+       "run_time": 0.505239,
+       "start_time": "2026-10-13T22:50:39-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Command: `node -p \"require('crypto').getFips()\"` stdout.strip is expected to cmp == \"1\"",
+       "resource_class": "command",
+       "resource_id": "Command: `node -p \"require('crypto').getFips()\"`",
+       "resource_params": "[\"node -p \\\"require('crypto').getFips()\\\"\"]",
+       "run_time": 0.000101,
+       "start_time": "2026-10-13T22:50:40-04:00",
+       "status": "passed"
+      }
+     ],
+     "source_location": {
+      "line": 284
+     },
+     "tags": {},
+     "title": "The SAF CLI's cryptography is the system OpenSSL FIPS provider",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-fips-provider-3' do\n  impact 0.3\n  title \"Ansible's cryptography is the system OpenSSL FIPS provider\"\n  desc \"Ansible runs on the distribution's Python, whose ssl and hashlib use the system OpenSSL; in FIPS mode hashlib must report FIPS mode.\"\n  only_if('Ansible is not in expected_tools (tools group safbox-tools-3 switched off)') do\n    tool_expected.call('ansible')\n  end\n\n  instance_exec(&fips_precondition)\n  python = command('head -n 1 \"$(command -v ansible)\"').stdout.sub(/\\A#!\\s*/, '').strip\n  describe command(\"#{python} -c 'import _hashlib; print(_hashlib.get_fips_mode())'\") do\n    its('exit_status') { should eq 0 }\n    its('stdout.strip') { should cmp '1' }\n  end\nend\n",
+     "desc": "Ansible runs on the distribution's Python, whose ssl and hashlib use the system OpenSSL; in FIPS mode hashlib must report FIPS mode.",
+     "descriptions": [
+      {
+       "data": "Ansible runs on the distribution's Python, whose ssl and hashlib use the system OpenSSL; in FIPS mode hashlib must report FIPS mode.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-fips-provider-3",
+     "impact": 0.3,
+     "refs": [],
+     "results": [
+      {
+       "code_desc": "FIPS enforcement: /proc/sys/crypto/fips_enabled is expected to cmp == \"1\"",
+       "resource_class": "Object",
+       "resource_id": "FIPS enforcement: /proc/sys/crypto/fips_enabled",
+       "resource_params": "[]",
+       "run_time": 6.7e-05,
+       "start_time": "2026-10-13T22:50:40-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "FIPS enforcement: system-wide crypto policy is expected to match /\\AFIPS(:|\\z)/",
+       "resource_class": "Object",
+       "resource_id": "FIPS enforcement: system-wide crypto policy",
+       "resource_params": "[]",
+       "run_time": 4.1e-05,
+       "start_time": "2026-10-13T22:50:40-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "FIPS enforcement: OpenSSL FIPS provider active is expected to eq true",
+       "resource_class": "Object",
+       "resource_id": "FIPS enforcement: OpenSSL FIPS provider active",
+       "resource_params": "[]",
+       "run_time": 3e-05,
+       "start_time": "2026-10-13T22:50:40-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Command: `/usr/bin/python3 -c 'import _hashlib; print(_hashlib.get_fips_mode())'` exit_status is expected to eq 0",
+       "resource_class": "command",
+       "resource_id": "Command: `/usr/bin/python3 -c 'import _hashlib; print(_hashlib.get_fips_mode())'`",
+       "resource_params": "[\"/usr/bin/python3 -c 'import _hashlib; print(_hashlib.get_fips_mode())'\"]",
+       "run_time": 0.216513,
+       "start_time": "2026-10-13T22:50:40-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Command: `/usr/bin/python3 -c 'import _hashlib; print(_hashlib.get_fips_mode())'` stdout.strip is expected to cmp == \"1\"",
+       "resource_class": "command",
+       "resource_id": "Command: `/usr/bin/python3 -c 'import _hashlib; print(_hashlib.get_fips_mode())'`",
+       "resource_params": "[\"/usr/bin/python3 -c 'import _hashlib; print(_hashlib.get_fips_mode())'\"]",
+       "run_time": 0.000102,
+       "start_time": "2026-10-13T22:50:40-04:00",
+       "status": "passed"
+      }
+     ],
+     "source_location": {
+      "line": 299
+     },
+     "tags": {},
+     "title": "Ansible's cryptography is the system OpenSSL FIPS provider",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-fips-provider-4' do\n  impact 0.3\n  title \"Packer's cryptography is the system OpenSSL FIPS provider\"\n  desc \"Known finding. Packer is a statically linked Go binary: its TLS and hashing use Go's own cryptographic module, not the system's validated FIPS provider, and whether Go's FIPS 140-3 mode is in effect cannot be verified from outside. Passing requires a Packer binary dynamically linked against the system libcrypto (ldd lists libcrypto.so); a build that loads OpenSSL at run time with dlopen, such as a golang-fips toolchain build, still fails, because the link cannot be shown without running it. Tracked as safbox-m5f.19.\"\n  tag issue: 'safbox-m5f.19'\n  only_if('Packer is not in expected_tools (tools group safbox-tools-4 switched off)') do\n    tool_expected.call('packer')\n  end\n\n  instance_exec(&fips_precondition)\n  describe 'shared libraries /usr/local/bin/packer links' do\n    subject { command('ldd /usr/local/bin/packer 2>&1').stdout }\n    it { should match(%r{libcrypto\\.so\\.\\d+ => /\\S+}) }\n  end\nend\n",
+     "desc": "Known finding. Packer is a statically linked Go binary: its TLS and hashing use Go's own cryptographic module, not the system's validated FIPS provider, and whether Go's FIPS 140-3 mode is in effect cannot be verified from outside. Passing requires a Packer binary dynamically linked against the system libcrypto (ldd lists libcrypto.so); a build that loads OpenSSL at run time with dlopen, such as a golang-fips toolchain build, still fails, because the link cannot be shown without running it. Tracked as safbox-m5f.19.",
+     "descriptions": [
+      {
+       "data": "Known finding. Packer is a statically linked Go binary: its TLS and hashing use Go's own cryptographic module, not the system's validated FIPS provider, and whether Go's FIPS 140-3 mode is in effect cannot be verified from outside. Passing requires a Packer binary dynamically linked against the system libcrypto (ldd lists libcrypto.so); a build that loads OpenSSL at run time with dlopen, such as a golang-fips toolchain build, still fails, because the link cannot be shown without running it. Tracked as safbox-m5f.19.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-fips-provider-4",
+     "impact": 0.3,
+     "refs": [],
+     "results": [
+      {
+       "code_desc": "FIPS enforcement: /proc/sys/crypto/fips_enabled is expected to cmp == \"1\"",
+       "resource_class": "Object",
+       "resource_id": "FIPS enforcement: /proc/sys/crypto/fips_enabled",
+       "resource_params": "[]",
+       "run_time": 5e-05,
+       "start_time": "2026-10-13T22:50:40-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "FIPS enforcement: system-wide crypto policy is expected to match /\\AFIPS(:|\\z)/",
+       "resource_class": "Object",
+       "resource_id": "FIPS enforcement: system-wide crypto policy",
+       "resource_params": "[]",
+       "run_time": 4.6e-05,
+       "start_time": "2026-10-13T22:50:40-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "FIPS enforcement: OpenSSL FIPS provider active is expected to eq true",
+       "resource_class": "Object",
+       "resource_id": "FIPS enforcement: OpenSSL FIPS provider active",
+       "resource_params": "[]",
+       "run_time": 3.4e-05,
+       "start_time": "2026-10-13T22:50:40-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "shared libraries /usr/local/bin/packer links is expected to match /libcrypto\\.so\\.\\d+ => \\/\\S+/",
+       "message": "expected \"\\tnot a dynamic executable\\n\" to match /libcrypto\\.so\\.\\d+ => \\/\\S+/\nDiff:\n@@ -1 +1 @@\n-/libcrypto\\.so\\.\\d+ => \\/\\S+/\n+\tnot a dynamic executable\n",
+       "resource_class": "Object",
+       "resource_id": "shared libraries /usr/local/bin/packer links",
+       "resource_params": "[]",
+       "run_time": 0.146467,
+       "start_time": "2026-10-13T22:50:40-04:00",
+       "status": "failed"
+      }
+     ],
+     "source_location": {
+      "line": 315
+     },
+     "tags": {
+      "issue": "safbox-m5f.19"
+     },
+     "title": "Packer's cryptography is the system OpenSSL FIPS provider",
+     "waiver_data": {}
+    }
+   ],
+   "copyright": "The MITRE Corporation",
+   "copyright_email": "saf@mitre.org",
+   "groups": [],
+   "license": "Apache-2.0",
+   "maintainer": "MITRE SAF",
+   "name": "el10-fips-exercise",
+   "sha256": "0214ea410ca73a878623ceeca3a026fb02e87b7c9b9f13e59ca6d8a71b3494c7",
+   "status": "loaded",
+   "status_message": "",
+   "summary": "Runs each tool the tools role installs once doing TLS or SHA-256 hashing on a FIPS-enforcing SAFBox (ADR-0001 Phase 3), and records whether each tool's cryptography is the system OpenSSL FIPS provider. Per tools group n: safbox-fips-exercise-n (impact 1.0) is the tool working under FIPS enforcement; safbox-fips-provider-n (low) is its crypto going through the validated provider. A tool whose crypto bypasses the provider is a known, failing low finding linked to its issue, which verify/thresholds/fips-exercise.yml names. Needs outbound HTTPS from the box and writes a scratch directory under /root that each control removes, so it runs alone through scripts/validate.sh, never in the release gate.",
+   "supports": [
+    {
+     "platform-family": "redhat",
+     "release": "10.*"
+    }
+   ],
+   "title": "SAFBox FIPS exercise of the shipped tools on the RHEL 10 family",
+   "version": "0.1.0"
+  }
+ ],
+ "statistics": {
+  "duration": 1.775221
+ },
+ "version": "7.0.107"
+}

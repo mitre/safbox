@@ -311,6 +311,33 @@ Relative paths in the Packer variables resolve against the repository root
 against the directory you run `scripts/clone-and-ssh.sh` from, so give
 absolute paths or run it from the repository root.
 
+### On-box exercise profiles
+
+Every test that talks to the box is an InSpec profile, so its results are
+HDF: viewable in Heimdall and gated by a SAF CLI threshold. Two profiles
+exercise the box rather than inspect it, so they are not in the
+`verify/inspec-safbox` wrapper and run alone, each with its own threshold
+and inputs file:
+
+| Profile | Exercises | Why it runs alone |
+|---|---|---|
+| `verify/el10-fips-exercise` | each tool doing TLS or hashing under FIPS enforcement (see "Tools on the box") | needs outbound HTTPS from the box |
+| `verify/el10-firstboot` | the first-boot runner and secrets library | writes files on the box |
+
+```
+scripts/validate.sh <user@host> <key> firstboot verify/el10-firstboot \
+  verify/thresholds/firstboot.yml verify/inputs/firstboot.yml
+```
+
+Run them against a build VM or clone the playbook was applied to, after
+changing a tool or the `base` role. Each control works in its own scratch
+directory under `/root` and removes it, then asserts it is gone, so the
+target is left as found. The first-boot controls call the runner directly
+with every path pointed into that directory, never `/etc/safbox` or
+`/var/lib/safbox`. `tests/verify/onbox.sh` (part of `tests/ansible/lint.sh`)
+checks both profiles statically and runs the FIPS threshold against a
+recorded result.
+
 ## Prove the template (release gate)
 
 ```
@@ -350,8 +377,10 @@ each group are listed in `ansible/group_vars/all/main.yml`.
   missing fails its control. When you switch a tools group off, drop its
   tool from that input in a site inputs file and its control from the
   threshold in a site threshold file, and name both to the build and the
-  release gate (see "Site inputs and thresholds" above); set
-  `SAFBOX_EXPECTED_TOOLS` for the FIPS exercise. A distributor who does not
+  release gate (see "Site inputs and thresholds" above). For the FIPS
+  exercise (see "Tools on the box"), use the same site inputs file and a
+  copy of `verify/thresholds/fips-exercise.yml` without the tool's two
+  controls. A distributor who does not
   want to ship Packer's Business Source License sets `safbox_tools_4:
   false`; see `docs/third-party.md`.
 
@@ -374,16 +403,26 @@ image is built, so two builds from the same tag can carry different
 releases of those dependencies.
 
 FIPS is not a toggle, so every tool must work under FIPS enforcement. After
-changing a tool, run the exercise against a FIPS-mode build VM or clone:
+changing a tool, run the FIPS exercise profile against a FIPS-mode build VM
+or clone (see "On-box exercise profiles" above):
 
 ```
-tests/fips/exercise-tools.sh <user>@<host> <private-key>
+scripts/validate.sh <user@host> <key> fips-exercise verify/el10-fips-exercise \
+  verify/thresholds/fips-exercise.yml verify/inputs/fips-exercise.yml
 ```
 
-It runs each tool once doing TLS or SHA-256 hashing and prints PASS, FAIL
-or SKIP per tool, plus a WARN where a tool's crypto does not go through the
-system OpenSSL FIPS provider (CINC Auditor's embedded OpenSSL, Packer's Go
-crypto). A FAIL is a tool that cannot ship on a FIPS image as it stands.
+For each tool, `safbox-fips-exercise-<n>` (impact 1.0) runs it once doing
+TLS or SHA-256 hashing, and `safbox-fips-provider-<n>` (low) checks that
+its cryptography goes through the system OpenSSL FIPS provider. Every
+control first asserts FIPS enforcement (`fips_enabled=1`, the FIPS crypto
+policy, the OpenSSL FIPS provider active), so a host without it fails.
+Two provider controls fail by design, each a known finding tagged with its
+issue: CINC Auditor's embedded OpenSSL and Packer's Go crypto. The
+threshold names exactly those two, so a new finding, a fixed one, or a
+tool that stops working fails it. A failing exercise is a tool that
+cannot ship on a FIPS image as it stands. The box needs outbound HTTPS to
+`fips_exercise_url` (`verify/inputs/fips-exercise.yml`); on a restricted
+network, name a reachable endpoint in a site inputs file.
 
 ## Continuous integration
 
