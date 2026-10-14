@@ -143,8 +143,43 @@ for input_name, suffix in (("proxy_ports", "https_port"), ("loopback_ports", "lo
     if got != want:
         errors.append(f"verify: input {input_name} defaults to {got!r} but group_vars sets {want!r}")
 
+# The Ansible Lockdown STIG role the hardening role applies (ADR-0001
+# §Decision: base release and benchmark) is pinned in group_vars at an
+# exact release, the commit that release tag names, and the STIG release
+# the role targets. The build runner installs it from ansible/requirements.yml
+# by that commit, which a moved tag cannot change; the two must agree. The
+# validation profile's lockdown_version input defaults to the same release.
+lockdown = gv.get("safbox_hardening_lockdown")
+requirements = yaml.safe_load((root / "ansible/requirements.yml").read_text()) or {}
+if not isinstance(lockdown, dict):
+    errors.append("group_vars: no safbox_hardening_lockdown pin")
+else:
+    if not re.fullmatch(r"\d+(\.\d+)+", str(lockdown.get("version", ""))):
+        errors.append(f"safbox_hardening_lockdown: version {lockdown.get('version')!r} is not an exact release")
+    if not re.fullmatch(r"[0-9a-f]{40}", str(lockdown.get("commit", ""))):
+        errors.append("safbox_hardening_lockdown: commit must be the full SHA the release tag names")
+    if not str(lockdown.get("src", "")).startswith("https://"):
+        errors.append("safbox_hardening_lockdown: src is not HTTPS")
+    if not re.fullmatch(r"v\d+r\d+", str(lockdown.get("benchmark", ""))):
+        errors.append("safbox_hardening_lockdown: benchmark must name the STIG release (v<version>r<release>)")
+    roles = [r for r in requirements.get("roles") or [] if isinstance(r, dict)]
+    entry = next((r for r in roles if r.get("name") == lockdown.get("name")), None)
+    if not entry:
+        errors.append(f"requirements.yml: no role {lockdown.get('name')!r} for the safbox_hardening_lockdown pin")
+    else:
+        for key, want in (("src", lockdown.get("src")), ("scm", "git"), ("version", lockdown.get("commit"))):
+            if str(entry.get(key)) != str(want):
+                errors.append(f"requirements.yml: role {entry['name']} {key} is {entry.get(key)!r}, "
+                              f"group_vars pins {want!r}")
+    if inputs.get("lockdown_version") is None:
+        errors.append("verify: inspec.yml has no input lockdown_version for the safbox_hardening_lockdown pin")
+    elif str(inputs.get("lockdown_version")) != str(lockdown.get("version")):
+        errors.append(f"verify: input lockdown_version defaults to {inputs.get('lockdown_version')!r} "
+                      f"but group_vars pins {lockdown.get('version')!r}")
+
 if errors:
     print("\n".join("FAIL: " + e for e in errors), file=sys.stderr); sys.exit(1)
 print(f"PASS: {len(tools)} tool pins carry versions, downloads carry sha256; {len(images)} images pinned by digest; "
+      "the Lockdown role is pinned by release and commit in group_vars and requirements.yml; "
       "profile inputs match the pins and service ports")
 PY

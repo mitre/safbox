@@ -5,10 +5,10 @@
 # never are (CAT I is 0.7), so each tracked threshold lists the
 # infrastructure controls a repository-default image passes in its context
 # under passed.critical.controls, an exact set, with failed.critical.max 0
-# and error.total.max 0. Until Phase 7 the STIG controls are held at their
-# documented state: exact lists of which pass and which fail per severity
-# (passed.<sev>.controls, failed.<sev>.controls), from
-# scripts/lock-stig-threshold.sh.
+# and error.total.max 0. The STIG controls of the hardened image are held at
+# their documented state: exact lists of which pass and which fail per
+# severity (passed.<sev>.controls, failed.<sev>.controls, or max: 0 for an
+# empty set), from scripts/lock-stig-threshold.sh.
 #
 # Static: for each context (build, release) the critical list must equal the
 # el10-infrastructure controls whose only_if conditions hold for the
@@ -147,15 +147,21 @@ for ctx in ("build", "release"):
         errors.append(f"{ctx}: failed.critical must be exactly max: 0")
     if error != {"total": {"max": 0}}:
         errors.append(f"{ctx}: error must be exactly total.max: 0")
-    # STIG before Phase 7: the documented state, as exact lists of which
-    # controls pass and which fail per severity (scripts/lock-stig-threshold.sh).
+    # STIG: the documented state, as exact lists of which controls pass and
+    # which fail per severity (scripts/lock-stig-threshold.sh).
     stig_ids = {}
     for status, clauses in (("passed", passed), ("failed", failed)):
         for sev in SEVERITIES:
             clause = clauses.get(sev) or {}
             ids = clause.get("controls")
-            if set(clause) != {"controls"} or not isinstance(ids, list):
-                errors.append(f"{ctx}: {status}.{sev} must hold exactly a controls list (scripts/lock-stig-threshold.sh)")
+            # The SAF CLI cannot judge an empty controls list (it reports the
+            # received list as undefined and fails), so an empty set is
+            # written as max: 0, which is the same exact set.
+            if clause == {"max": 0}:
+                continue
+            if set(clause) != {"controls"} or not isinstance(ids, list) or not ids:
+                errors.append(f"{ctx}: {status}.{sev} must hold exactly a non-empty controls list, or max: 0 "
+                              "for none (scripts/lock-stig-threshold.sh)")
                 continue
             for cid in ids:
                 if cid in stig_ids:

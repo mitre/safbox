@@ -39,6 +39,9 @@ CLAUDE.md
 # Site overrides for Ansible variables
 ansible/local.yml
 
+# Third-party roles ansible-galaxy installs from ansible/requirements.yml
+ansible/galaxy_roles/
+
 # Symlink to the current build log (scripts/build.sh maintains it)
 last.log
 

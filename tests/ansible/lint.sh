@@ -20,7 +20,8 @@ echo "== ansible-lint (production profile)"
 (cd ansible && ansible-lint -c .ansible-lint .)
 
 echo "== no lint skip comments"
-if grep -rnE 'noqa|skip_ansible_lint|yamllint disable|shellcheck disable' ansible/ verify/; then
+# Third-party roles in ansible/galaxy_roles/ (git-ignored) are not ours.
+if grep -rnE --exclude-dir=galaxy_roles 'noqa|skip_ansible_lint|yamllint disable|shellcheck disable' ansible/ verify/; then
   echo "FAIL: lint skip comments are not allowed (ADR-0001 Quality Standards)" >&2
   exit 1
 fi
@@ -54,5 +55,8 @@ tests/verify/overlay.sh
 
 echo "== on-box exercise profiles (FIPS exercise, first boot)"
 tests/verify/onbox.sh
+
+echo "== deviations: hardening role and overlay agree"
+scripts/deviations-check.sh
 
 echo "PASS: appliance layer lint"

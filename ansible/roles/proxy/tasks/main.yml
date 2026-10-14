@@ -56,9 +56,11 @@
       ansible.builtin.meta: flush_handlers
 
     # Exactly the proxy ports of the enabled applications; a switched-off
-    # application's port is closed.
+    # application's port is closed. They go in the zone the box ends up in
+    # (safbox_firewall_zone), which hardening makes the default.
     - name: Open the firewall for the proxy ports
       ansible.posix.firewalld:
+        zone: "{{ safbox_firewall_zone }}"
         port: "{{ item.https_port }}/tcp"
         permanent: true
         immediate: true

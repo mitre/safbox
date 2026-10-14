@@ -406,6 +406,104 @@ each group are listed in `ansible/group_vars/all/main.yml`.
   controls (`safbox-vulcan-*`, and `safbox-proxy-3` for Vulcan's proxy
   port) from a site threshold, as for a tools group.
 
+## STIG hardening and deviations
+
+The `hardening` role is the last role of the appliance play. It applies the
+DISA RHEL 10 STIG with the Ansible Lockdown RHEL10-STIG role, pinned in
+`ansible/group_vars/all/main.yml` (`safbox_hardening_lockdown`: release,
+the commit its tag names, and the STIG release) and installed on the build
+runner from `ansible/requirements.yml` by that commit. The build installs it
+itself; to run the playbook by hand, install it first from the `ansible/`
+directory:
+
+```
+ansible-galaxy install -r requirements.yml   # roles go to ansible/galaxy_roles/ (git-ignored)
+```
+
+The role refuses to run if another version of the Lockdown role is
+installed. What SAFBox does not apply is listed in
+[docs/deviations.md](deviations.md), generated from two files in
+`ansible/roles/hardening/vars/`:
+
+- `deviations.yml`: requirements deliberately not applied, each with a
+  reason code (`usability`, `content-defect` with its upstream issue,
+  `deploy-time`) and a justification. The hardening role switches each off
+  through the Lockdown role's per-rule variable (`rhel10stig_<digits of the
+  RHEL-10 ID>`), and the STIG overlay marks each Not Applicable with the same
+  justification. Every new entry is an owner decision.
+- `not_applied.yml`: rules switched off only because their Lockdown task
+  errors on SAFBox. They are not deviations: the overlay leaves them alone,
+  the baseline control still runs, and the locked STIG lists record its
+  result as it is (each entry notes whether that is a pass, a fail or a
+  skip, and why).
+
+`scripts/deviations-check.sh` fails if the deviations and the overlay's Not
+Applicable overrides differ, or if `docs/deviations.md` is stale; it runs in
+`tests/ansible/lint.sh` and as the first step of every build. After changing
+either file, or relocking a threshold, run `scripts/deviations-doc.sh` to
+regenerate the guide: it also lists every STIG control that still fails on a
+deployed clone (from `verify/thresholds/release.yml`), with its title and
+whether it is a known baseline defect
+(`verify/safbox-rhel10-stig-overlay/known-defects.yml`), a rule whose task
+failed, or not yet triaged. The titles come from
+`verify/safbox-rhel10-stig-overlay/baseline-titles.yml`, generated from the
+pinned baseline by `scripts/baseline-titles.sh` (network needed) so the
+guide is built offline; rerun it whenever the overlay's baseline ref
+changes (`tests/verify/overlay.sh` fails while it is stale).
+
+Lockdown's own variables are the knobs for everything else: set any
+`rhel10stig_*` value in `ansible/local.yml` (a rule switch to `false`, a
+banner text, a time server). A site that changes what is applied supplies
+its own threshold (see "Site inputs and thresholds"); switching the whole
+group off (`safbox_hardening_1: false`) also needs `hardening_expected:
+false` in the site inputs. Hardening does not reboot the build VM, because
+a reboot would run the first-boot unit inside the template; kernel
+arguments and some other settings take effect when a clone first boots, so
+the build threshold's STIG lists differ from the release threshold's.
+
+Known upstream defect: the pinned Lockdown release ends every run with
+`POST | Warning a reboot required but skip option set`, a task marked
+`changed_when: true`, so a second playbook run reports `changed=1`.
+`tests/ansible/idempotence.sh` tolerates exactly that task, matched by its
+name; any other change fails the check. The tolerance goes when a fixed
+Lockdown release is pinned.
+
+The login banner is a site setting: SAFBox ships a short placeholder
+(`safbox_logon_banner` in `ansible/group_vars/all/main.yml`). A site sets
+its own text there in `ansible/local.yml`, and the same text for the STIG
+overlay's `banner_message_text_cli`, `_ral` and `_gui` inputs in its site
+inputs file.
+
+Remote logging is off by default: `safbox_remote_log_server` is empty, the
+hardening role switches off the forwarding rule (RHEL-10-200642), and the
+overlay marks SV-280985 Not Applicable as a deploy-time deviation. A site
+that has a log server sets `safbox_remote_log_server` (and, if needed,
+`safbox_remote_log_port` and `safbox_remote_log_protocol`, tcp or udp) in
+`ansible/local.yml`, and the overlay input `remote_log_server` to the same
+server in its site inputs file. The hardening then writes
+`/etc/rsyslog.d/99-forwarding.conf` for that server, SV-280985 is evaluated,
+and the site supplies a threshold that expects it.
+
+USBGuard is enabled with no rules, so USB devices are blocked
+until a site allows them; see [docs/deviations.md](deviations.md).
+
+### The firewall zone
+
+`safbox_firewall_zone` in `ansible/group_vars/all/main.yml` is the one
+firewalld zone every role opens ports in: the platform role's base services
+(group `safbox-platform-3`) and the proxy's HTTPS ports. With hardening on
+it is `drop`, because Lockdown's rule RHEL-10-200532 (SV-280957, a
+deny-all firewall) moves the network interface into Lockdown's zone and
+makes it the default; `rhel10stig_custom_firewall_zone` is set from
+`safbox_firewall_zone`, so the two cannot differ. With hardening off
+(`safbox_hardening_1: false`) it is the distribution default, `public`.
+A site that switches Lockdown's zone rule off (`rhel10stig_200532: false`)
+while hardening stays on keeps the interface where it was, so it must also
+set `safbox_firewall_zone` to that zone (usually `public`) in
+`ansible/local.yml`; otherwise the proxy's ports open in a zone the
+interface is not in. `tests/ansible/structure.sh` fails if Lockdown's zone
+or any role's firewalld task stops using `safbox_firewall_zone`.
+
 ## Tools on the box
 
 The `tools` role installs each tool at the version pinned in

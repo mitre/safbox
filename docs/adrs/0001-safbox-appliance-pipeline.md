@@ -165,10 +165,11 @@ script, one threshold per context.
   Limits: the SAF CLI judges whole controls, not their tests; and the list
   holds only for repository defaults, so a site that changes what applies
   supplies its own threshold.
-- *STIG before Phase 7: lock the documented state.* Per severity (high,
+- *STIG: lock the documented state.* Per severity (high,
   medium, low) `passed.<sev>.controls` and `failed.<sev>.controls` list
-  exactly which STIG controls pass and which fail on the current image in
-  each context, as exact sets. Any control that changes status fails the
+  exactly which STIG controls pass and which fail on the current (since
+  Phase 7, hardened) image in each context, as exact sets, `max: 0` where a
+  set is empty (the SAF CLI cannot judge an empty list). Any control that changes status fails the
   gate, an improvement or a swap as much as a regression, so every change
   to the documented state is a reviewed threshold diff.
   `scripts/lock-stig-threshold.sh` regenerates the lists from a results
@@ -178,7 +179,8 @@ script, one threshold per context.
   a controlled, documented security state, not a clean report.
   (Amended 2026-10-13 by the owner: exact control lists replace the
   per-severity count floors, which could not tell one control from
-  another.)
+  another. Amended 2026-10-14: the lists now lock the hardened image, and
+  an empty set is written `max: 0`.)
 - *Site overrides.* A site whose image differs from the repository
   defaults (a tools group switched off, a pin overridden) names a site
   inputs file, layered after the tracked one, and a site threshold file,
@@ -808,6 +810,30 @@ regenerated from the hardened result with `scripts/lock-stig-threshold.sh`.
 - [ ] Heimdall, Vulcan, podman, and the proxy still work on a hardened clone.
 **Verification:** `packer build`; overlay profile result summarized with
 `saf summary`; deviation-set consistency check in `scripts/deviations-check.sh`.
+
+**Outcomes (amended 2026-10-14):**
+- *Three records, kept apart.* `deviations.yml` holds only owner-approved
+  deviations (N/A in the overlay, same text). Rules switched off only
+  because their Lockdown task errors go in
+  `ansible/roles/hardening/vars/not_applied.yml`: no reason code, no
+  overlay override, and the control's actual result is locked as it is.
+  Baseline content defects that are not deviations (a control that
+  misreports) go in `verify/safbox-rhel10-stig-overlay/known-defects.yml`,
+  with the upstream issue once filed. `docs/deviations.md` is generated
+  from all three plus the release threshold's failing lists, each failure
+  marked known defect, task failed, or not yet triaged.
+- *One firewall zone.* `safbox_firewall_zone` (`drop` with hardening,
+  `public` without) feeds Lockdown's zone and every role's firewalld task,
+  because hardening moves the interface into Lockdown's zone.
+- *Build and release STIG lists differ.* The build VM is not rebooted
+  after hardening (a reboot would run first boot inside the template), so
+  settings that take effect at boot fail in the build context and pass on
+  a clone.
+- *Idempotence tolerance.* The pinned Lockdown release reports one change
+  on every run (an unconditional reboot warning). Against the "second run
+  is a no-op" standard, `tests/ansible/idempotence.sh` tolerates exactly
+  that one named task and nothing else, until card safbox-m5f.33 gets it
+  fixed upstream and removes the tolerance.
 
 #### Phase 8: Proxy, landing page, and release gate (blocked by 5, 6, 7)
 **Files:** role `proxy` (nginx Quadlet, self-signed cert at first boot,

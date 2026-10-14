@@ -33,10 +33,18 @@ cinc-auditor vendor "$work/overlay" --chef-license accept-silent >/dev/null 2>&1
 cinc-auditor check "$work/overlay" --chef-license accept-silent >/dev/null 2>&1 \
   || { echo "FAIL: cinc-auditor check of the overlay" >&2; exit 1; }
 
+# The committed baseline titles (read offline by scripts/deviations-doc.sh)
+# are what the pinned baseline says now.
+if [ "$OVERLAY" = "$ROOT/verify/safbox-rhel10-stig-overlay" ]; then
+  "$ROOT/scripts/baseline-titles.sh" "$work/baseline-titles.yml" >/dev/null
+  diff -u "$OVERLAY/baseline-titles.yml" "$work/baseline-titles.yml" >&2 \
+    || { echo "FAIL: baseline-titles.yml differs from the pinned baseline; run scripts/baseline-titles.sh" >&2; exit 1; }
+fi
+
 read -r -a PY <<<"$(head -1 "$(command -v ansible-playbook)" | sed 's/^#!//')"
-"${PY[@]}" - "$OVERLAY" <<'PY'
+"${PY[@]}" - "$OVERLAY" "$work/overlay/vendor" "$ROOT" <<'PY'
 import pathlib, re, sys, yaml
-overlay = pathlib.Path(sys.argv[1])
+overlay, vendor, root = (pathlib.Path(a) for a in sys.argv[1:4])
 meta = yaml.safe_load((overlay / "inspec.yml").read_text())
 src = "\n".join(p.read_text() for p in sorted((overlay / "controls").glob("*.rb")))
 BASE = "redhat-enterprise-linux-10-stig-baseline"
@@ -74,6 +82,44 @@ else:
     for needle in ["template", "hypervisor"]:
         if needle not in overrides["SV-280935"].lower():
             errors.append(f"SV-280935: justification does not mention '{needle}'")
+# The hardening role switches a rule off by its RHEL-10 STIG ID and the
+# overlay overrides it by its SV ID; both come from one entry in the
+# deviations and not-applied files, so each pair must be the same
+# requirement in the pinned baseline (its tag stig_id).
+stig_id_of = {}
+for f in vendor.glob("*/controls/SV-*.rb"):
+    m = re.search(r"tag stig_id: '([^']+)'", f.read_text())
+    if m:
+        stig_id_of[f.stem] = m.group(1)
+if not stig_id_of:
+    errors.append("vendor: no baseline controls found to map SV IDs to RHEL-10 STIG IDs")
+hardening_vars = root / "ansible/roles/hardening/vars"
+for name, key in (("deviations.yml", "hardening_deviations"), ("not_applied.yml", "hardening_not_applied")):
+    path = hardening_vars / name
+    entries = (yaml.safe_load(path.read_text()) or {}).get(key) or [] if path.exists() else []
+    for e in entries:
+        vid, sid = e.get("vuln_id"), e.get("stig_id")
+        if stig_id_of and stig_id_of.get(vid) != sid:
+            errors.append(f"{name}: {vid} is {stig_id_of.get(vid, 'not a baseline control')} in the pinned "
+                          f"baseline, not {sid}")
+
+# The login banner is a site setting (group_vars safbox_logon_banner, which
+# the hardening role hands to Lockdown). The baseline's banner controls
+# compare the configured banner with its banner_message_text_* inputs, with
+# whitespace removed, so the overlay sets each of those inputs to the same
+# text; otherwise they would demand the DoD notice SAFBox does not ship.
+group_vars = yaml.safe_load((root / "ansible/group_vars/all/main.yml").read_text())
+banner = "".join(str(group_vars.get("safbox_logon_banner") or "").split())
+if not banner:
+    errors.append("group_vars: no safbox_logon_banner")
+overlay_inputs = {i.get("name"): i for i in meta.get("inputs") or []}
+for name in ("banner_message_text_cli", "banner_message_text_ral", "banner_message_text_gui"):
+    i = overlay_inputs.get(name)
+    if not i or i.get("profile") != BASE:
+        errors.append(f"inputs: {name} must be set for the baseline (profile: {BASE})")
+    elif "".join(str(i.get("value") or "").split()) != banner:
+        errors.append(f"inputs: {name} differs from group_vars safbox_logon_banner")
+
 if errors:
     print("\n".join("FAIL: " + e for e in errors), file=sys.stderr); sys.exit(1)
 print(f"PASS: overlay includes the pinned baseline; {len(overrides)} Not Applicable override(s), each with impact 0.0, a justification and a skip")

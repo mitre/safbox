@@ -68,15 +68,17 @@ counts = []
 for status in ("passed", "failed"):
     for sev in SEVERITIES:
         ids = sorted((gen.get(status, {}).get(sev) or {}).get("controls") or [])
-        out[status][sev] = {"controls": ids}
+        # The SAF CLI cannot judge an empty controls list; max: 0 is the
+        # same exact set (none) in a form it evaluates.
+        out[status][sev] = {"controls": ids} if ids else {"max": 0}
         counts.append(f"{sev} {status} {len(ids)}")
 out["error"] = current["error"]
 
 stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
 provenance = [f"{PROVENANCE}generated {stamp} by scripts/lock-stig-threshold.sh",
               f"{PROVENANCE}from {source}",
-              f"{PROVENANCE}" + ", ".join(f"{sev} {len(out['passed'][sev]['controls'])}/"
-                                           f"{len(out['failed'][sev]['controls'])}" for sev in SEVERITIES)
+              f"{PROVENANCE}" + ", ".join(f"{sev} {len(out['passed'][sev].get('controls', []))}/"
+                                           f"{len(out['failed'][sev].get('controls', []))}" for sev in SEVERITIES)
               + " (passed/failed)"]
 threshold.write_text("---\n" + "\n".join(header + provenance) + "\n"
                      + yaml.dump(out, Dumper=Dumper, sort_keys=False, default_flow_style=False))

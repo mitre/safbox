@@ -1,11 +1,29 @@
 ---
-# Collections used by the appliance layer, pinned to exact versions
-# (ADR-0001 Quality Standards: pinned inputs). These match the versions
-# bundled with the ansible 14.5.0 community package.
-# Install: ansible-galaxy collection install -r ansible/requirements.yml
+# Roles and collections the build runner needs for the appliance layer,
+# pinned to exact versions (ADR-0001 Quality Standards: pinned inputs).
+# Install both from the ansible/ directory:
+#   ansible-galaxy install -r requirements.yml
+# Roles land in galaxy_roles/ (the first roles_path in ansible.cfg,
+# git-ignored); the build does the same through Packer's galaxy_file.
+
+# The Ansible Lockdown RHEL 10 STIG role the hardening role applies. Pinned
+# by the commit its release tag names, so a moved tag cannot change it; the
+# release, commit and STIG release are recorded in group_vars
+# (safbox_hardening_lockdown), and tests/ansible/pins.sh fails if they differ.
+roles:
+  - name: RHEL10-STIG
+    src: https://github.com/ansible-lockdown/RHEL10-STIG.git
+    scm: git
+    version: db177ced50f33a42d1ebbfafa86eb02733665602
+
+# These match the versions bundled with the ansible 14.5.0 community
+# package. ansible.posix, community.general and community.crypto are the
+# collections the Lockdown role declares (its collections/requirements.yml).
 collections:
   - name: ansible.posix
     version: 2.2.2
+  - name: community.crypto
+    version: 3.5.0
   - name: community.general
     version: 13.5.0
   - name: containers.podman

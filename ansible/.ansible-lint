@@ -6,6 +6,7 @@ offline: true
 strict: true
 exclude_paths:
   - collections/
+  - galaxy_roles/
 kinds:
   - playbook: playbooks/*.yml
   - vars: group_vars/**/*.yml

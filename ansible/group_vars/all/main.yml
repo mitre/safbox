@@ -69,6 +69,11 @@ safbox_vulcan_1: true     # Vulcan and its PostgreSQL as a Quadlet pod, secrets 
 # proxy
 safbox_proxy_1: true      # nginx TLS proxy for the enabled applications, certificate from first boot
 
+# hardening (the last role; ADR-0001 §Decision: hardened with documented
+# deviations). Which STIG rules it applies is set by the Lockdown role's own
+# variables (rhel10stig_*) and the deviations file; see docs/deviations.md.
+safbox_hardening_1: true  # apply the RHEL 10 STIG with the pinned Ansible Lockdown role
+
 # ---------------------------------------------------------------------------
 # Services
 # ---------------------------------------------------------------------------
@@ -84,6 +89,52 @@ safbox_heimdall_loopback_port: 3000
 safbox_heimdall_https_port: 8443
 safbox_vulcan_loopback_port: 3001
 safbox_vulcan_https_port: 9443
+
+# The firewalld zone the box ends up in. Hardening moves the interface into
+# Lockdown's zone and makes it the default (drop: only ssh, dns and ntp are
+# allowed), so the proxy opens its ports in that same zone; without
+# hardening the distribution default (public) stays.
+safbox_firewall_zone: "{{ 'drop' if safbox_hardening_1 | bool else 'public' }}"
+
+# ---------------------------------------------------------------------------
+# Ansible Lockdown RHEL10-STIG role variables
+# ---------------------------------------------------------------------------
+# The Lockdown role's defaults apply except where set here. These are not
+# STIG rules: rule switches (rhel10stig_<n>) are set only from the hardening
+# role's deviations.yml and not_applied.yml (docs/deviations.md).
+
+# The role's local fact file records its run time, so it is rewritten on
+# every run and a second run is never clean. The hardening role writes its
+# own record of what was applied instead (/usr/local/share/safbox/hardening).
+create_benchmark_facts: false
+
+# Lockdown's firewalld zone is the box's zone (safbox_firewall_zone above).
+rhel10stig_custom_firewall_zone: "{{ safbox_firewall_zone }}"
+
+# Login banner shown before local and SSH logins (/etc/issue, which sshd's
+# Banner names). A SAFBox placeholder, not the DoD notice: a site replaces it
+# with its own notice in ansible/local.yml, and sets the same text for the
+# STIG overlay's banner_message_text_* inputs in its site inputs file
+# (tests/verify/overlay.sh checks the tracked pair agree).
+safbox_logon_banner: >-
+  SAFBox security appliance. Authorized use only. Activity on this system may
+  be monitored and recorded.
+rhel10stig_logon_banner_nice: "{{ safbox_logon_banner }}"
+
+# Remote log server for audit records (RHEL-10-200642, SV-280985). Empty by
+# default: SAFBox forwards no logs, the hardening role switches the rule off
+# and the STIG overlay marks SV-280985 Not Applicable (a deploy-time
+# deviation, docs/deviations.md). A site names its server here in
+# ansible/local.yml, and sets the overlay input remote_log_server to the same
+# value in its site inputs file; the rule is then applied with these values
+# and the control evaluated. Lockdown writes /etc/rsyslog.d/99-forwarding.conf
+# (rsyslog omfwd), whose protocol is tcp or udp.
+safbox_remote_log_server: ""
+safbox_remote_log_port: 514
+safbox_remote_log_protocol: tcp
+rhel10stig_rsyslog_remote_server_ip: "{{ safbox_remote_log_server }}"
+rhel10stig_rsyslog_remote_server_port: "{{ safbox_remote_log_port }}"
+rhel10stig_rsyslog_remote_server_protocol: "{{ safbox_remote_log_protocol }}"
 
 # ---------------------------------------------------------------------------
 # Pins: container images
@@ -192,6 +243,23 @@ safbox_tool_ansible_collections:
     version: 2.26.9
   - name: community.general
     version: 11.4.9
+
+# ---------------------------------------------------------------------------
+# Pins: hardening content
+# ---------------------------------------------------------------------------
+# The Ansible Lockdown RHEL 10 STIG role (hardening group 1), installed on the
+# build runner from ansible/requirements.yml by the commit its release tag
+# names; tests/ansible/pins.sh fails if the two differ. The hardening role
+# refuses to run any other installed version. Release 1.1.0 targets the
+# RHEL 10 STIG V1R1, as does the MITRE baseline the STIG overlay pins
+# (verify/safbox-rhel10-stig-overlay); both cover the same 434 requirements.
+# The role needs ansible-core 2.16.1 or newer on the build runner.
+safbox_hardening_lockdown:
+  name: RHEL10-STIG
+  src: https://github.com/ansible-lockdown/RHEL10-STIG.git
+  version: 1.1.0
+  commit: db177ced50f33a42d1ebbfafa86eb02733665602
+  benchmark: v1r1
 
 # HashiCorp Packer (tools group 4), the release zip for linux/amd64. The
 # checksum is the one in packer_<version>_SHA256SUMS, whose detached

@@ -16,8 +16,8 @@ def check_load(role, t):
     if "always" not in (t.get("tags") or []):
         errors.append(f"{role}: '{t['name']}' must be tagged always")
 # The switchable roles, in playbook order. Each service (Heimdall, Vulcan,
-# the TLS proxy) is its own role so a site can switch one off.
-SWITCHABLE = ["platform", "base", "tools", "heimdall", "vulcan", "proxy"]
+# the TLS proxy) is its own role so a site can switch one off; hardening is last.
+SWITCHABLE = ["platform", "base", "tools", "heimdall", "vulcan", "proxy", "hardening"]
 playbook = yaml.safe_load((root / "ansible/playbooks/safbox.yml").read_text())
 in_play = [r["role"] if isinstance(r, dict) else r for r in playbook[0].get("roles") or []]
 if [r for r in in_play if r in SWITCHABLE] != SWITCHABLE:
@@ -52,12 +52,16 @@ for role in SWITCHABLE:
 # but present), so a Debian run fails on a wrong value rather than an
 # undefined variable. A name with the same value in every family file, or
 # repeating vars/main.yml's value, belongs in vars/main.yml alone.
+OS_FAMILIES = {"RedHat", "Debian"}
 for role_dir in sorted(p for p in (root / "ansible/roles").iterdir() if (p / "vars").is_dir()):
     role = role_dir.name
     main = role_dir / "vars/main.yml"
     common = (yaml.safe_load(main.read_text()) or {}) if main.exists() else {}
+    # Only files named after an OS family are family files; any other file
+    # in vars/ is data the role loads by name (the hardening role's
+    # deviations.yml and not_applied.yml).
     families = {f.stem: yaml.safe_load(f.read_text()) or {}
-                for f in sorted((role_dir / "vars").glob("*.yml")) if f.name != "main.yml"}
+                for f in sorted((role_dir / "vars").glob("*.yml")) if f.stem in OS_FAMILIES}
     tasks = yaml.safe_load((role_dir / "tasks/main.yml").read_text()) or []
     loads = any(t.get("name") == "Load OS family variables" for t in tasks)
     if loads != bool(families):
@@ -85,6 +89,41 @@ for switch in sorted(k for k in gv if re.fullmatch(r"safbox_tools_\d+", k)):
     n = switch.rsplit("_", 1)[1]
     if f"control 'safbox-tools-{n}'" not in tools_controls:
         errors.append(f"verify: no control safbox-tools-{n} checks the tool group {switch} installs")
+# One firewalld zone (safbox_firewall_zone): hardening moves the interface
+# into Lockdown's zone and makes it the default, so Lockdown's zone variable
+# and every firewalld task of the project's roles (platform group 3, the
+# proxy ports) must name that same zone, or ports open in a zone the
+# interface is no longer in.
+ZONE = "{{ safbox_firewall_zone }}"
+if "safbox_firewall_zone" not in gv:
+    errors.append("group_vars: safbox_firewall_zone is not defined")
+if gv.get("rhel10stig_custom_firewall_zone") != ZONE:
+    errors.append(f"group_vars: rhel10stig_custom_firewall_zone must be \"{ZONE}\"")
+def firewalld_tasks(tasks):
+    for t in tasks or []:
+        if not isinstance(t, dict):
+            continue
+        if "ansible.posix.firewalld" in t:
+            yield t
+        for key in ("block", "rescue", "always"):
+            yield from firewalld_tasks(t.get(key))
+seen_firewalld = set()
+for tasks_file in sorted((root / "ansible/roles").glob("*/tasks/*.yml")):
+    role = tasks_file.parts[-3]
+    for t in firewalld_tasks(yaml.safe_load(tasks_file.read_text())):
+        seen_firewalld.add(role)
+        if (t["ansible.posix.firewalld"] or {}).get("zone") != ZONE:
+            errors.append(f"{role}: firewalld task '{t.get('name')}' must set zone: \"{ZONE}\"")
+for role in ("platform", "proxy"):
+    if role not in seen_firewalld:
+        errors.append(f"{role}: no ansible.posix.firewalld task found to check")
+# Hardening is the last role of the appliance play, after every role that
+# installs or configures something and before validation and the seal
+# (ADR-0001 §Decision: hardened with documented deviations).
+play = yaml.safe_load((root / "ansible/playbooks/safbox.yml").read_text())
+play_roles = [r["role"] if isinstance(r, dict) else r for r in play[0].get("roles") or []]
+if not play_roles or play_roles[-1] != "hardening":
+    errors.append(f"playbook: hardening must be the last role of the appliance play (roles: {play_roles})")
 seal = yaml.safe_load((root / "ansible/roles/seal/tasks/main.yml").read_text())
 for t in seal:
     if t.get("name") == "Load OS family variables":

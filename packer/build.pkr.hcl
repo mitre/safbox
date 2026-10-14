@@ -38,7 +38,10 @@ locals {
   ansible_dir = coalesce(var.ansible_dir, "${local.repo_root}/ansible")
   ansible_env = [
     "ANSIBLE_CONFIG=${local.ansible_dir}/ansible.cfg",
-    "ANSIBLE_ROLES_PATH=${local.ansible_dir}/roles",
+    # galaxy_roles/ first: ansible-galaxy installs the pinned third-party
+    # roles from requirements.yml (the Lockdown STIG role) into the first
+    # entry, as ansible.cfg's roles_path does.
+    "ANSIBLE_ROLES_PATH=${local.ansible_dir}/galaxy_roles:${local.ansible_dir}/roles",
     "ANSIBLE_FORCE_COLOR=0",
   ]
   ansible_extra = flatten([for v in var.ansible_extra_vars : ["-e", v]])
@@ -47,6 +50,14 @@ locals {
 build {
   name    = "safbox"
   sources = ["source.proxmox-iso.el10"]
+
+  # The hardening role and the STIG overlay must agree on the deviations
+  # before anything is applied (ADR-0001 Phase 7): a drifted pair fails the
+  # build here rather than shipping hardening the validation does not
+  # describe. Static; runs on this machine.
+  provisioner "shell-local" {
+    inline = ["'${local.repo_root}/scripts/deviations-check.sh'"]
+  }
 
   # Assert, do not configure: FIPS is on in kernel and userland, Secure Boot
   # is enforced, the guest agent and cloud-init are present and enabled, and

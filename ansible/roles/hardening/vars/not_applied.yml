@@ -1,0 +1,55 @@
+---
+# Rules switched off only because their Lockdown task fails to apply on
+# SAFBox (a task error, not a policy choice), so the hardening run completes.
+# These are NOT deviations: no reason code, no justification, nothing in the
+# STIG overlay. The baseline control of each still runs and its result is
+# locked in verify/thresholds/ as it is; scan records what that result is,
+# because a requirement can be met by other means with the task off (FIPS
+# from installation) or its control can skip. Remove an entry when its task
+# is fixed (upstream or by a Lockdown variable).
+# scripts/deviations-check.sh enforces that separation.
+#
+# Each entry: vuln_id, stig_id (names the Lockdown switch,
+# rhel10stig_<digits>), failure (a one-line record of the error seen) and
+# scan (the control's result in the build and release scans, and why).
+hardening_not_applied:
+  - vuln_id: SV-281008
+    stig_id: RHEL-10-300010
+    failure: >-
+      'Set fact from output' reads discovered_crypto_policies_config.stdout,
+      but the task that registers it runs only with rhel10stig_disruption_high,
+      so it errors with "object of type 'dict' has no attribute 'stdout'"
+    scan: >-
+      passes: the FIPS crypto policy is set at installation, so the
+      requirement is met without the task
+  - vuln_id: SV-281011
+    stig_id: RHEL-10-300040
+    failure: >-
+      The warning-count task's when item
+      "(rhel10stig_sshd_config_ciphers not in discovered_openssh_server_ciphers.stdout"
+      has an unclosed parenthesis: "Syntax error in expression: unexpected end
+      of template, expected ')'"
+    scan: >-
+      passes: under the FIPS crypto policy set at installation, sshd offers
+      only approved ciphers without the task
+  - vuln_id: SV-281317
+    stig_id: RHEL-10-701150
+    failure: >-
+      The task applies but has no effect: EL10 ships no /etc/systemd/coredump.conf,
+      and lineinfile creates one holding ProcessSizeMax=0 outside any [Coredump]
+      section, which systemd ignores; the baseline control then errors
+      (NoMethodError: undefined method 'ProcessSizeMax' for nil), and an
+      errored control fails the gate
+    scan: >-
+      skipped: with the task off there is no /etc/systemd/coredump.conf (EL10
+      ships it as a %ghost file, defaults in /usr/lib/systemd/coredump.conf),
+      and the control's parse_config_file reports "Can't find file" and skips
+  - vuln_id: SV-281318
+    stig_id: RHEL-10-701160
+    failure: >-
+      As for RHEL-10-701150: Storage=none is written outside any [Coredump]
+      section of a newly created /etc/systemd/coredump.conf, systemd ignores it,
+      and the baseline control errors (undefined method 'Storage' for nil)
+    scan: >-
+      skipped: as for SV-281317, the control finds no
+      /etc/systemd/coredump.conf and skips

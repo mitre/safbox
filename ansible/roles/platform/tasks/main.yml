@@ -47,8 +47,10 @@
   when: safbox_platform_3 | default(true) | bool
   tags: [safbox-platform-3]
   block:
+    # In the zone the box ends up in (safbox_firewall_zone in group_vars).
     - name: Allow the base services through the firewall
       ansible.posix.firewalld:
+        zone: "{{ safbox_firewall_zone }}"
         service: "{{ item }}"
         permanent: true
         immediate: true

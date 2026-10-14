@@ -1,0 +1,10 @@
+# SAFBox hardening record. Written by the hardening role after the Ansible
+# Lockdown role applied the RHEL 10 STIG; read by the validation profile.
+# Deviations are documented in docs/deviations.md. Not a secret.
+{% set switched = hardening_switched_off.results | rejectattr('skipped', 'defined') | map(attribute='item') | list %}
+SAFBOX_LOCKDOWN_ROLE={{ safbox_hardening_lockdown.name }}
+SAFBOX_LOCKDOWN_VERSION={{ safbox_hardening_lockdown.version }}
+SAFBOX_LOCKDOWN_COMMIT={{ safbox_hardening_lockdown.commit }}
+SAFBOX_STIG_RELEASE={{ safbox_hardening_lockdown.benchmark }}
+SAFBOX_DEVIATIONS={{ switched | selectattr('reason', 'defined') | map(attribute='vuln_id') | join(' ') }}
+SAFBOX_NOT_APPLIED={{ switched | rejectattr('reason', 'defined') | map(attribute='vuln_id') | join(' ') }}

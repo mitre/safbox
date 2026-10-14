@@ -195,3 +195,16 @@ inputs:
     value:
       heimdall: 3000
       vulcan: 3001
+  - name: hardening_expected
+    description: >-
+      True when the hardening task group ran (safbox_hardening_1, the
+      default). A site that switches it off sets this false in its site
+      inputs file, and its site threshold leaves out the hardening controls.
+    type: Boolean
+    value: true
+  - name: lockdown_version
+    description: >-
+      Release of the Ansible Lockdown RHEL10-STIG role the hardening role
+      applied (safbox_hardening_lockdown.version).
+    type: String
+    value: 1.1.0

@@ -23,6 +23,9 @@ requirement is inherited from the hypervisor or storage layer instead, and
 SAFBox's STIG overlay marks it Not Applicable on that basis. Make sure the
 storage that holds your SAFBox is encrypted.
 
+SAFBox is hardened to the DISA RHEL 10 STIG with documented deviations; what
+is relaxed, and why, is in [docs/deviations.md](docs/deviations.md).
+
 The design is recorded in [docs/adrs/0001-safbox-appliance-pipeline.md](docs/adrs/0001-safbox-appliance-pipeline.md).
 
 ## Two ways to use it

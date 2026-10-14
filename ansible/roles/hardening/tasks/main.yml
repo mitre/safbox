@@ -1,0 +1,73 @@
+---
+- name: RHEL 10 STIG with Ansible Lockdown
+  when: safbox_hardening_1 | default(true) | bool
+  tags: [safbox-hardening-1]
+  vars:
+    hardening_lockdown_record: >-
+      {{ lookup('ansible.builtin.first_found',
+                lookup('ansible.builtin.config', 'DEFAULT_ROLES_PATH')
+                | map('regex_replace', '$',
+                      '/' ~ safbox_hardening_lockdown.name ~ '/' ~ hardening_lockdown_install_info)
+                | list, errors='ignore') }}
+  block:
+    # ansible-galaxy records the commit it installed from; a role installed
+    # some other way, or left over at another version, is refused.
+    - name: Refuse any Lockdown role but the pinned release
+      ansible.builtin.assert:
+        that:
+          - hardening_lockdown_record | length > 0
+          - (lookup('ansible.builtin.file', hardening_lockdown_record) | from_yaml).version
+            == safbox_hardening_lockdown.commit
+        fail_msg: >-
+          {{ safbox_hardening_lockdown.name }} {{ safbox_hardening_lockdown.version }}
+          ({{ safbox_hardening_lockdown.commit }}) is not installed on this machine;
+          run 'ansible-galaxy install -r requirements.yml' in the ansible/ directory.
+        quiet: true
+
+    - name: Load the deviations
+      ansible.builtin.include_vars:
+        file: deviations.yml
+
+    - name: Load the rules not applied because their task fails
+      ansible.builtin.include_vars:
+        file: not_applied.yml
+
+    # Each rule is switched off through the Lockdown role's own per-rule
+    # variable, rhel10stig_<the digits of its RHEL-10 STIG ID>, the knob the
+    # role provides for exactly this. A fact outranks the role's defaults.
+    # A deviation with a site_setting holds only while the site leaves
+    # safbox_<site_setting> empty; once set, the rule is applied.
+    - name: Switch off the deviated rules and the rules whose task fails
+      when: >-
+        item.site_setting is not defined
+        or lookup('ansible.builtin.vars', 'safbox_' ~ item.site_setting, default='') | string | length == 0
+      ansible.builtin.set_fact:
+        "{{ 'rhel10stig_' ~ (item.stig_id | regex_replace('^RHEL-10-', '')) }}": false
+      loop: "{{ hardening_deviations + hardening_not_applied }}"
+      loop_control:
+        label: "{{ item.stig_id }} ({{ item.vuln_id }})"
+      register: hardening_switched_off
+
+    - name: Apply the RHEL 10 STIG with the pinned Lockdown role
+      ansible.builtin.include_role:
+        name: "{{ safbox_hardening_lockdown.name }}"
+        apply:
+          tags: [safbox-hardening-1]
+
+    # Written only after the Lockdown role completed; the validation profile
+    # checks it names the pinned release (safbox-hardening-1).
+    - name: Create the directory of the SAFBox records
+      ansible.builtin.file:
+        path: "{{ hardening_record_path | dirname }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Record the hardening that was applied
+      ansible.builtin.template:
+        src: hardening.j2
+        dest: "{{ hardening_record_path }}"
+        owner: root
+        group: root
+        mode: '0644'
