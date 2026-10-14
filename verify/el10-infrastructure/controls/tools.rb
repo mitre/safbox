@@ -20,7 +20,7 @@ status_row = lambda do |label, version|
 end
 
 control 'safbox-tools-1' do
-  impact 0.7
+  impact 1.0
   title 'CINC Auditor is installed at its pinned version'
   desc 'ADR-0001 Phase 3: CINC Auditor ships on the box as an assessment tool (tools group ' \
        'safbox-tools-1), at the version pinned in group_vars. Only the version is compared, so ' \
@@ -39,7 +39,7 @@ control 'safbox-tools-1' do
 end
 
 control 'safbox-tools-2' do
-  impact 0.7
+  impact 1.0
   title 'The SAF CLI is installed at its pinned version on the distribution Node.js'
   desc 'ADR-0001 Phase 3: the MITRE SAF CLI (tools group safbox-tools-2), installed from npm at ' \
        "its pinned version and run by the distribution's Node.js, which uses the system OpenSSL and so its FIPS provider."
@@ -80,7 +80,7 @@ control 'safbox-tools-2' do
 end
 
 control 'safbox-tools-3' do
-  impact 0.7
+  impact 1.0
   title 'Ansible and the collections the Lockdown STIG role needs are installed at their pinned versions'
   desc 'ADR-0001 Phase 3: ansible-core from the distribution at the version pinned in group_vars ' \
        '(tools group safbox-tools-3), and the collections the Ansible Lockdown RHEL10-STIG role ' \
@@ -113,7 +113,7 @@ control 'safbox-tools-3' do
 end
 
 control 'safbox-tools-4' do
-  impact 0.7
+  impact 1.0
   title 'HashiCorp Packer is installed at its pinned version with its license'
   desc 'ADR-0001 Phase 3 and Risks (Packer license): Packer is its own switchable tools group ' \
        '(safbox-tools-4) so a distributor can exclude it, and its Business Source License text ' \

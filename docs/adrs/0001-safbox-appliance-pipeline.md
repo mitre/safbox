@@ -128,6 +128,63 @@ SSH, validate the result from outside, then seal the image.
 Scheduled self-scans of a deployed box against the STIG overlay are a
 separate feature and do not use the build profile.
 
+**Validation layout** (amended 2026-10-13 by the owner): one profile, one
+script, one threshold per context.
+
+- *Wrapper and children.* `verify/inspec-safbox` is a root wrapper with no
+  controls, inputs or platform support of its own. It depends by path on
+  its children and includes each one whole: `verify/el10-infrastructure`
+  (every SAFBox infrastructure control, supports the redhat family at
+  release 10.*) and `verify/safbox-rhel10-stig-overlay` (the STIG overlay below).
+  One scan of the wrapper is both the build-time gate and the release
+  gate; each child also runs alone. The wrapper fetches the overlay's
+  pinned baseline from git at scan time; the build is online already, so
+  the baseline is not vendored.
+- *Omniprofile direction.* A later OS family adds its own children
+  (for example a Debian-family infrastructure profile and an Ubuntu STIG
+  overlay) to the same wrapper. Each child's `supports` names its
+  platform, and CINC Auditor skips a child that does not match the
+  target, so the wrapper stays one profile for every image.
+- *Inputs from files.* `scripts/validate.sh <target> <key> <label>
+  <profile> <threshold> <inputs-file>` passes a tracked inputs file per
+  context (`verify/inputs/build.yml`, `verify/inputs/release.yml`) to CINC
+  Auditor with `--input-file`; inputs given to the wrapper this way reach
+  every child (proven against a clone). No caller passes `--input`.
+- *Critical-bucket thresholds.* Every infrastructure control is impact
+  1.0, the SAF CLI's critical severity, and no STIG control uses it (CAT I
+  is 0.7). Each tracked threshold (`verify/thresholds/build.yml`,
+  `verify/thresholds/release.yml`) lists exactly the infrastructure
+  controls a repository-default image passes in that context under
+  `passed.critical.controls`, which the SAF CLI treats as an exact set,
+  with `failed.critical.max: 0` and `error.total.max: 0`. A static test
+  derives the list from the controls' `only_if` conditions and the
+  context's inputs, so a control cannot be added without its threshold.
+  Limits: the SAF CLI judges whole controls, not their tests; and the list
+  holds only for repository defaults, so a site that changes what applies
+  supplies its own threshold.
+- *STIG before Phase 7: lock the documented state.* Per severity (high,
+  medium, low) `passed.<sev>.controls` and `failed.<sev>.controls` list
+  exactly which STIG controls pass and which fail on the current image in
+  each context, as exact sets. Any control that changes status fails the
+  gate, an improvement or a swap as much as a regression, so every change
+  to the documented state is a reviewed threshold diff.
+  `scripts/lock-stig-threshold.sh` regenerates the lists from a results
+  file (`saf generate threshold -c`) and records the source. No baseline
+  control is skipped to pass, and the critical and error clauses are never
+  loosened. Known weaknesses remain visible findings: SAFBox demonstrates
+  a controlled, documented security state, not a clean report.
+  (Amended 2026-10-13 by the owner: exact control lists replace the
+  per-severity count floors, which could not tell one control from
+  another.)
+- *Site overrides.* A site whose image differs from the repository
+  defaults (a tools group switched off, a pin overridden) names a site
+  inputs file, layered after the tracked one, and a site threshold file,
+  which replaces the tracked one. The build takes them through the Packer
+  variables `build_gate_site_inputs_file` and
+  `build_gate_site_threshold_file`, the release gate through
+  `SAFBOX_SITE_INPUTS` and `SAFBOX_SITE_THRESHOLD`; both default to none.
+  Site files live in git-ignored `verify/local/` and are never committed.
+
 **Role layout and task groups** (amended 2026-10-11): the appliance layer
 has `platform` (OS contract and container runtime), `base` (first-boot
 framework and the `safbox` command), `tools` (CINC Auditor now; the SAF CLI,
@@ -172,11 +229,12 @@ Within the appliance layer:
   (for example the account lockout policy) are disabled through the Lockdown
   role's per-rule variables in a single `deviations.yml`, each entry carrying
   the STIG ID and a justification. The same deviations appear on the
-  validation side: an InSpec **overlay profile** (`verify/rhel10-stig-overlay`)
+  validation side: an InSpec **overlay profile** (`verify/safbox-rhel10-stig-overlay`)
   depends on the MITRE SAF STIG baseline for the base OS and marks each
   deviated requirement Not Applicable with the same justification, following
   the SAF overlay pattern; the SAFBox infrastructure controls stay in their
-  own profile (`verify/inspec-safbox`). One list of
+  own profile (`verify/el10-infrastructure`), and the `verify/inspec-safbox`
+  wrapper runs both (see Validation layout). One list of
   deviations, consumed by both sides, so hardening and validation cannot
   drift apart. Hardening runs as the last play before validation and the seal.
   The goal is not a box hardened to the hilt by default: no two environments
@@ -515,7 +573,8 @@ credible FIPS path for regulated networks; small footprint.
   clone and, once CI exists, on every push; the hook alone does not travel
   with the repository. The seal's self-assertions and the validation profile enforce the image side.
 - **Validation is the gate.** `packer build` fails if the outside-in InSpec
-  run against the build VM does not meet `verify/threshold.yml`, or if the
+  run against the build VM does not meet `verify/thresholds/build.yml` (or
+  the site threshold that replaces it), or if the
   seal's post-conditions are unmet. The threshold is evaluated by the SAF
   CLI, never reimplemented.
 - **Two-audience docs.** Every user-facing feature lands with a line in the
@@ -533,7 +592,7 @@ credible FIPS path for regulated networks; small footprint.
 | `platform` role (OS contract, podman, Quadlet) | all service roles | Phase 2 |
 | `base` role: first-boot framework (`/etc/safbox/`, `safbox-firstboot.service`, hooks) and the `safbox` command registry | heimdall, vulcan, proxy, content | Phase 2 |
 | `tools` role | Phases 2 and 3 | Phase 2 (CINC Auditor) |
-| `seal` role with self-assertions; `verify/` profile, threshold, `scripts/validate.sh` | every build and release | Phase 2 |
+| `seal` role with self-assertions; `verify/` profiles, inputs, thresholds, `scripts/validate.sh` | every build and release | Phase 2 (layout amended 2026-10-13) |
 | `content/manifest.yml` schema and loader | content role, `safbox content` | Phase 4 |
 
 ### Repository layout
@@ -561,13 +620,17 @@ safbox/
   content/
     manifest.yml
   verify/
-    inspec-safbox/             SAFBox infrastructure controls (every build)
-    rhel10-stig-overlay/       STIG overlay over the pinned MITRE baseline, deviations N/A
-    threshold.yml
+    inspec-safbox/             root wrapper: includes every child; the build and release gates scan it
+    el10-infrastructure/       SAFBox infrastructure controls, RHEL 10 family, all impact 1.0
+    safbox-rhel10-stig-overlay/  STIG overlay over the pinned MITRE baseline, deviations N/A
+    inputs/{build,release}.yml       tracked inputs per context (--input-file)
+    thresholds/{build,release}.yml   SAF CLI thresholds per context
+    local/                     site inputs and thresholds (git-ignored)
   scripts/
     build.sh                   runs Packer; logs to .build/logs, last.log
     validate.sh                outside-in validation (CINC Auditor + saf)
     clone-and-ssh.sh           clone smoke test and release gate
+    lock-stig-threshold.sh     regenerates a threshold's STIG lists from a scan
   ansible/roles/hardening/
     vars/deviations.yml        STIG IDs excluded, with justification
   docs/
@@ -706,9 +769,11 @@ hook generating `POSTGRES_PASSWORD`, `SECRET_KEY_BASE`, `CIPHER_PASSWORD`,
 #### Phase 7: STIG hardening with documented deviations (blocked by 3, 4)
 **Files:** role `hardening` wrapping the pinned Ansible Lockdown STIG role,
 `ansible/roles/hardening/vars/deviations.yml`, the STIG overlay profile
-`verify/rhel10-stig-overlay/` (created early for the encryption-at-rest
-deviation; depends on the pinned MITRE STIG baseline) wired into the build
-and release-gate validation, `threshold.yml` updated.
+`verify/safbox-rhel10-stig-overlay/` (created early for the encryption-at-rest
+deviation; depends on the pinned MITRE STIG baseline; already included by
+the `verify/inspec-safbox` wrapper in both gates), `verify/thresholds/`
+updated: the STIG control lists locked at the pre-hardening state are
+regenerated from the hardened result with `scripts/lock-stig-threshold.sh`.
 **Acceptance criteria:**
 - [ ] Lockdown role and MITRE baseline for the base release pinned in the
       manifest at matching STIG releases.
@@ -718,7 +783,7 @@ and release-gate validation, `threshold.yml` updated.
       the build if the two sets differ.
 - [ ] Hardening runs after all other roles and before validation and the seal; the
       Packer SSH session survives it.
-- [ ] Validation passes `threshold.yml` on a clean build; the remaining
+- [ ] Validation passes `verify/thresholds/` on a clean build; the remaining
       failures, if any, are listed and justified in the deploy guide.
 - [ ] Heimdall, Vulcan, podman, and the proxy still work on a hardened clone.
 **Verification:** `packer build`; overlay profile result summarized with
@@ -726,7 +791,7 @@ and release-gate validation, `threshold.yml` updated.
 
 #### Phase 8: Proxy, landing page, and release gate (blocked by 5, 6, 7)
 **Files:** role `proxy` (nginx Quadlet, self-signed cert at first boot,
-landing page template), `safbox services`, final `threshold.yml`,
+landing page template), `safbox services`, final `verify/thresholds/`,
 `deploy/terraform/proxmox/` (provider pin, variables, clone from template,
 cloud-init user data, outputs), `docs/deploy.md`, `docs/rebuild.md`.
 **Acceptance criteria:**
@@ -779,20 +844,19 @@ story (Ubuntu Pro entitlement) are decided in that phase, under this ADR.
 (Amended 2026-10-12.) SAFBox does not encrypt at the operating-system level,
 and in-image encryption is not planned. A distributable template cannot hold
 a per-deployment secret: any LUKS keyslot that lets the template boot
-unattended is shared by every copy. Data at rest is protected by the layer
-beneath the guest, the hypervisor datastore, storage array, or cloud volume
-service, which is the case the RHEL 10 STIG names in RHEL-10-000510
-(SV-280935): "If there is a documented and approved reason for not having
-data-at-rest encryption at the operating system level, such as encryption
-provided by a hypervisor or a disk storage array in a virtualized
-environment, this requirement is not applicable."
+unattended is shared by every copy. RHEL-10-000510 (SV-280935) therefore
+cannot be implemented as written inside a SAFBox VM, whatever documentation
+the deploying site holds; data at rest is protected by the layer beneath the
+guest (the hypervisor datastore, storage array, or cloud volume service).
 
-The STIG overlay (`verify/rhel10-stig-overlay`) sets the baseline's
-`data_at_rest_exempt` input, so the control reports Not Applicable, and
-carries the justification as its caveat. SAFBox supplies the documented
-reason; approval rests with the deploying organization's authorizing
-official. This is a `deploy-time` deviation and joins `deviations.yml` when
-Phase 7 creates it.
+The STIG overlay (`verify/safbox-rhel10-stig-overlay`) sets SV-280935 Not
+Applicable itself, following the SAF overlay convention: impact 0.0, a
+`justification` description giving the reason above, and a deliberate
+`describe ... skip`. It does not set the baseline's `data_at_rest_exempt`
+input, which records a documented organisational exemption from the
+requirement, a different claim from "cannot be implemented on this device".
+(Amended 2026-10-13 by the owner.) The requirement joins `deviations.yml`
+when Phase 7 creates it.
 
 ### Verification Strategy
 - **Static:** `packer fmt -check`, `packer validate`, `ansible-lint`,
@@ -800,13 +864,12 @@ Phase 7 creates it.
   every push; no hypervisor needed.
 - **Build:** `packer build` from a workstation against a Proxmox target for
   now; later from a self-hosted runner or the `qemu` lane.
-- **Image:** outside-in InSpec profiles (the infrastructure controls, plus
-  from Phase 7 the STIG overlay over the base OS baseline with deviations
-  marked Not Applicable) run from
-  the build runner before the seal, gated by the SAF CLI threshold, every
-  build; seal self-assertions every build.
-- **Release:** a booted clone passes the same profile from outside before an
-  image is published.
+- **Image:** the `verify/inspec-safbox` wrapper (the infrastructure
+  controls and the STIG overlay over the base OS baseline with deviations
+  marked Not Applicable) runs from the build runner before the seal, gated
+  by the build threshold, every build; seal self-assertions every build.
+- **Release:** a booted clone passes the same wrapper from outside, gated
+  by the release threshold, before an image is published.
 - **Deployment:** clone the template via cloud-init; scripted checks for SSH,
   first-boot completion, service health, Heimdall upload, Vulcan registration.
 - **Edge cases:** second Ansible run is a no-op; clone of a clone still gets

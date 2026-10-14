@@ -27,3 +27,7 @@ rules:
     forbid-explicit-octal: true
   truthy:
     allowed-values: ['true', 'false']
+
+# Site validation overrides are git-ignored and not project content.
+ignore: |
+  verify/local/

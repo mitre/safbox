@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 control 'safbox-firstboot-1' do
-  impact 0.7
+  impact 1.0
   title 'The first-boot framework is installed and enabled'
   desc 'ADR-0001 §Decision: a safbox-firstboot systemd unit creates per-install credentials on first boot.'
 
@@ -40,7 +40,7 @@ control 'safbox-firstboot-1' do
 end
 
 control 'safbox-firstboot-3' do
-  impact 0.7
+  impact 1.0
   title 'The first-boot unit is not in an ordering cycle with multi-user.target'
   desc 'The unit is wanted by multi-user.target, so it is ordered before it. If it is ordered after a ' \
        'unit that itself comes after multi-user.target (cloud-final.service, cloud-init.target), ' \
@@ -61,7 +61,7 @@ control 'safbox-firstboot-3' do
 end
 
 control 'safbox-firstboot-2' do
-  impact 0.7
+  impact 1.0
   title 'First boot has completed exactly once on a deployed clone'
   desc 'Phase 2 acceptance: the unit runs once on first boot, records completion, and does not run ' \
        'again. The journal is persistent, so it holds exactly one completion message however many ' \

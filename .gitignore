@@ -41,3 +41,7 @@ ansible/local.yml
 
 # Symlink to the current build log (scripts/build.sh maintains it)
 last.log
+
+# Site validation overrides (inputs and thresholds a site names through the
+# Packer variables build_gate_site_* or SAFBOX_SITE_* for the release gate)
+verify/local/

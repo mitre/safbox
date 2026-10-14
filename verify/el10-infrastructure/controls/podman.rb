@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 control 'safbox-podman-1' do
-  impact 0.7
+  impact 1.0
   title 'podman is installed and the Quadlet unit directory exists'
   desc 'ADR-0001 §Decision: services run as podman Quadlets from the distribution podman stack.'
 
@@ -27,7 +27,7 @@ control 'safbox-podman-1' do
 end
 
 control 'safbox-podman-2' do
-  impact 0.7
+  impact 1.0
   title 'The smoke test Quadlet unit is present and running'
   desc 'Phase 2 acceptance: a trivial Quadlet unit starts on boot of a clone and survives reboot.'
   only_if('smoke test unit not installed in this build') do

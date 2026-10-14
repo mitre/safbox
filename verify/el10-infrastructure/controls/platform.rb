@@ -6,7 +6,7 @@ os_release_value = lambda do |key|
 end
 
 control 'safbox-platform-1' do
-  impact 0.7
+  impact 1.0
   title 'The operating system is one the appliance layer supports'
   desc 'ADR-0001: RHEL 10 family for v1 (Rocky Linux 10 or AlmaLinux 10); Debian family untested but present.'
 
@@ -26,7 +26,7 @@ control 'safbox-platform-1' do
 end
 
 control 'safbox-platform-2' do
-  impact 0.7
+  impact 1.0
   title 'The distribution and microarchitecture level of the running image are recorded'
   desc 'ADR-0001 Risks: validation records which distribution and microarchitecture level an image ' \
        'was built from so a lab artifact is never mistaken for a release artifact. The values appear ' \

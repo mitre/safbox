@@ -6,9 +6,9 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$ROOT"
 
-for tool in yamllint ansible-lint ansible-playbook shellcheck; do
+for tool in yamllint ansible-lint ansible-playbook shellcheck saf; do
   command -v "$tool" >/dev/null || {
-    echo "FAIL: $tool not installed (pipx install --include-deps ansible; pipx inject --include-apps ansible ansible-lint yamllint; brew install shellcheck)" >&2
+    echo "FAIL: $tool not installed (pipx install --include-deps ansible; pipx inject --include-apps ansible ansible-lint yamllint; brew install shellcheck; npm install -g @mitre/saf)" >&2
     exit 1
   }
 done
@@ -31,7 +31,7 @@ echo "== ansible-playbook --syntax-check"
 
 echo "== shellcheck"
 find ansible/roles -path '*/files/*' -type f -print0 | xargs -0 shellcheck --shell=bash --external-sources
-shellcheck tests/ansible/*.sh tests/fips/*.sh tests/platform-discipline.sh
+shellcheck tests/ansible/*.sh tests/fips/*.sh tests/verify/*.sh tests/platform-discipline.sh scripts/*.sh
 
 echo "== seal finalize template"
 tests/ansible/seal-static.sh
@@ -42,8 +42,11 @@ tests/ansible/pins.sh
 echo "== task-group structure"
 tests/ansible/structure.sh
 
-echo "== validation profile"
+echo "== validation profiles (wrapper and children)"
 tests/verify/profile.sh
+
+echo "== validation thresholds and inputs"
+tests/verify/thresholds.sh
 
 echo "== RHEL 10 STIG overlay"
 tests/verify/overlay.sh

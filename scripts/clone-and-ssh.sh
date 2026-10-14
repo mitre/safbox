@@ -10,7 +10,11 @@
 #      SAFBOX_NODE (node holding the template), SAFBOX_POOL (resource pool the
 #      clone joins; authorizes the clone via VM.Allocate on /pool/<name>, which
 #      survives VM destruction, unlike an ACL on /vms/<id>), SAFBOX_SSH_KEY
-#      (private key; default .build/clone_key, RSA because the clone is FIPS).
+#      (private key; default .build/clone_key, RSA because the clone is FIPS),
+#      SAFBOX_SITE_INPUTS and SAFBOX_SITE_THRESHOLD (optional: a site's inputs
+#      file layered after verify/inputs/release.yml, and a site threshold used
+#      instead of verify/thresholds/release.yml, for a template built with
+#      the same site files; see scripts/validate.sh).
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 TEMPLATE_ID=${1:?template vmid}
@@ -126,10 +130,15 @@ for _ in $(seq 1 72); do
     echo "$out" | grep -q '^fips_enabled=1$' || { echo "FAIL: clone is not in FIPS mode" >&2; exit 1; }
     echo "$out" | grep -q "^hostname=safbox-clone-$CLONE_ID\$" || { echo "FAIL: cloud-init did not set the clone's hostname" >&2; exit 1; }
     echo "PASS: clone $CLONE_ID reachable over SSH with the cloud-init user, FIPS on"
-    # Release gate: the same validation profile the build ran, now from
-    # outside against what a consumer receives, after first boot.
+    # Release gate: the same wrapper profile the build ran, now from outside
+    # against what a consumer receives, after first boot, with the release
+    # inputs and threshold (or the site's).
     if [ "${SAFBOX_SKIP_VALIDATE:-0}" != 1 ]; then
-      "$ROOT/scripts/validate.sh" "$USER_NAME@$ip" "$KEY" "clone-$CLONE_ID" firstboot_completed_expected=true
+      site=()
+      if [ -n "${SAFBOX_SITE_INPUTS:-}" ]; then site+=(--site-inputs "$SAFBOX_SITE_INPUTS"); fi
+      if [ -n "${SAFBOX_SITE_THRESHOLD:-}" ]; then site+=(--site-threshold "$SAFBOX_SITE_THRESHOLD"); fi
+      "$ROOT/scripts/validate.sh" ${site[@]+"${site[@]}"} "$USER_NAME@$ip" "$KEY" "clone-$CLONE_ID" \
+        "$ROOT/verify/inspec-safbox" "$ROOT/verify/thresholds/release.yml" "$ROOT/verify/inputs/release.yml"
     fi
     exit 0
   fi

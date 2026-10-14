@@ -4,7 +4,7 @@ sshd_unit = os.debian? ? 'ssh' : 'sshd'
 chrony_unit = os.debian? ? 'chrony' : 'chronyd'
 
 control 'safbox-services-1' do
-  impact 0.7
+  impact 1.0
   title 'The guest agent, cloud-init and sshd are enabled'
   desc 'ADR-0001 install layer contract: a booted, SSH-reachable OS with the guest agent and cloud-init present.'
 
@@ -21,8 +21,7 @@ control 'safbox-services-1' do
 end
 
 control 'safbox-services-2' do
-  # High: a disabled firewall or unsynchronised clock must fail the build.
-  impact 0.7
+  impact 1.0
   title 'Time synchronisation and the firewall are enabled with SSH allowed'
   desc 'platform role: chrony and firewalld run; the firewall allows SSH (ADR-0001 Quality Standards).'
 
@@ -42,7 +41,7 @@ control 'safbox-services-2' do
 end
 
 control 'safbox-services-3' do
-  impact 0.7
+  impact 1.0
   title 'The journal persists across reboots'
   desc 'platform role: journald keeps the journal on disk (Storage=persistent), so first-boot output and ' \
        'security-relevant logs survive a reboot. The distribution default keeps it in memory only.'

@@ -1,0 +1,2446 @@
+{
+ "platform": {
+  "name": "almalinux",
+  "release": "10.2"
+ },
+ "profiles": [
+  {
+   "attributes": [
+    {
+     "name": "build_info_expected",
+     "options": {
+      "value": false
+     }
+    },
+    {
+     "name": "firstboot_completed_expected",
+     "options": {
+      "value": false
+     }
+    },
+    {
+     "name": "guest_agent_expected",
+     "options": {
+      "value": true
+     }
+    }
+   ],
+   "controls": [
+    {
+     "code": "control 'safbox-accounts-1' do\n  impact 1.0\n  title 'No distribution default user exists'\n  desc 'Distribution cloud images create a default account with passwordless sudo. A SAFBox has only ' \\\n       'the accounts its deployer asked for; a default account nobody configured is an unmanaged root path.'\n\n  (input('distro_default_users') + [cloud_cfg['default_user']]).compact.uniq.each do |name|\n    describe user(name) do\n      it { should_not exist }\n    end\n  end\nend\n",
+     "desc": "Distribution cloud images create a default account with passwordless sudo. A SAFBox has only the accounts its deployer asked for; a default account nobody configured is an unmanaged root path.",
+     "descriptions": [
+      {
+       "data": "Distribution cloud images create a default account with passwordless sudo. A SAFBox has only the accounts its deployer asked for; a default account nobody configured is an unmanaged root path.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-accounts-1",
+     "impact": 1.0,
+     "refs": [],
+     "results": [],
+     "source_location": {
+      "line": 13
+     },
+     "tags": {},
+     "title": "No distribution default user exists",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-accounts-2' do\n  impact 1.0\n  title 'cloud-init creates no default user unless a datasource asks for one'\n  desc 'The system configuration sets users to an empty list, so a boot without user data (the build ' \\\n       'VM, or a clone deployed without a user) creates no default account. User data that names a ' \\\n       'user, as a deployment does, still gets one built from the distribution default_user definition.'\n\n  describe 'merged cloud-init system configuration' do\n    subject { cloud_cfg_cmd }\n    its('exit_status') { should eq 0 }\n  end\n\n  describe 'cloud-init system users' do\n    subject { cloud_cfg['users'] }\n    it { should eq [] }\n  end\n\n  describe 'cloud-init default_user definition (used when user data names a user)' do\n    subject { cloud_cfg['default_user'] }\n    it { should_not be_nil }\n  end\nend\n",
+     "desc": "The system configuration sets users to an empty list, so a boot without user data (the build VM, or a clone deployed without a user) creates no default account. User data that names a user, as a deployment does, still gets one built from the distribution default_user definition.",
+     "descriptions": [
+      {
+       "data": "The system configuration sets users to an empty list, so a boot without user data (the build VM, or a clone deployed without a user) creates no default account. User data that names a user, as a deployment does, still gets one built from the distribution default_user definition.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-accounts-2",
+     "impact": 1.0,
+     "refs": [],
+     "results": [],
+     "source_location": {
+      "line": 26
+     },
+     "tags": {},
+     "title": "cloud-init creates no default user unless a datasource asks for one",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-secureboot-1' do\n  impact 1.0\n  title 'UEFI Secure Boot is enabled'\n  desc 'The install layer boots the image with Secure Boot enforced; the shim and kernel signature ' \\\n       'chain is what makes the FIPS kernel the kernel that actually runs.'\n  only_if('Secure Boot is not required for this image') { input('secure_boot_required') }\n\n  describe command('mokutil --sb-state') do\n    its('exit_status') { should eq 0 }\n    its('stdout') { should match(/^SecureBoot enabled$/) }\n  end\nend\n",
+     "desc": "The install layer boots the image with Secure Boot enforced; the shim and kernel signature chain is what makes the FIPS kernel the kernel that actually runs.",
+     "descriptions": [
+      {
+       "data": "The install layer boots the image with Secure Boot enforced; the shim and kernel signature chain is what makes the FIPS kernel the kernel that actually runs.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-secureboot-1",
+     "impact": 1.0,
+     "refs": [],
+     "results": [],
+     "source_location": {
+      "line": 3
+     },
+     "tags": {},
+     "title": "UEFI Secure Boot is enabled",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-build-info-1' do\n  impact 1.0\n  title 'The build record exists and names the distribution and microarchitecture level'\n  desc 'ADR-0001 Risks: the image records which distribution and microarchitecture level it was built ' \\\n       'from so a lab artifact is never mistaken for a release artifact. Written by the seal step ' \\\n       'outside the root-only /etc/safbox, since it is not a secret and safbox status reads it, ' \\\n       'which also records the exact builds of packages the install layer installs unpinned.'\n  only_if('build record is written by the seal step, which has not run yet') { input('build_info_expected') }\n\n  describe file(build_info_path) do\n    it { should exist }\n    its('owner') { should eq 'root' }\n    its('mode') { should cmp '0644' }\n    its('content') { should match(/^SAFBOX_BUILD_DATE=\\d{4}-\\d{2}-\\d{2}T/) }\n    its('content') { should match(/^SAFBOX_GIT_COMMIT=\\S+$/) }\n    its('content') { should match(/^SAFBOX_DISTRIBUTION=\\S+$/) }\n    its('content') { should match(/^SAFBOX_DISTRIBUTION_VERSION=\\S+$/) }\n    its('content') { should match(/^SAFBOX_PACKAGE_ARCH=\\S+$/) }\n    its('content') { should match(/^SAFBOX_MICROARCH_LEVEL=(x86-64-v[234]|n\\/a)$/) }\n    its('content') { should match(/^SAFBOX_FIPS_ENABLED=1$/) }\n    its('content') { should match(/^SAFBOX_SEAL_MODE=#{Regexp.escape(input('seal_mode_expected'))}$/) }\n    its('content') { should match(/^SAFBOX_UNPINNED_PACKAGES=.*\\bcloud-init-\\d/) }\n    its('content') { should match(/^SAFBOX_UNPINNED_PACKAGES=.*\\bqemu-guest-agent-\\d/) }\n  end\n\n  describe command('runuser -u nobody -- /usr/local/bin/safbox status') do\n    its('stdout') { should match(/^Microarchitecture level:\\s+x86-64-v[234]$/) }\n    its('stdout') { should match(/^Build MICROARCH_LEVEL:\\s+\\S/) }\n  end\n\n  # Surface the recorded values in the test description so the results carry them.\n  if file(build_info_path).exist?\n    build_info = parse_config_file(build_info_path)\n    describe \"built from #{build_info['SAFBOX_DISTRIBUTION']} #{build_info['SAFBOX_DISTRIBUTION_VERSION']} \" \\\n             \"#{build_info['SAFBOX_PACKAGE_ARCH']} at #{build_info['SAFBOX_MICROARCH_LEVEL']}\" do\n      subject { build_info['SAFBOX_DISTRIBUTION'] }\n      it { should_not be_nil }\n    end\n  end\nend\n",
+     "desc": "ADR-0001 Risks: the image records which distribution and microarchitecture level it was built from so a lab artifact is never mistaken for a release artifact. Written by the seal step outside the root-only /etc/safbox, since it is not a secret and safbox status reads it, which also records the exact builds of packages the install layer installs unpinned.",
+     "descriptions": [
+      {
+       "data": "ADR-0001 Risks: the image records which distribution and microarchitecture level it was built from so a lab artifact is never mistaken for a release artifact. Written by the seal step outside the root-only /etc/safbox, since it is not a secret and safbox status reads it, which also records the exact builds of packages the install layer installs unpinned.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-build-info-1",
+     "impact": 1.0,
+     "refs": [],
+     "results": [],
+     "source_location": {
+      "line": 5
+     },
+     "tags": {},
+     "title": "The build record exists and names the distribution and microarchitecture level",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-cli-1' do\n  impact 1.0\n  title 'The safbox command and its subcommand registry are installed'\n  desc 'ADR-0001 \u00a7Shared Abstractions: the safbox command of the base role, with subcommand registration.'\n\n  describe file('/usr/local/bin/safbox') do\n    it { should exist }\n    it { should be_executable }\n    its('owner') { should eq 'root' }\n  end\n\n  describe directory('/usr/local/lib/safbox/commands') do\n    it { should exist }\n    its('owner') { should eq 'root' }\n  end\n\n  describe file('/usr/local/lib/safbox/commands/status') do\n    it { should exist }\n    it { should be_executable }\n  end\n\n  describe command('/usr/local/bin/safbox help') do\n    its('exit_status') { should eq 0 }\n    its('stdout') { should match(/^\\s+status\\s/) }\n  end\n\n  describe command('/usr/local/bin/safbox status') do\n    its('exit_status') { should eq 0 }\n    its('stdout') { should match(/^Distribution:/) }\n    its('stdout') { should match(/^Microarchitecture level:\\s+\\S/) }\n    its('stdout') { should match(/^FIPS mode:\\s+enabled/) }\n    its('stdout') { should match(/^First boot:/) }\n    # One row per tool group, with the version or 'not installed'; the\n    # versions themselves are checked by the safbox-tools-<n> controls.\n    its('stdout') { should match(/^CINC Auditor:\\s+\\S/) }\n    its('stdout') { should match(/^SAF CLI:\\s+\\S/) }\n    its('stdout') { should match(/^Ansible core:\\s+\\S/) }\n    its('stdout') { should match(/^Packer:\\s+\\S/) }\n  end\nend\n",
+     "desc": "ADR-0001 \u00a7Shared Abstractions: the safbox command of the base role, with subcommand registration.",
+     "descriptions": [
+      {
+       "data": "ADR-0001 \u00a7Shared Abstractions: the safbox command of the base role, with subcommand registration.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-cli-1",
+     "impact": 1.0,
+     "refs": [],
+     "results": [],
+     "source_location": {
+      "line": 3
+     },
+     "tags": {},
+     "title": "The safbox command and its subcommand registry are installed",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-fips-1' do\n  impact 1.0\n  title 'FIPS mode is enabled and was set at install'\n  desc 'ADR-0001: FIPS mode is on from installation and is not configurable afterward. ' \\\n       'The kernel must report fips_enabled=1 and fips=1 must be on the command line.'\n  only_if('FIPS is not required for this image') { input('fips_required') }\n\n  describe file('/proc/sys/crypto/fips_enabled') do\n    it { should exist }\n    its('content.strip') { should cmp '1' }\n  end\n\n  describe file('/proc/cmdline') do\n    its('content') { should match(/(^|\\s)fips=1(\\s|$)/) }\n  end\nend\n",
+     "desc": "ADR-0001: FIPS mode is on from installation and is not configurable afterward. The kernel must report fips_enabled=1 and fips=1 must be on the command line.",
+     "descriptions": [
+      {
+       "data": "ADR-0001: FIPS mode is on from installation and is not configurable afterward. The kernel must report fips_enabled=1 and fips=1 must be on the command line.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-fips-1",
+     "impact": 1.0,
+     "refs": [],
+     "results": [],
+     "source_location": {
+      "line": 3
+     },
+     "tags": {},
+     "title": "FIPS mode is enabled and was set at install",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-fips-2' do\n  impact 1.0\n  title 'The system-wide crypto policy is FIPS'\n  desc 'A FIPS install sets the crypto-policies level to FIPS; any other policy lets userland ' \\\n       'negotiate algorithms outside the validated module.'\n  only_if('FIPS is not required for this image') { input('fips_required') }\n  only_if('crypto-policies is the RHEL family mechanism') { os.redhat? }\n\n  describe command('update-crypto-policies --show') do\n    its('exit_status') { should eq 0 }\n    its('stdout.strip') { should cmp 'FIPS' }\n  end\nend\n",
+     "desc": "A FIPS install sets the crypto-policies level to FIPS; any other policy lets userland negotiate algorithms outside the validated module.",
+     "descriptions": [
+      {
+       "data": "A FIPS install sets the crypto-policies level to FIPS; any other policy lets userland negotiate algorithms outside the validated module.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-fips-2",
+     "impact": 1.0,
+     "refs": [],
+     "results": [],
+     "source_location": {
+      "line": 20
+     },
+     "tags": {},
+     "title": "The system-wide crypto policy is FIPS",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-fips-3' do\n  impact 1.0\n  title 'The OpenSSL FIPS provider is loaded and active'\n  desc 'In FIPS mode OpenSSL 3 must load its FIPS provider; without it, libraries fall back to ' \\\n       'unvalidated implementations.'\n  only_if('FIPS is not required for this image') { input('fips_required') }\n\n  describe command('openssl list -providers') do\n    its('exit_status') { should eq 0 }\n    its('stdout') { should match(/^\\s+fips\\n\\s+name: .*FIPS Provider\\n(\\s+\\w+: .*\\n)*?\\s+status: active$/) }\n  end\nend\n",
+     "desc": "In FIPS mode OpenSSL 3 must load its FIPS provider; without it, libraries fall back to unvalidated implementations.",
+     "descriptions": [
+      {
+       "data": "In FIPS mode OpenSSL 3 must load its FIPS provider; without it, libraries fall back to unvalidated implementations.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-fips-3",
+     "impact": 1.0,
+     "refs": [],
+     "results": [],
+     "source_location": {
+      "line": 34
+     },
+     "tags": {},
+     "title": "The OpenSSL FIPS provider is loaded and active",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-firstboot-1' do\n  impact 1.0\n  title 'The first-boot framework is installed and enabled'\n  desc 'ADR-0001 \u00a7Decision: a safbox-firstboot systemd unit creates per-install credentials on first boot.'\n\n  describe file('/etc/systemd/system/safbox-firstboot.service') do\n    it { should exist }\n    its('content') { should match(%r{^ConditionPathExists=!/var/lib/safbox/firstboot\\.done$}) }\n    its('content') { should match(/^Type=oneshot$/) }\n    its('content') { should match(/^RemainAfterExit=yes$/) }\n  end\n\n  describe service('safbox-firstboot') do\n    it { should be_enabled }\n  end\n\n  describe file('/usr/local/sbin/safbox-firstboot') do\n    it { should exist }\n    it { should be_executable }\n    its('owner') { should eq 'root' }\n  end\n\n  describe file('/usr/local/lib/safbox/secrets.sh') do\n    it { should exist }\n    its('owner') { should eq 'root' }\n  end\n\n  describe directory('/etc/safbox') do\n    it { should exist }\n    its('owner') { should eq 'root' }\n    its('mode') { should cmp '0700' }\n  end\n\n  describe directory('/etc/safbox/firstboot.d') do\n    it { should exist }\n    its('owner') { should eq 'root' }\n  end\nend\n",
+     "desc": "ADR-0001 \u00a7Decision: a safbox-firstboot systemd unit creates per-install credentials on first boot.",
+     "descriptions": [
+      {
+       "data": "ADR-0001 \u00a7Decision: a safbox-firstboot systemd unit creates per-install credentials on first boot.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-firstboot-1",
+     "impact": 1.0,
+     "refs": [],
+     "results": [],
+     "source_location": {
+      "line": 3
+     },
+     "tags": {},
+     "title": "The first-boot framework is installed and enabled",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-firstboot-3' do\n  impact 1.0\n  title 'The first-boot unit is not in an ordering cycle with multi-user.target'\n  desc 'The unit is wanted by multi-user.target, so it is ordered before it. If it is ordered after a ' \\\n       'unit that itself comes after multi-user.target (cloud-final.service, cloud-init.target), ' \\\n       'systemd breaks the cycle by deleting the first-boot job and first boot never runs.'\n\n  unit = 'safbox-firstboot.service'\n  after = command(\"systemctl show -p After --value #{unit}\").stdout.split\n  after.each do |dependency|\n    describe \"#{unit} ordered after #{dependency}, which\" do\n      subject { command(\"systemctl show -p After --value #{dependency}\").stdout.split }\n      it { should_not include 'multi-user.target' }\n    end\n  end\n\n  describe command('journalctl -b --no-pager -o cat -u safbox-firstboot.service') do\n    its('stdout') { should_not match(/ordering cycle/i) }\n  end\nend\n",
+     "desc": "The unit is wanted by multi-user.target, so it is ordered before it. If it is ordered after a unit that itself comes after multi-user.target (cloud-final.service, cloud-init.target), systemd breaks the cycle by deleting the first-boot job and first boot never runs.",
+     "descriptions": [
+      {
+       "data": "The unit is wanted by multi-user.target, so it is ordered before it. If it is ordered after a unit that itself comes after multi-user.target (cloud-final.service, cloud-init.target), systemd breaks the cycle by deleting the first-boot job and first boot never runs.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-firstboot-3",
+     "impact": 1.0,
+     "refs": [],
+     "results": [],
+     "source_location": {
+      "line": 42
+     },
+     "tags": {},
+     "title": "The first-boot unit is not in an ordering cycle with multi-user.target",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-firstboot-2' do\n  impact 1.0\n  title 'First boot has completed exactly once on a deployed clone'\n  desc 'Phase 2 acceptance: the unit runs once on first boot, records completion, and does not run ' \\\n       'again. The journal is persistent, so it holds exactly one completion message however many ' \\\n       'times the clone has booted.'\n  only_if('not a deployed clone') { input('firstboot_completed_expected') }\n\n  describe file('/var/lib/safbox/firstboot.done') do\n    it { should exist }\n    its('content') { should match(/^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$/) }\n  end\n\n  describe command('systemctl show -p Result --value safbox-firstboot.service') do\n    its('stdout.strip') { should eq 'success' }\n  end\n\n  describe command('runuser -u nobody -- /usr/local/bin/safbox status') do\n    its('stdout') { should match(/^First boot:\\s+completed/) }\n  end\n\n  completions = command('journalctl --no-pager -o cat -t safbox-firstboot').stdout\n                .scan(/^safbox-firstboot: first boot complete;/).length\n  describe 'first-boot completions recorded in the persistent journal' do\n    subject { completions }\n    it { should eq 1 }\n  end\nend\n",
+     "desc": "Phase 2 acceptance: the unit runs once on first boot, records completion, and does not run again. The journal is persistent, so it holds exactly one completion message however many times the clone has booted.",
+     "descriptions": [
+      {
+       "data": "Phase 2 acceptance: the unit runs once on first boot, records completion, and does not run again. The journal is persistent, so it holds exactly one completion message however many times the clone has booted.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-firstboot-2",
+     "impact": 1.0,
+     "refs": [],
+     "results": [],
+     "source_location": {
+      "line": 63
+     },
+     "tags": {},
+     "title": "First boot has completed exactly once on a deployed clone",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-guest-agent-1' do\n  impact 1.0\n  title \"The guest agent keeps the distribution's RPC filter: no in-guest exec or file access\"\n  desc 'With guest-exec or guest-file-* enabled, anyone with administrative access to the hypervisor ' \\\n       'can run commands and read or write files inside the appliance without logging in. The ' \\\n       'distribution ships a filter that disables them; the image must keep it unmodified.'\n  # On platforms without a guest-agent channel the agent cannot run; the\n  # deploy sets guest_agent_expected=false there. Everywhere else a stopped\n  # agent is a failure, not a skip.\n  only_if('guest agent not expected on this platform (guest_agent_expected=false)') do\n    input('guest_agent_expected')\n  end\n\n  describe 'qemu-guest-agent main process' do\n    subject { main_pid }\n    it { should match(/^[1-9]\\d*$/) }\n  end\n\n  mode, rpcs = rpc_filter.call(agent_args)\n  denied = input('guest_agent_denied_rpcs')\n\n  describe 'guest agent RPC filter mode' do\n    subject { mode }\n    it { should be_in %w[allow block] }\n  end\n\n  if mode == 'allow'\n    describe 'RPCs the guest agent allows' do\n      subject { rpcs }\n      denied.each { |rpc| it { should_not include rpc } }\n    end\n  elsif mode == 'block'\n    describe 'RPCs the guest agent blocks' do\n      subject { rpcs }\n      denied.each { |rpc| it { should include rpc } }\n    end\n  end\n\n  describe command(\"systemctl show -p DropInPaths --value #{unit}\") do\n    its('stdout.strip') { should be_empty }\n  end\n\n  if os.redhat?\n    describe command('rpm -V --nomtime qemu-guest-agent') do\n      its('stdout') { should be_empty }\n    end\n  end\nend\n",
+     "desc": "With guest-exec or guest-file-* enabled, anyone with administrative access to the hypervisor can run commands and read or write files inside the appliance without logging in. The distribution ships a filter that disables them; the image must keep it unmodified.",
+     "descriptions": [
+      {
+       "data": "With guest-exec or guest-file-* enabled, anyone with administrative access to the hypervisor can run commands and read or write files inside the appliance without logging in. The distribution ships a filter that disables them; the image must keep it unmodified.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-guest-agent-1",
+     "impact": 1.0,
+     "refs": [],
+     "results": [],
+     "source_location": {
+      "line": 22
+     },
+     "tags": {},
+     "title": "The guest agent keeps the distribution's RPC filter: no in-guest exec or file access",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-platform-1' do\n  impact 1.0\n  title 'The operating system is one the appliance layer supports'\n  desc 'ADR-0001: RHEL 10 family for v1 (Rocky Linux 10 or AlmaLinux 10); Debian family untested but present.'\n\n  describe os.family do\n    it { should be_in %w[redhat debian] }\n  end\n\n  if os.redhat?\n    describe 'PLATFORM_ID in /etc/os-release' do\n      subject { os_release_value.call('PLATFORM_ID') }\n      it { should cmp input('expected_platform_id') }\n    end\n    describe os.release.to_s do\n      it { should match(/^10(\\.|$)/) }\n    end\n  end\nend\n",
+     "desc": "ADR-0001: RHEL 10 family for v1 (Rocky Linux 10 or AlmaLinux 10); Debian family untested but present.",
+     "descriptions": [
+      {
+       "data": "ADR-0001: RHEL 10 family for v1 (Rocky Linux 10 or AlmaLinux 10); Debian family untested but present.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-platform-1",
+     "impact": 1.0,
+     "refs": [],
+     "results": [],
+     "source_location": {
+      "line": 8
+     },
+     "tags": {},
+     "title": "The operating system is one the appliance layer supports",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-platform-2' do\n  impact 1.0\n  title 'The distribution and microarchitecture level of the running image are recorded'\n  desc 'ADR-0001 Risks: validation records which distribution and microarchitecture level an image ' \\\n       'was built from so a lab artifact is never mistaken for a release artifact. The values appear ' \\\n       'in the test descriptions of this control: the package architecture is what the image was ' \\\n       'built from (x86_64_v2 on the AlmaLinux v2 media), the loader level is what this CPU supports.'\n\n  describe \"distribution #{os_release_value.call('PRETTY_NAME')} (#{os.arch})\" do\n    subject { os.name }\n    it { should_not be_nil }\n  end\n\n  package_arch = if os.redhat?\n                   command(\"rpm -q --qf '%{ARCH}' glibc\").stdout.strip\n                 else\n                   command('dpkg --print-architecture').stdout.strip\n                 end\n  describe \"image package architecture #{package_arch}\" do\n    subject { package_arch }\n    it { should match(/^(x86_64(_v[234])?|aarch64|amd64|arm64)$/) }\n  end\n\n  loader = command('/lib64/ld-linux-x86-64.so.2 --help')\n  if loader.exit_status.zero?\n    level = loader.stdout[/x86-64-v\\d+(?= \\(supported)/] || 'none'\n    describe \"highest microarchitecture level this CPU supports #{level}\" do\n      subject { level }\n      it { should match(/^x86-64-v[234]$/) }\n    end\n  else\n    describe \"microarchitecture level not applicable on #{os.arch}\" do\n      subject { os.arch }\n      it { should_not eq 'x86_64' }\n    end\n  end\nend\n",
+     "desc": "ADR-0001 Risks: validation records which distribution and microarchitecture level an image was built from so a lab artifact is never mistaken for a release artifact. The values appear in the test descriptions of this control: the package architecture is what the image was built from (x86_64_v2 on the AlmaLinux v2 media), the loader level is what this CPU supports.",
+     "descriptions": [
+      {
+       "data": "ADR-0001 Risks: validation records which distribution and microarchitecture level an image was built from so a lab artifact is never mistaken for a release artifact. The values appear in the test descriptions of this control: the package architecture is what the image was built from (x86_64_v2 on the AlmaLinux v2 media), the loader level is what this CPU supports.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-platform-2",
+     "impact": 1.0,
+     "refs": [],
+     "results": [],
+     "source_location": {
+      "line": 28
+     },
+     "tags": {},
+     "title": "The distribution and microarchitecture level of the running image are recorded",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-podman-1' do\n  impact 1.0\n  title 'podman is installed and the Quadlet unit directory exists'\n  desc 'ADR-0001 \u00a7Decision: services run as podman Quadlets from the distribution podman stack.'\n\n  describe package('podman') do\n    it { should be_installed }\n  end\n\n  describe command('podman --version') do\n    its('exit_status') { should eq 0 }\n    its('stdout') { should match(/podman version \\d+\\./) }\n  end\n\n  describe directory('/etc/containers/systemd') do\n    it { should exist }\n    its('owner') { should eq 'root' }\n    its('mode') { should cmp '0755' }\n  end\n\n  describe file('/etc/containers/registries.conf.d/50-safbox.conf') do\n    it { should exist }\n    its('content') { should match(/^short-name-mode = \"enforcing\"$/) }\n  end\nend\n",
+     "desc": "ADR-0001 \u00a7Decision: services run as podman Quadlets from the distribution podman stack.",
+     "descriptions": [
+      {
+       "data": "ADR-0001 \u00a7Decision: services run as podman Quadlets from the distribution podman stack.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-podman-1",
+     "impact": 1.0,
+     "refs": [],
+     "results": [],
+     "source_location": {
+      "line": 3
+     },
+     "tags": {},
+     "title": "podman is installed and the Quadlet unit directory exists",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-podman-2' do\n  impact 1.0\n  title 'The smoke test Quadlet unit is present and running'\n  desc 'Phase 2 acceptance: a trivial Quadlet unit starts on boot of a clone and survives reboot.'\n  only_if('smoke test unit not installed in this build') do\n    file('/etc/containers/systemd/safbox-example.container').exist?\n  end\n\n  describe service('safbox-example') do\n    it { should be_running }\n  end\nend\n",
+     "desc": "Phase 2 acceptance: a trivial Quadlet unit starts on boot of a clone and survives reboot.",
+     "descriptions": [
+      {
+       "data": "Phase 2 acceptance: a trivial Quadlet unit starts on boot of a clone and survives reboot.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-podman-2",
+     "impact": 1.0,
+     "refs": [],
+     "results": [],
+     "source_location": {
+      "line": 29
+     },
+     "tags": {},
+     "title": "The smoke test Quadlet unit is present and running",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-seal-1' do\n  impact 1.0\n  title 'The build user, its SSH key and its sudo drop-in are gone'\n  desc 'ADR-0001 Phase 2: the seal step deletes the build account the install layer created, with its ' \\\n       'authorized key and passwordless sudo rule, so the template carries no build credential.'\n  only_if('the seal step has not run yet') { input('build_info_expected') }\n\n  build_user = input('build_user')\n  describe user(build_user) do\n    it { should_not exist }\n  end\n  describe file(\"/etc/sudoers.d/90-#{build_user}\") do\n    it { should_not exist }\n  end\n  describe file(\"/home/#{build_user}\") do\n    it { should_not exist }\n  end\nend\n",
+     "desc": "ADR-0001 Phase 2: the seal step deletes the build account the install layer created, with its authorized key and passwordless sudo rule, so the template carries no build credential.",
+     "descriptions": [
+      {
+       "data": "ADR-0001 Phase 2: the seal step deletes the build account the install layer created, with its authorized key and passwordless sudo rule, so the template carries no build credential.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-seal-1",
+     "impact": 1.0,
+     "refs": [],
+     "results": [],
+     "source_location": {
+      "line": 3
+     },
+     "tags": {},
+     "title": "The build user, its SSH key and its sudo drop-in are gone",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-seal-2' do\n  impact 1.0\n  title 'No installer residue: kickstart copies, the %post log or installer logs'\n  desc 'The kickstart copies and logs carry the build user name and public key. The seal step removes ' \\\n       '/root/*ks*.cfg, /root/ks-post.log and /var/log/anaconda.'\n  only_if('the seal step has not run yet') { input('build_info_expected') }\n\n  describe command(\"find /root -maxdepth 1 -name '*ks*.cfg'\") do\n    its('stdout') { should be_empty }\n  end\n  describe file('/root/ks-post.log') do\n    it { should_not exist }\n  end\n  describe file('/var/log/anaconda') do\n    it { should_not exist }\n  end\nend\n",
+     "desc": "The kickstart copies and logs carry the build user name and public key. The seal step removes /root/*ks*.cfg, /root/ks-post.log and /var/log/anaconda.",
+     "descriptions": [
+      {
+       "data": "The kickstart copies and logs carry the build user name and public key. The seal step removes /root/*ks*.cfg, /root/ks-post.log and /var/log/anaconda.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-seal-2",
+     "impact": 1.0,
+     "refs": [],
+     "results": [],
+     "source_location": {
+      "line": 22
+     },
+     "tags": {},
+     "title": "No installer residue: kickstart copies, the %post log or installer logs",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-services-1' do\n  impact 1.0\n  title 'The guest agent, cloud-init and sshd are enabled'\n  desc 'ADR-0001 install layer contract: a booted, SSH-reachable OS with the guest agent and cloud-init present.'\n\n  %w[qemu-guest-agent cloud-init].push(sshd_unit).each do |unit|\n    describe service(unit) do\n      it { should be_installed }\n      it { should be_enabled }\n    end\n  end\n\n  describe service(sshd_unit) do\n    it { should be_running }\n  end\nend\n",
+     "desc": "ADR-0001 install layer contract: a booted, SSH-reachable OS with the guest agent and cloud-init present.",
+     "descriptions": [
+      {
+       "data": "ADR-0001 install layer contract: a booted, SSH-reachable OS with the guest agent and cloud-init present.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-services-1",
+     "impact": 1.0,
+     "refs": [],
+     "results": [],
+     "source_location": {
+      "line": 6
+     },
+     "tags": {},
+     "title": "The guest agent, cloud-init and sshd are enabled",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-services-2' do\n  impact 1.0\n  title 'Time synchronisation and the firewall are enabled with SSH allowed'\n  desc 'platform role: chrony and firewalld run; the firewall allows SSH (ADR-0001 Quality Standards).'\n\n  describe service(chrony_unit) do\n    it { should be_enabled }\n    it { should be_running }\n  end\n\n  describe service('firewalld') do\n    it { should be_enabled }\n    it { should be_running }\n  end\n\n  describe command('firewall-cmd --list-services') do\n    its('stdout') { should match(/(^|\\s)ssh(\\s|$)/) }\n  end\nend\n",
+     "desc": "platform role: chrony and firewalld run; the firewall allows SSH (ADR-0001 Quality Standards).",
+     "descriptions": [
+      {
+       "data": "platform role: chrony and firewalld run; the firewall allows SSH (ADR-0001 Quality Standards).",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-services-2",
+     "impact": 1.0,
+     "refs": [],
+     "results": [],
+     "source_location": {
+      "line": 23
+     },
+     "tags": {},
+     "title": "Time synchronisation and the firewall are enabled with SSH allowed",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-services-3' do\n  impact 1.0\n  title 'The journal persists across reboots'\n  desc 'platform role: journald keeps the journal on disk (Storage=persistent), so first-boot output and ' \\\n       'security-relevant logs survive a reboot. The distribution default keeps it in memory only.'\n\n  describe command('systemd-analyze cat-config systemd/journald.conf') do\n    its('stdout') { should match(/^Storage=persistent$/) }\n  end\n\n  describe file('/var/log/journal') do\n    it { should be_directory }\n  end\nend\n",
+     "desc": "platform role: journald keeps the journal on disk (Storage=persistent), so first-boot output and security-relevant logs survive a reboot. The distribution default keeps it in memory only.",
+     "descriptions": [
+      {
+       "data": "platform role: journald keeps the journal on disk (Storage=persistent), so first-boot output and security-relevant logs survive a reboot. The distribution default keeps it in memory only.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-services-3",
+     "impact": 1.0,
+     "refs": [],
+     "results": [],
+     "source_location": {
+      "line": 43
+     },
+     "tags": {},
+     "title": "The journal persists across reboots",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-tools-1' do\n  impact 1.0\n  title 'CINC Auditor is installed at its pinned version'\n  desc 'ADR-0001 Phase 3: CINC Auditor ships on the box as an assessment tool (tools group ' \\\n       'safbox-tools-1), at the version pinned in group_vars. Only the version is compared, so ' \\\n       'a site build of the same version (another release) passes.'\n  only_if('CINC Auditor is not in expected_tools (tools group safbox-tools-1 switched off)') do\n    tool_expected.call('cinc-auditor')\n  end\n\n  version = input('cinc_auditor_version')\n  describe command('cinc-auditor version') do\n    its('exit_status') { should eq 0 }\n    its('stdout') { should match(/^#{Regexp.escape(version)}$/) }\n  end\n\n  instance_exec('CINC Auditor', version, &status_row)\nend\n",
+     "desc": "ADR-0001 Phase 3: CINC Auditor ships on the box as an assessment tool (tools group safbox-tools-1), at the version pinned in group_vars. Only the version is compared, so a site build of the same version (another release) passes.",
+     "descriptions": [
+      {
+       "data": "ADR-0001 Phase 3: CINC Auditor ships on the box as an assessment tool (tools group safbox-tools-1), at the version pinned in group_vars. Only the version is compared, so a site build of the same version (another release) passes.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-tools-1",
+     "impact": 1.0,
+     "refs": [],
+     "results": [],
+     "source_location": {
+      "line": 22
+     },
+     "tags": {},
+     "title": "CINC Auditor is installed at its pinned version",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-tools-2' do\n  impact 1.0\n  title 'The SAF CLI is installed at its pinned version on the distribution Node.js'\n  desc 'ADR-0001 Phase 3: the MITRE SAF CLI (tools group safbox-tools-2), installed from npm at ' \\\n       \"its pinned version and run by the distribution's Node.js, which uses the system OpenSSL and so its FIPS provider.\"\n  only_if('the SAF CLI is not in expected_tools (tools group safbox-tools-2 switched off)') do\n    tool_expected.call('saf-cli')\n  end\n\n  version = input('saf_cli_version')\n  # Run in a scratch directory that is removed afterwards: the SAF CLI\n  # writes saf-cli.log to its working directory and has no option to stop it.\n  # One sh -c, because sudo (the profile's --sudo) applies to the first word\n  # of a command line only.\n  saf_version = %q(sh -c 'd=$(mktemp -d) && cd \"$d\" && /usr/local/bin/saf --version; rc=$?; cd / && rm -rf \"$d\"; exit $rc')\n  describe command(saf_version) do\n    its('exit_status') { should eq 0 }\n    its('stdout') { should match(%r{^@mitre/saf/#{Regexp.escape(version)} }) }\n  end\n\n  instance_exec('SAF CLI', version, &status_row)\n\n  # The SAF CLI writes saf-cli.log to its working directory on every run,\n  # even for --version. Running it must leave nothing in the scanning\n  # user's home or in /, so a scan of a consumer's box leaves no residue.\n  scan_user = command('printf %s \"${SUDO_USER:-$(id -un)}\"').stdout.strip\n  scan_home = command(\"getent passwd #{scan_user} | cut -d: -f6\").stdout.strip\n  [\"#{scan_home}/saf-cli.log\", '/saf-cli.log'].uniq.each do |residue|\n    describe file(residue) do\n      it { should_not exist }\n    end\n  end\n\n  if input('fips_required')\n    describe command(\"node -p \\\"require('crypto').getFips()\\\"\") do\n      its('exit_status') { should eq 0 }\n      its('stdout.strip') { should cmp '1' }\n    end\n  end\nend\n",
+     "desc": "ADR-0001 Phase 3: the MITRE SAF CLI (tools group safbox-tools-2), installed from npm at its pinned version and run by the distribution's Node.js, which uses the system OpenSSL and so its FIPS provider.",
+     "descriptions": [
+      {
+       "data": "ADR-0001 Phase 3: the MITRE SAF CLI (tools group safbox-tools-2), installed from npm at its pinned version and run by the distribution's Node.js, which uses the system OpenSSL and so its FIPS provider.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-tools-2",
+     "impact": 1.0,
+     "refs": [],
+     "results": [],
+     "source_location": {
+      "line": 41
+     },
+     "tags": {},
+     "title": "The SAF CLI is installed at its pinned version on the distribution Node.js",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-tools-3' do\n  impact 1.0\n  title 'Ansible and the collections the Lockdown STIG role needs are installed at their pinned versions'\n  desc 'ADR-0001 Phase 3: ansible-core from the distribution at the version pinned in group_vars ' \\\n       '(tools group safbox-tools-3), and the collections the Ansible Lockdown RHEL10-STIG role ' \\\n       'requires, installed system-wide at their pinned versions so every user on the box can ' \\\n       'run Lockdown playbooks.'\n  only_if('Ansible is not in expected_tools (tools group safbox-tools-3 switched off)') do\n    tool_expected.call('ansible')\n  end\n\n  version = input('ansible_core_version')\n  describe command('ansible --version') do\n    its('exit_status') { should eq 0 }\n    its('stdout') { should match(/^ansible \\[core #{Regexp.escape(version)}\\]$/) }\n  end\n\n  instance_exec('Ansible core', version, &status_row)\n\n  listing = command('ansible-galaxy collection list --format json -p /usr/share/ansible/collections')\n  installed = begin\n    JSON.parse(listing.stdout).fetch('/usr/share/ansible/collections/ansible_collections', {})\n  rescue JSON::ParserError\n    {}\n  end\n  input('ansible_collections').each do |name, pinned|\n    describe \"collection #{name} in /usr/share/ansible/collections\" do\n      subject { installed.dig(name.to_s, 'version') }\n      it { should cmp pinned.to_s }\n    end\n  end\nend\n",
+     "desc": "ADR-0001 Phase 3: ansible-core from the distribution at the version pinned in group_vars (tools group safbox-tools-3), and the collections the Ansible Lockdown RHEL10-STIG role requires, installed system-wide at their pinned versions so every user on the box can run Lockdown playbooks.",
+     "descriptions": [
+      {
+       "data": "ADR-0001 Phase 3: ansible-core from the distribution at the version pinned in group_vars (tools group safbox-tools-3), and the collections the Ansible Lockdown RHEL10-STIG role requires, installed system-wide at their pinned versions so every user on the box can run Lockdown playbooks.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-tools-3",
+     "impact": 1.0,
+     "refs": [],
+     "results": [],
+     "source_location": {
+      "line": 82
+     },
+     "tags": {},
+     "title": "Ansible and the collections the Lockdown STIG role needs are installed at their pinned versions",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-tools-4' do\n  impact 1.0\n  title 'HashiCorp Packer is installed at its pinned version with its license'\n  desc 'ADR-0001 Phase 3 and Risks (Packer license): Packer is its own switchable tools group ' \\\n       '(safbox-tools-4) so a distributor can exclude it, and its Business Source License text ' \\\n       'ships beside the unmodified binary.'\n  only_if('Packer is not in expected_tools (tools group safbox-tools-4 switched off)') do\n    tool_expected.call('packer')\n  end\n\n  version = input('packer_version')\n  describe command('CHECKPOINT_DISABLE=1 /usr/local/bin/packer version') do\n    its('exit_status') { should eq 0 }\n    its('stdout') { should match(/^Packer v#{Regexp.escape(version)}$/) }\n  end\n\n  instance_exec('Packer', version, &status_row)\n\n  describe file('/usr/local/share/licenses/packer/LICENSE.txt') do\n    it { should exist }\n    its('content') { should match(/Business Source License/) }\n  end\nend\n",
+     "desc": "ADR-0001 Phase 3 and Risks (Packer license): Packer is its own switchable tools group (safbox-tools-4) so a distributor can exclude it, and its Business Source License text ships beside the unmodified binary.",
+     "descriptions": [
+      {
+       "data": "ADR-0001 Phase 3 and Risks (Packer license): Packer is its own switchable tools group (safbox-tools-4) so a distributor can exclude it, and its Business Source License text ships beside the unmodified binary.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-tools-4",
+     "impact": 1.0,
+     "refs": [],
+     "results": [],
+     "source_location": {
+      "line": 115
+     },
+     "tags": {},
+     "title": "HashiCorp Packer is installed at its pinned version with its license",
+     "waiver_data": {}
+    }
+   ],
+   "copyright": "The MITRE Corporation",
+   "copyright_email": "saf@mitre.org",
+   "depends": [
+    {
+     "name": "el10-infrastructure",
+     "path": "../el10-infrastructure",
+     "status": "loaded"
+    },
+    {
+     "name": "safbox-rhel10-stig-overlay",
+     "path": "../rhel10-stig-overlay",
+     "status": "loaded"
+    }
+   ],
+   "groups": [],
+   "license": "Apache-2.0",
+   "maintainer": "MITRE SAF",
+   "name": "inspec-safbox",
+   "sha256": "8f6bace4de66ef6074e62388d9fbb8c7caebcc93fc394a6f2dbd475b81774d1f",
+   "status": "loaded",
+   "status_message": "",
+   "summary": "Root wrapper for SAFBox validation (ADR-0001 \u00a7Validation stages). One scan of this profile is the build-time gate and the release gate: it includes every child profile, and each child declares the platforms it supports, so a child that does not match the target is skipped. Today the children are the RHEL 10 family's infrastructure controls and its STIG overlay; a later OS family adds its own pair here. The wrapper declares no platform support, controls or inputs of its own; inputs belong to the child that reads them and reach it from --input-file.",
+   "supports": [],
+   "title": "SAFBox appliance validation",
+   "version": "0.5.0"
+  },
+  {
+   "attributes": [
+    {
+     "name": "build_info_expected",
+     "options": {
+      "type": "Boolean",
+      "value": false
+     }
+    },
+    {
+     "name": "seal_mode_expected",
+     "options": {
+      "type": "String",
+      "value": "full"
+     }
+    },
+    {
+     "name": "guest_agent_expected",
+     "options": {
+      "type": "Boolean",
+      "value": true
+     }
+    },
+    {
+     "name": "firstboot_completed_expected",
+     "options": {
+      "type": "Boolean",
+      "value": false
+     }
+    },
+    {
+     "name": "fips_required",
+     "options": {
+      "type": "Boolean",
+      "value": true
+     }
+    },
+    {
+     "name": "secure_boot_required",
+     "options": {
+      "type": "Boolean",
+      "value": true
+     }
+    },
+    {
+     "name": "expected_platform_id",
+     "options": {
+      "type": "String",
+      "value": "platform:el10"
+     }
+    },
+    {
+     "name": "build_user",
+     "options": {
+      "type": "String",
+      "value": "packer"
+     }
+    },
+    {
+     "name": "distro_default_users",
+     "options": {
+      "type": "Array",
+      "value": [
+       "cloud-user",
+       "almalinux",
+       "rocky",
+       "ubuntu",
+       "debian"
+      ]
+     }
+    },
+    {
+     "name": "guest_agent_denied_rpcs",
+     "options": {
+      "type": "Array",
+      "value": [
+       "guest-exec",
+       "guest-exec-status",
+       "guest-file-open",
+       "guest-file-close",
+       "guest-file-read",
+       "guest-file-write",
+       "guest-file-seek",
+       "guest-file-flush"
+      ]
+     }
+    },
+    {
+     "name": "expected_tools",
+     "options": {
+      "type": "Array",
+      "value": [
+       "cinc-auditor",
+       "saf-cli",
+       "ansible",
+       "packer"
+      ]
+     }
+    },
+    {
+     "name": "cinc_auditor_version",
+     "options": {
+      "type": "String",
+      "value": "7.2.1"
+     }
+    },
+    {
+     "name": "saf_cli_version",
+     "options": {
+      "type": "String",
+      "value": "1.7.0"
+     }
+    },
+    {
+     "name": "ansible_core_version",
+     "options": {
+      "type": "String",
+      "value": "2.16.16"
+     }
+    },
+    {
+     "name": "ansible_collections",
+     "options": {
+      "type": "Hash",
+      "value": {
+       "ansible.posix": "2.2.2",
+       "community.crypto": "2.26.9",
+       "community.general": "11.4.9"
+      }
+     }
+    },
+    {
+     "name": "packer_version",
+     "options": {
+      "type": "String",
+      "value": "1.16.1"
+     }
+    }
+   ],
+   "controls": [
+    {
+     "code": "control 'safbox-accounts-1' do\n  impact 1.0\n  title 'No distribution default user exists'\n  desc 'Distribution cloud images create a default account with passwordless sudo. A SAFBox has only ' \\\n       'the accounts its deployer asked for; a default account nobody configured is an unmanaged root path.'\n\n  (input('distro_default_users') + [cloud_cfg['default_user']]).compact.uniq.each do |name|\n    describe user(name) do\n      it { should_not exist }\n    end\n  end\nend\n",
+     "desc": "Distribution cloud images create a default account with passwordless sudo. A SAFBox has only the accounts its deployer asked for; a default account nobody configured is an unmanaged root path.",
+     "descriptions": [
+      {
+       "data": "Distribution cloud images create a default account with passwordless sudo. A SAFBox has only the accounts its deployer asked for; a default account nobody configured is an unmanaged root path.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-accounts-1",
+     "impact": 1.0,
+     "refs": [],
+     "results": [
+      {
+       "code_desc": "User cloud-user is expected not to exist",
+       "resource_class": "user",
+       "resource_id": "cloud-user",
+       "resource_params": "[\"cloud-user\"]",
+       "run_time": 0.079616,
+       "start_time": "2026-10-12T21:39:18-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "User almalinux is expected not to exist",
+       "resource_class": "user",
+       "resource_id": "almalinux",
+       "resource_params": "[\"almalinux\"]",
+       "run_time": 0.132992,
+       "start_time": "2026-10-12T21:39:18-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "User rocky is expected not to exist",
+       "resource_class": "user",
+       "resource_id": "rocky",
+       "resource_params": "[\"rocky\"]",
+       "run_time": 0.120856,
+       "start_time": "2026-10-12T21:39:18-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "User ubuntu is expected not to exist",
+       "resource_class": "user",
+       "resource_id": "ubuntu",
+       "resource_params": "[\"ubuntu\"]",
+       "run_time": 0.123896,
+       "start_time": "2026-10-12T21:39:19-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "User debian is expected not to exist",
+       "resource_class": "user",
+       "resource_id": "debian",
+       "resource_params": "[\"debian\"]",
+       "run_time": 0.12395,
+       "start_time": "2026-10-12T21:39:19-04:00",
+       "status": "passed"
+      }
+     ],
+     "source_location": {
+      "line": 13
+     },
+     "tags": {},
+     "title": "No distribution default user exists",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-accounts-2' do\n  impact 1.0\n  title 'cloud-init creates no default user unless a datasource asks for one'\n  desc 'The system configuration sets users to an empty list, so a boot without user data (the build ' \\\n       'VM, or a clone deployed without a user) creates no default account. User data that names a ' \\\n       'user, as a deployment does, still gets one built from the distribution default_user definition.'\n\n  describe 'merged cloud-init system configuration' do\n    subject { cloud_cfg_cmd }\n    its('exit_status') { should eq 0 }\n  end\n\n  describe 'cloud-init system users' do\n    subject { cloud_cfg['users'] }\n    it { should eq [] }\n  end\n\n  describe 'cloud-init default_user definition (used when user data names a user)' do\n    subject { cloud_cfg['default_user'] }\n    it { should_not be_nil }\n  end\nend\n",
+     "desc": "The system configuration sets users to an empty list, so a boot without user data (the build VM, or a clone deployed without a user) creates no default account. User data that names a user, as a deployment does, still gets one built from the distribution default_user definition.",
+     "descriptions": [
+      {
+       "data": "The system configuration sets users to an empty list, so a boot without user data (the build VM, or a clone deployed without a user) creates no default account. User data that names a user, as a deployment does, still gets one built from the distribution default_user definition.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-accounts-2",
+     "impact": 1.0,
+     "refs": [],
+     "results": [
+      {
+       "code_desc": "merged cloud-init system configuration exit_status is expected to eq 0",
+       "resource_class": "Object",
+       "resource_id": "exit_status",
+       "resource_params": "[]",
+       "run_time": 8.4e-05,
+       "start_time": "2026-10-12T21:39:19-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "cloud-init system users is expected to eq []",
+       "resource_class": "Object",
+       "resource_id": "cloud-init system users",
+       "resource_params": "[]",
+       "run_time": 4e-05,
+       "start_time": "2026-10-12T21:39:19-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "cloud-init default_user definition (used when user data names a user) is expected not to be nil",
+       "resource_class": "Object",
+       "resource_id": "cloud-init default_user definition (used when user data names a user)",
+       "resource_params": "[]",
+       "run_time": 3.1e-05,
+       "start_time": "2026-10-12T21:39:19-04:00",
+       "status": "passed"
+      }
+     ],
+     "source_location": {
+      "line": 26
+     },
+     "tags": {},
+     "title": "cloud-init creates no default user unless a datasource asks for one",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-secureboot-1' do\n  impact 1.0\n  title 'UEFI Secure Boot is enabled'\n  desc 'The install layer boots the image with Secure Boot enforced; the shim and kernel signature ' \\\n       'chain is what makes the FIPS kernel the kernel that actually runs.'\n  only_if('Secure Boot is not required for this image') { input('secure_boot_required') }\n\n  describe command('mokutil --sb-state') do\n    its('exit_status') { should eq 0 }\n    its('stdout') { should match(/^SecureBoot enabled$/) }\n  end\nend\n",
+     "desc": "The install layer boots the image with Secure Boot enforced; the shim and kernel signature chain is what makes the FIPS kernel the kernel that actually runs.",
+     "descriptions": [
+      {
+       "data": "The install layer boots the image with Secure Boot enforced; the shim and kernel signature chain is what makes the FIPS kernel the kernel that actually runs.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-secureboot-1",
+     "impact": 1.0,
+     "refs": [],
+     "results": [
+      {
+       "code_desc": "Command: `mokutil --sb-state` exit_status is expected to eq 0",
+       "resource_class": "command",
+       "resource_id": "Command: `mokutil --sb-state`",
+       "resource_params": "[\"mokutil --sb-state\"]",
+       "run_time": 0.127655,
+       "start_time": "2026-10-12T21:39:19-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Command: `mokutil --sb-state` stdout is expected to match /^SecureBoot enabled$/",
+       "resource_class": "command",
+       "resource_id": "Command: `mokutil --sb-state`",
+       "resource_params": "[\"mokutil --sb-state\"]",
+       "run_time": 6.8e-05,
+       "start_time": "2026-10-12T21:39:19-04:00",
+       "status": "passed"
+      }
+     ],
+     "source_location": {
+      "line": 3
+     },
+     "tags": {},
+     "title": "UEFI Secure Boot is enabled",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-build-info-1' do\n  impact 1.0\n  title 'The build record exists and names the distribution and microarchitecture level'\n  desc 'ADR-0001 Risks: the image records which distribution and microarchitecture level it was built ' \\\n       'from so a lab artifact is never mistaken for a release artifact. Written by the seal step ' \\\n       'outside the root-only /etc/safbox, since it is not a secret and safbox status reads it, ' \\\n       'which also records the exact builds of packages the install layer installs unpinned.'\n  only_if('build record is written by the seal step, which has not run yet') { input('build_info_expected') }\n\n  describe file(build_info_path) do\n    it { should exist }\n    its('owner') { should eq 'root' }\n    its('mode') { should cmp '0644' }\n    its('content') { should match(/^SAFBOX_BUILD_DATE=\\d{4}-\\d{2}-\\d{2}T/) }\n    its('content') { should match(/^SAFBOX_GIT_COMMIT=\\S+$/) }\n    its('content') { should match(/^SAFBOX_DISTRIBUTION=\\S+$/) }\n    its('content') { should match(/^SAFBOX_DISTRIBUTION_VERSION=\\S+$/) }\n    its('content') { should match(/^SAFBOX_PACKAGE_ARCH=\\S+$/) }\n    its('content') { should match(/^SAFBOX_MICROARCH_LEVEL=(x86-64-v[234]|n\\/a)$/) }\n    its('content') { should match(/^SAFBOX_FIPS_ENABLED=1$/) }\n    its('content') { should match(/^SAFBOX_SEAL_MODE=#{Regexp.escape(input('seal_mode_expected'))}$/) }\n    its('content') { should match(/^SAFBOX_UNPINNED_PACKAGES=.*\\bcloud-init-\\d/) }\n    its('content') { should match(/^SAFBOX_UNPINNED_PACKAGES=.*\\bqemu-guest-agent-\\d/) }\n  end\n\n  describe command('runuser -u nobody -- /usr/local/bin/safbox status') do\n    its('stdout') { should match(/^Microarchitecture level:\\s+x86-64-v[234]$/) }\n    its('stdout') { should match(/^Build MICROARCH_LEVEL:\\s+\\S/) }\n  end\n\n  # Surface the recorded values in the test description so the results carry them.\n  if file(build_info_path).exist?\n    build_info = parse_config_file(build_info_path)\n    describe \"built from #{build_info['SAFBOX_DISTRIBUTION']} #{build_info['SAFBOX_DISTRIBUTION_VERSION']} \" \\\n             \"#{build_info['SAFBOX_PACKAGE_ARCH']} at #{build_info['SAFBOX_MICROARCH_LEVEL']}\" do\n      subject { build_info['SAFBOX_DISTRIBUTION'] }\n      it { should_not be_nil }\n    end\n  end\nend\n",
+     "desc": "ADR-0001 Risks: the image records which distribution and microarchitecture level it was built from so a lab artifact is never mistaken for a release artifact. Written by the seal step outside the root-only /etc/safbox, since it is not a secret and safbox status reads it, which also records the exact builds of packages the install layer installs unpinned.",
+     "descriptions": [
+      {
+       "data": "ADR-0001 Risks: the image records which distribution and microarchitecture level it was built from so a lab artifact is never mistaken for a release artifact. Written by the seal step outside the root-only /etc/safbox, since it is not a secret and safbox status reads it, which also records the exact builds of packages the install layer installs unpinned.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-build-info-1",
+     "impact": 1.0,
+     "refs": [],
+     "results": [
+      {
+       "code_desc": "No-op",
+       "resource": "No-op",
+       "resource_class": "noop",
+       "resource_id": "No-op",
+       "resource_params": "[]",
+       "run_time": 5e-06,
+       "skip_message": "Skipped control due to only_if condition: build record is written by the seal step, which has not run yet",
+       "start_time": "2026-10-12T21:39:19-04:00",
+       "status": "skipped"
+      }
+     ],
+     "source_location": {
+      "line": 5
+     },
+     "tags": {},
+     "title": "The build record exists and names the distribution and microarchitecture level",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-cli-1' do\n  impact 1.0\n  title 'The safbox command and its subcommand registry are installed'\n  desc 'ADR-0001 \u00a7Shared Abstractions: the safbox command of the base role, with subcommand registration.'\n\n  describe file('/usr/local/bin/safbox') do\n    it { should exist }\n    it { should be_executable }\n    its('owner') { should eq 'root' }\n  end\n\n  describe directory('/usr/local/lib/safbox/commands') do\n    it { should exist }\n    its('owner') { should eq 'root' }\n  end\n\n  describe file('/usr/local/lib/safbox/commands/status') do\n    it { should exist }\n    it { should be_executable }\n  end\n\n  describe command('/usr/local/bin/safbox help') do\n    its('exit_status') { should eq 0 }\n    its('stdout') { should match(/^\\s+status\\s/) }\n  end\n\n  describe command('/usr/local/bin/safbox status') do\n    its('exit_status') { should eq 0 }\n    its('stdout') { should match(/^Distribution:/) }\n    its('stdout') { should match(/^Microarchitecture level:\\s+\\S/) }\n    its('stdout') { should match(/^FIPS mode:\\s+enabled/) }\n    its('stdout') { should match(/^First boot:/) }\n    # One row per tool group, with the version or 'not installed'; the\n    # versions themselves are checked by the safbox-tools-<n> controls.\n    its('stdout') { should match(/^CINC Auditor:\\s+\\S/) }\n    its('stdout') { should match(/^SAF CLI:\\s+\\S/) }\n    its('stdout') { should match(/^Ansible core:\\s+\\S/) }\n    its('stdout') { should match(/^Packer:\\s+\\S/) }\n  end\nend\n",
+     "desc": "ADR-0001 \u00a7Shared Abstractions: the safbox command of the base role, with subcommand registration.",
+     "descriptions": [
+      {
+       "data": "ADR-0001 \u00a7Shared Abstractions: the safbox command of the base role, with subcommand registration.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-cli-1",
+     "impact": 1.0,
+     "refs": [],
+     "results": [
+      {
+       "code_desc": "File /usr/local/bin/safbox is expected to exist",
+       "resource_class": "file",
+       "resource_id": "/usr/local/bin/safbox",
+       "resource_params": "[\"/usr/local/bin/safbox\"]",
+       "run_time": 0.121911,
+       "start_time": "2026-10-12T21:39:19-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "File /usr/local/bin/safbox is expected to be executable",
+       "resource_class": "file",
+       "resource_id": "/usr/local/bin/safbox",
+       "resource_params": "[\"/usr/local/bin/safbox\"]",
+       "run_time": 0.120841,
+       "start_time": "2026-10-12T21:39:19-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "File /usr/local/bin/safbox owner is expected to eq \"root\"",
+       "resource_class": "file",
+       "resource_id": "/usr/local/bin/safbox",
+       "resource_params": "[\"/usr/local/bin/safbox\"]",
+       "run_time": 8.7e-05,
+       "start_time": "2026-10-12T21:39:19-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Directory /usr/local/lib/safbox/commands is expected to exist",
+       "resource_class": "directory",
+       "resource_id": "/usr/local/lib/safbox/commands",
+       "resource_params": "[\"/usr/local/lib/safbox/commands\"]",
+       "run_time": 0.242832,
+       "start_time": "2026-10-12T21:39:19-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Directory /usr/local/lib/safbox/commands owner is expected to eq \"root\"",
+       "resource_class": "directory",
+       "resource_id": "/usr/local/lib/safbox/commands",
+       "resource_params": "[\"/usr/local/lib/safbox/commands\"]",
+       "run_time": 9.2e-05,
+       "start_time": "2026-10-12T21:39:19-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "File /usr/local/lib/safbox/commands/status is expected to exist",
+       "resource_class": "file",
+       "resource_id": "/usr/local/lib/safbox/commands/status",
+       "resource_params": "[\"/usr/local/lib/safbox/commands/status\"]",
+       "run_time": 0.121815,
+       "start_time": "2026-10-12T21:39:19-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "File /usr/local/lib/safbox/commands/status is expected to be executable",
+       "resource_class": "file",
+       "resource_id": "/usr/local/lib/safbox/commands/status",
+       "resource_params": "[\"/usr/local/lib/safbox/commands/status\"]",
+       "run_time": 0.120921,
+       "start_time": "2026-10-12T21:39:20-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Command: `/usr/local/bin/safbox help` exit_status is expected to eq 0",
+       "resource_class": "command",
+       "resource_id": "Command: `/usr/local/bin/safbox help`",
+       "resource_params": "[\"/usr/local/bin/safbox help\"]",
+       "run_time": 0.135891,
+       "start_time": "2026-10-12T21:39:20-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Command: `/usr/local/bin/safbox help` stdout is expected to match /^\\s+status\\s/",
+       "resource_class": "command",
+       "resource_id": "Command: `/usr/local/bin/safbox help`",
+       "resource_params": "[\"/usr/local/bin/safbox help\"]",
+       "run_time": 6.7e-05,
+       "start_time": "2026-10-12T21:39:20-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Command: `/usr/local/bin/safbox status` exit_status is expected to eq 0",
+       "resource_class": "command",
+       "resource_id": "Command: `/usr/local/bin/safbox status`",
+       "resource_params": "[\"/usr/local/bin/safbox status\"]",
+       "run_time": 0.855957,
+       "start_time": "2026-10-12T21:39:20-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Command: `/usr/local/bin/safbox status` stdout is expected to match /^Distribution:/",
+       "resource_class": "command",
+       "resource_id": "Command: `/usr/local/bin/safbox status`",
+       "resource_params": "[\"/usr/local/bin/safbox status\"]",
+       "run_time": 6.6e-05,
+       "start_time": "2026-10-12T21:39:21-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Command: `/usr/local/bin/safbox status` stdout is expected to match /^Microarchitecture level:\\s+\\S/",
+       "resource_class": "command",
+       "resource_id": "Command: `/usr/local/bin/safbox status`",
+       "resource_params": "[\"/usr/local/bin/safbox status\"]",
+       "run_time": 3.5e-05,
+       "start_time": "2026-10-12T21:39:21-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Command: `/usr/local/bin/safbox status` stdout is expected to match /^FIPS mode:\\s+enabled/",
+       "resource_class": "command",
+       "resource_id": "Command: `/usr/local/bin/safbox status`",
+       "resource_params": "[\"/usr/local/bin/safbox status\"]",
+       "run_time": 3.3e-05,
+       "start_time": "2026-10-12T21:39:21-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Command: `/usr/local/bin/safbox status` stdout is expected to match /^First boot:/",
+       "resource_class": "command",
+       "resource_id": "Command: `/usr/local/bin/safbox status`",
+       "resource_params": "[\"/usr/local/bin/safbox status\"]",
+       "run_time": 2.8e-05,
+       "start_time": "2026-10-12T21:39:21-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Command: `/usr/local/bin/safbox status` stdout is expected to match /^CINC Auditor:\\s+\\S/",
+       "resource_class": "command",
+       "resource_id": "Command: `/usr/local/bin/safbox status`",
+       "resource_params": "[\"/usr/local/bin/safbox status\"]",
+       "run_time": 2.7e-05,
+       "start_time": "2026-10-12T21:39:21-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Command: `/usr/local/bin/safbox status` stdout is expected to match /^SAF CLI:\\s+\\S/",
+       "resource_class": "command",
+       "resource_id": "Command: `/usr/local/bin/safbox status`",
+       "resource_params": "[\"/usr/local/bin/safbox status\"]",
+       "run_time": 7.5e-05,
+       "start_time": "2026-10-12T21:39:21-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Command: `/usr/local/bin/safbox status` stdout is expected to match /^Ansible core:\\s+\\S/",
+       "resource_class": "command",
+       "resource_id": "Command: `/usr/local/bin/safbox status`",
+       "resource_params": "[\"/usr/local/bin/safbox status\"]",
+       "run_time": 2.7e-05,
+       "start_time": "2026-10-12T21:39:21-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Command: `/usr/local/bin/safbox status` stdout is expected to match /^Packer:\\s+\\S/",
+       "resource_class": "command",
+       "resource_id": "Command: `/usr/local/bin/safbox status`",
+       "resource_params": "[\"/usr/local/bin/safbox status\"]",
+       "run_time": 2.7e-05,
+       "start_time": "2026-10-12T21:39:21-04:00",
+       "status": "passed"
+      }
+     ],
+     "source_location": {
+      "line": 3
+     },
+     "tags": {},
+     "title": "The safbox command and its subcommand registry are installed",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-fips-1' do\n  impact 1.0\n  title 'FIPS mode is enabled and was set at install'\n  desc 'ADR-0001: FIPS mode is on from installation and is not configurable afterward. ' \\\n       'The kernel must report fips_enabled=1 and fips=1 must be on the command line.'\n  only_if('FIPS is not required for this image') { input('fips_required') }\n\n  describe file('/proc/sys/crypto/fips_enabled') do\n    it { should exist }\n    its('content.strip') { should cmp '1' }\n  end\n\n  describe file('/proc/cmdline') do\n    its('content') { should match(/(^|\\s)fips=1(\\s|$)/) }\n  end\nend\n",
+     "desc": "ADR-0001: FIPS mode is on from installation and is not configurable afterward. The kernel must report fips_enabled=1 and fips=1 must be on the command line.",
+     "descriptions": [
+      {
+       "data": "ADR-0001: FIPS mode is on from installation and is not configurable afterward. The kernel must report fips_enabled=1 and fips=1 must be on the command line.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-fips-1",
+     "impact": 1.0,
+     "refs": [],
+     "results": [
+      {
+       "code_desc": "File /proc/sys/crypto/fips_enabled is expected to exist",
+       "resource_class": "file",
+       "resource_id": "/proc/sys/crypto/fips_enabled",
+       "resource_params": "[\"/proc/sys/crypto/fips_enabled\"]",
+       "run_time": 0.118364,
+       "start_time": "2026-10-12T21:39:21-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "File /proc/sys/crypto/fips_enabled content.strip is expected to cmp == \"1\"",
+       "resource_class": "file",
+       "resource_id": "/proc/sys/crypto/fips_enabled",
+       "resource_params": "[\"/proc/sys/crypto/fips_enabled\"]",
+       "run_time": 0.120808,
+       "start_time": "2026-10-12T21:39:21-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "File /proc/cmdline content is expected to match /(^|\\s)fips=1(\\s|$)/",
+       "resource_class": "file",
+       "resource_id": "/proc/cmdline",
+       "resource_params": "[\"/proc/cmdline\"]",
+       "run_time": 0.124149,
+       "start_time": "2026-10-12T21:39:21-04:00",
+       "status": "passed"
+      }
+     ],
+     "source_location": {
+      "line": 3
+     },
+     "tags": {},
+     "title": "FIPS mode is enabled and was set at install",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-fips-2' do\n  impact 1.0\n  title 'The system-wide crypto policy is FIPS'\n  desc 'A FIPS install sets the crypto-policies level to FIPS; any other policy lets userland ' \\\n       'negotiate algorithms outside the validated module.'\n  only_if('FIPS is not required for this image') { input('fips_required') }\n  only_if('crypto-policies is the RHEL family mechanism') { os.redhat? }\n\n  describe command('update-crypto-policies --show') do\n    its('exit_status') { should eq 0 }\n    its('stdout.strip') { should cmp 'FIPS' }\n  end\nend\n",
+     "desc": "A FIPS install sets the crypto-policies level to FIPS; any other policy lets userland negotiate algorithms outside the validated module.",
+     "descriptions": [
+      {
+       "data": "A FIPS install sets the crypto-policies level to FIPS; any other policy lets userland negotiate algorithms outside the validated module.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-fips-2",
+     "impact": 1.0,
+     "refs": [],
+     "results": [
+      {
+       "code_desc": "Command: `update-crypto-policies --show` exit_status is expected to eq 0",
+       "resource_class": "command",
+       "resource_id": "Command: `update-crypto-policies --show`",
+       "resource_params": "[\"update-crypto-policies --show\"]",
+       "run_time": 0.284404,
+       "start_time": "2026-10-12T21:39:21-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Command: `update-crypto-policies --show` stdout.strip is expected to cmp == \"FIPS\"",
+       "resource_class": "command",
+       "resource_id": "Command: `update-crypto-policies --show`",
+       "resource_params": "[\"update-crypto-policies --show\"]",
+       "run_time": 9.8e-05,
+       "start_time": "2026-10-12T21:39:21-04:00",
+       "status": "passed"
+      }
+     ],
+     "source_location": {
+      "line": 20
+     },
+     "tags": {},
+     "title": "The system-wide crypto policy is FIPS",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-fips-3' do\n  impact 1.0\n  title 'The OpenSSL FIPS provider is loaded and active'\n  desc 'In FIPS mode OpenSSL 3 must load its FIPS provider; without it, libraries fall back to ' \\\n       'unvalidated implementations.'\n  only_if('FIPS is not required for this image') { input('fips_required') }\n\n  describe command('openssl list -providers') do\n    its('exit_status') { should eq 0 }\n    its('stdout') { should match(/^\\s+fips\\n\\s+name: .*FIPS Provider\\n(\\s+\\w+: .*\\n)*?\\s+status: active$/) }\n  end\nend\n",
+     "desc": "In FIPS mode OpenSSL 3 must load its FIPS provider; without it, libraries fall back to unvalidated implementations.",
+     "descriptions": [
+      {
+       "data": "In FIPS mode OpenSSL 3 must load its FIPS provider; without it, libraries fall back to unvalidated implementations.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-fips-3",
+     "impact": 1.0,
+     "refs": [],
+     "results": [
+      {
+       "code_desc": "Command: `openssl list -providers` exit_status is expected to eq 0",
+       "resource_class": "command",
+       "resource_id": "Command: `openssl list -providers`",
+       "resource_params": "[\"openssl list -providers\"]",
+       "run_time": 0.161082,
+       "start_time": "2026-10-12T21:39:21-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Command: `openssl list -providers` stdout is expected to match /^\\s+fips\\n\\s+name: .*FIPS Provider\\n(\\s+\\w+: .*\\n)*?\\s+status: active$/",
+       "resource_class": "command",
+       "resource_id": "Command: `openssl list -providers`",
+       "resource_params": "[\"openssl list -providers\"]",
+       "run_time": 7.1e-05,
+       "start_time": "2026-10-12T21:39:21-04:00",
+       "status": "passed"
+      }
+     ],
+     "source_location": {
+      "line": 34
+     },
+     "tags": {},
+     "title": "The OpenSSL FIPS provider is loaded and active",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-firstboot-1' do\n  impact 1.0\n  title 'The first-boot framework is installed and enabled'\n  desc 'ADR-0001 \u00a7Decision: a safbox-firstboot systemd unit creates per-install credentials on first boot.'\n\n  describe file('/etc/systemd/system/safbox-firstboot.service') do\n    it { should exist }\n    its('content') { should match(%r{^ConditionPathExists=!/var/lib/safbox/firstboot\\.done$}) }\n    its('content') { should match(/^Type=oneshot$/) }\n    its('content') { should match(/^RemainAfterExit=yes$/) }\n  end\n\n  describe service('safbox-firstboot') do\n    it { should be_enabled }\n  end\n\n  describe file('/usr/local/sbin/safbox-firstboot') do\n    it { should exist }\n    it { should be_executable }\n    its('owner') { should eq 'root' }\n  end\n\n  describe file('/usr/local/lib/safbox/secrets.sh') do\n    it { should exist }\n    its('owner') { should eq 'root' }\n  end\n\n  describe directory('/etc/safbox') do\n    it { should exist }\n    its('owner') { should eq 'root' }\n    its('mode') { should cmp '0700' }\n  end\n\n  describe directory('/etc/safbox/firstboot.d') do\n    it { should exist }\n    its('owner') { should eq 'root' }\n  end\nend\n",
+     "desc": "ADR-0001 \u00a7Decision: a safbox-firstboot systemd unit creates per-install credentials on first boot.",
+     "descriptions": [
+      {
+       "data": "ADR-0001 \u00a7Decision: a safbox-firstboot systemd unit creates per-install credentials on first boot.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-firstboot-1",
+     "impact": 1.0,
+     "refs": [],
+     "results": [
+      {
+       "code_desc": "File /etc/systemd/system/safbox-firstboot.service is expected to exist",
+       "resource_class": "file",
+       "resource_id": "/etc/systemd/system/safbox-firstboot.service",
+       "resource_params": "[\"/etc/systemd/system/safbox-firstboot.service\"]",
+       "run_time": 0.124989,
+       "start_time": "2026-10-12T21:39:21-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "File /etc/systemd/system/safbox-firstboot.service content is expected to match /^ConditionPathExists=!\\/var\\/lib\\/safbox\\/firstboot\\.done$/",
+       "resource_class": "file",
+       "resource_id": "/etc/systemd/system/safbox-firstboot.service",
+       "resource_params": "[\"/etc/systemd/system/safbox-firstboot.service\"]",
+       "run_time": 0.12282,
+       "start_time": "2026-10-12T21:39:22-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "File /etc/systemd/system/safbox-firstboot.service content is expected to match /^Type=oneshot$/",
+       "resource_class": "file",
+       "resource_id": "/etc/systemd/system/safbox-firstboot.service",
+       "resource_params": "[\"/etc/systemd/system/safbox-firstboot.service\"]",
+       "run_time": 0.000117,
+       "start_time": "2026-10-12T21:39:22-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "File /etc/systemd/system/safbox-firstboot.service content is expected to match /^RemainAfterExit=yes$/",
+       "resource_class": "file",
+       "resource_id": "/etc/systemd/system/safbox-firstboot.service",
+       "resource_params": "[\"/etc/systemd/system/safbox-firstboot.service\"]",
+       "run_time": 3.2e-05,
+       "start_time": "2026-10-12T21:39:22-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Service safbox-firstboot is expected to be enabled",
+       "resource_class": "service",
+       "resource_id": "safbox-firstboot",
+       "resource_params": "[\"safbox-firstboot\"]",
+       "run_time": 0.400686,
+       "start_time": "2026-10-12T21:39:22-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "File /usr/local/sbin/safbox-firstboot is expected to exist",
+       "resource_class": "file",
+       "resource_id": "/usr/local/sbin/safbox-firstboot",
+       "resource_params": "[\"/usr/local/sbin/safbox-firstboot\"]",
+       "run_time": 0.118768,
+       "start_time": "2026-10-12T21:39:22-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "File /usr/local/sbin/safbox-firstboot is expected to be executable",
+       "resource_class": "file",
+       "resource_id": "/usr/local/sbin/safbox-firstboot",
+       "resource_params": "[\"/usr/local/sbin/safbox-firstboot\"]",
+       "run_time": 0.125017,
+       "start_time": "2026-10-12T21:39:22-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "File /usr/local/sbin/safbox-firstboot owner is expected to eq \"root\"",
+       "resource_class": "file",
+       "resource_id": "/usr/local/sbin/safbox-firstboot",
+       "resource_params": "[\"/usr/local/sbin/safbox-firstboot\"]",
+       "run_time": 7.2e-05,
+       "start_time": "2026-10-12T21:39:22-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "File /usr/local/lib/safbox/secrets.sh is expected to exist",
+       "resource_class": "file",
+       "resource_id": "/usr/local/lib/safbox/secrets.sh",
+       "resource_params": "[\"/usr/local/lib/safbox/secrets.sh\"]",
+       "run_time": 0.117801,
+       "start_time": "2026-10-12T21:39:22-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "File /usr/local/lib/safbox/secrets.sh owner is expected to eq \"root\"",
+       "resource_class": "file",
+       "resource_id": "/usr/local/lib/safbox/secrets.sh",
+       "resource_params": "[\"/usr/local/lib/safbox/secrets.sh\"]",
+       "run_time": 0.12202,
+       "start_time": "2026-10-12T21:39:22-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Directory /etc/safbox is expected to exist",
+       "resource_class": "directory",
+       "resource_id": "/etc/safbox",
+       "resource_params": "[\"/etc/safbox\"]",
+       "run_time": 0.244007,
+       "start_time": "2026-10-12T21:39:23-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Directory /etc/safbox owner is expected to eq \"root\"",
+       "resource_class": "directory",
+       "resource_id": "/etc/safbox",
+       "resource_params": "[\"/etc/safbox\"]",
+       "run_time": 8.4e-05,
+       "start_time": "2026-10-12T21:39:23-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Directory /etc/safbox mode is expected to cmp == \"0700\"",
+       "resource_class": "directory",
+       "resource_id": "/etc/safbox",
+       "resource_params": "[\"/etc/safbox\"]",
+       "run_time": 8.1e-05,
+       "start_time": "2026-10-12T21:39:23-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Directory /etc/safbox/firstboot.d is expected to exist",
+       "resource_class": "directory",
+       "resource_id": "/etc/safbox/firstboot.d",
+       "resource_params": "[\"/etc/safbox/firstboot.d\"]",
+       "run_time": 0.241768,
+       "start_time": "2026-10-12T21:39:23-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Directory /etc/safbox/firstboot.d owner is expected to eq \"root\"",
+       "resource_class": "directory",
+       "resource_id": "/etc/safbox/firstboot.d",
+       "resource_params": "[\"/etc/safbox/firstboot.d\"]",
+       "run_time": 8.5e-05,
+       "start_time": "2026-10-12T21:39:23-04:00",
+       "status": "passed"
+      }
+     ],
+     "source_location": {
+      "line": 3
+     },
+     "tags": {},
+     "title": "The first-boot framework is installed and enabled",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-firstboot-3' do\n  impact 1.0\n  title 'The first-boot unit is not in an ordering cycle with multi-user.target'\n  desc 'The unit is wanted by multi-user.target, so it is ordered before it. If it is ordered after a ' \\\n       'unit that itself comes after multi-user.target (cloud-final.service, cloud-init.target), ' \\\n       'systemd breaks the cycle by deleting the first-boot job and first boot never runs.'\n\n  unit = 'safbox-firstboot.service'\n  after = command(\"systemctl show -p After --value #{unit}\").stdout.split\n  after.each do |dependency|\n    describe \"#{unit} ordered after #{dependency}, which\" do\n      subject { command(\"systemctl show -p After --value #{dependency}\").stdout.split }\n      it { should_not include 'multi-user.target' }\n    end\n  end\n\n  describe command('journalctl -b --no-pager -o cat -u safbox-firstboot.service') do\n    its('stdout') { should_not match(/ordering cycle/i) }\n  end\nend\n",
+     "desc": "The unit is wanted by multi-user.target, so it is ordered before it. If it is ordered after a unit that itself comes after multi-user.target (cloud-final.service, cloud-init.target), systemd breaks the cycle by deleting the first-boot job and first boot never runs.",
+     "descriptions": [
+      {
+       "data": "The unit is wanted by multi-user.target, so it is ordered before it. If it is ordered after a unit that itself comes after multi-user.target (cloud-final.service, cloud-init.target), systemd breaks the cycle by deleting the first-boot job and first boot never runs.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-firstboot-3",
+     "impact": 1.0,
+     "refs": [],
+     "results": [
+      {
+       "code_desc": "safbox-firstboot.service ordered after systemd-journald.socket, which is expected not to include \"multi-user.target\"",
+       "resource_class": "Object",
+       "resource_id": "safbox-firstboot.service ordered after systemd-journald.socket, which",
+       "resource_params": "[]",
+       "run_time": 0.142045,
+       "start_time": "2026-10-12T21:39:23-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "safbox-firstboot.service ordered after sysinit.target, which is expected not to include \"multi-user.target\"",
+       "resource_class": "Object",
+       "resource_id": "safbox-firstboot.service ordered after sysinit.target, which",
+       "resource_params": "[]",
+       "run_time": 0.142698,
+       "start_time": "2026-10-12T21:39:23-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "safbox-firstboot.service ordered after basic.target, which is expected not to include \"multi-user.target\"",
+       "resource_class": "Object",
+       "resource_id": "safbox-firstboot.service ordered after basic.target, which",
+       "resource_params": "[]",
+       "run_time": 0.149909,
+       "start_time": "2026-10-12T21:39:23-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "safbox-firstboot.service ordered after system.slice, which is expected not to include \"multi-user.target\"",
+       "resource_class": "Object",
+       "resource_id": "safbox-firstboot.service ordered after system.slice, which",
+       "resource_params": "[]",
+       "run_time": 0.133937,
+       "start_time": "2026-10-12T21:39:24-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "safbox-firstboot.service ordered after cloud-config.service, which is expected not to include \"multi-user.target\"",
+       "resource_class": "Object",
+       "resource_id": "safbox-firstboot.service ordered after cloud-config.service, which",
+       "resource_params": "[]",
+       "run_time": 0.141926,
+       "start_time": "2026-10-12T21:39:24-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "safbox-firstboot.service ordered after network-online.target, which is expected not to include \"multi-user.target\"",
+       "resource_class": "Object",
+       "resource_id": "safbox-firstboot.service ordered after network-online.target, which",
+       "resource_params": "[]",
+       "run_time": 0.143891,
+       "start_time": "2026-10-12T21:39:24-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Command: `journalctl -b --no-pager -o cat -u safbox-firstboot.service` stdout is expected not to match /ordering cycle/i",
+       "resource_class": "command",
+       "resource_id": "Command: `journalctl -b --no-pager -o cat -u safbox-firstboot.service`",
+       "resource_params": "[\"journalctl -b --no-pager -o cat -u safbox-firstboot.service\"]",
+       "run_time": 0.12729,
+       "start_time": "2026-10-12T21:39:24-04:00",
+       "status": "passed"
+      }
+     ],
+     "source_location": {
+      "line": 42
+     },
+     "tags": {},
+     "title": "The first-boot unit is not in an ordering cycle with multi-user.target",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-firstboot-2' do\n  impact 1.0\n  title 'First boot has completed exactly once on a deployed clone'\n  desc 'Phase 2 acceptance: the unit runs once on first boot, records completion, and does not run ' \\\n       'again. The journal is persistent, so it holds exactly one completion message however many ' \\\n       'times the clone has booted.'\n  only_if('not a deployed clone') { input('firstboot_completed_expected') }\n\n  describe file('/var/lib/safbox/firstboot.done') do\n    it { should exist }\n    its('content') { should match(/^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$/) }\n  end\n\n  describe command('systemctl show -p Result --value safbox-firstboot.service') do\n    its('stdout.strip') { should eq 'success' }\n  end\n\n  describe command('runuser -u nobody -- /usr/local/bin/safbox status') do\n    its('stdout') { should match(/^First boot:\\s+completed/) }\n  end\n\n  completions = command('journalctl --no-pager -o cat -t safbox-firstboot').stdout\n                .scan(/^safbox-firstboot: first boot complete;/).length\n  describe 'first-boot completions recorded in the persistent journal' do\n    subject { completions }\n    it { should eq 1 }\n  end\nend\n",
+     "desc": "Phase 2 acceptance: the unit runs once on first boot, records completion, and does not run again. The journal is persistent, so it holds exactly one completion message however many times the clone has booted.",
+     "descriptions": [
+      {
+       "data": "Phase 2 acceptance: the unit runs once on first boot, records completion, and does not run again. The journal is persistent, so it holds exactly one completion message however many times the clone has booted.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-firstboot-2",
+     "impact": 1.0,
+     "refs": [],
+     "results": [
+      {
+       "code_desc": "No-op",
+       "resource": "No-op",
+       "resource_class": "noop",
+       "resource_id": "No-op",
+       "resource_params": "[]",
+       "run_time": 3e-06,
+       "skip_message": "Skipped control due to only_if condition: not a deployed clone",
+       "start_time": "2026-10-12T21:39:24-04:00",
+       "status": "skipped"
+      }
+     ],
+     "source_location": {
+      "line": 63
+     },
+     "tags": {},
+     "title": "First boot has completed exactly once on a deployed clone",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-guest-agent-1' do\n  impact 1.0\n  title \"The guest agent keeps the distribution's RPC filter: no in-guest exec or file access\"\n  desc 'With guest-exec or guest-file-* enabled, anyone with administrative access to the hypervisor ' \\\n       'can run commands and read or write files inside the appliance without logging in. The ' \\\n       'distribution ships a filter that disables them; the image must keep it unmodified.'\n  # On platforms without a guest-agent channel the agent cannot run; the\n  # deploy sets guest_agent_expected=false there. Everywhere else a stopped\n  # agent is a failure, not a skip.\n  only_if('guest agent not expected on this platform (guest_agent_expected=false)') do\n    input('guest_agent_expected')\n  end\n\n  describe 'qemu-guest-agent main process' do\n    subject { main_pid }\n    it { should match(/^[1-9]\\d*$/) }\n  end\n\n  mode, rpcs = rpc_filter.call(agent_args)\n  denied = input('guest_agent_denied_rpcs')\n\n  describe 'guest agent RPC filter mode' do\n    subject { mode }\n    it { should be_in %w[allow block] }\n  end\n\n  if mode == 'allow'\n    describe 'RPCs the guest agent allows' do\n      subject { rpcs }\n      denied.each { |rpc| it { should_not include rpc } }\n    end\n  elsif mode == 'block'\n    describe 'RPCs the guest agent blocks' do\n      subject { rpcs }\n      denied.each { |rpc| it { should include rpc } }\n    end\n  end\n\n  describe command(\"systemctl show -p DropInPaths --value #{unit}\") do\n    its('stdout.strip') { should be_empty }\n  end\n\n  if os.redhat?\n    describe command('rpm -V --nomtime qemu-guest-agent') do\n      its('stdout') { should be_empty }\n    end\n  end\nend\n",
+     "desc": "With guest-exec or guest-file-* enabled, anyone with administrative access to the hypervisor can run commands and read or write files inside the appliance without logging in. The distribution ships a filter that disables them; the image must keep it unmodified.",
+     "descriptions": [
+      {
+       "data": "With guest-exec or guest-file-* enabled, anyone with administrative access to the hypervisor can run commands and read or write files inside the appliance without logging in. The distribution ships a filter that disables them; the image must keep it unmodified.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-guest-agent-1",
+     "impact": 1.0,
+     "refs": [],
+     "results": [
+      {
+       "code_desc": "qemu-guest-agent main process is expected to match /^[1-9]\\d*$/",
+       "resource_class": "Object",
+       "resource_id": "qemu-guest-agent main process",
+       "resource_params": "[]",
+       "run_time": 5.2e-05,
+       "start_time": "2026-10-12T21:39:24-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "guest agent RPC filter mode is expected to be in \"allow\" and \"block\"",
+       "resource_class": "Object",
+       "resource_id": "guest agent RPC filter mode",
+       "resource_params": "[]",
+       "run_time": 8.4e-05,
+       "start_time": "2026-10-12T21:39:24-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "RPCs the guest agent allows is expected not to include \"guest-exec\"",
+       "resource_class": "Object",
+       "resource_id": "RPCs the guest agent allows",
+       "resource_params": "[]",
+       "run_time": 6.1e-05,
+       "start_time": "2026-10-12T21:39:24-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "RPCs the guest agent allows is expected not to include \"guest-exec-status\"",
+       "resource_class": "Object",
+       "resource_id": "RPCs the guest agent allows",
+       "resource_params": "[]",
+       "run_time": 4.1e-05,
+       "start_time": "2026-10-12T21:39:24-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "RPCs the guest agent allows is expected not to include \"guest-file-open\"",
+       "resource_class": "Object",
+       "resource_id": "RPCs the guest agent allows",
+       "resource_params": "[]",
+       "run_time": 4e-05,
+       "start_time": "2026-10-12T21:39:24-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "RPCs the guest agent allows is expected not to include \"guest-file-close\"",
+       "resource_class": "Object",
+       "resource_id": "RPCs the guest agent allows",
+       "resource_params": "[]",
+       "run_time": 3.9e-05,
+       "start_time": "2026-10-12T21:39:24-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "RPCs the guest agent allows is expected not to include \"guest-file-read\"",
+       "resource_class": "Object",
+       "resource_id": "RPCs the guest agent allows",
+       "resource_params": "[]",
+       "run_time": 3.8e-05,
+       "start_time": "2026-10-12T21:39:24-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "RPCs the guest agent allows is expected not to include \"guest-file-write\"",
+       "resource_class": "Object",
+       "resource_id": "RPCs the guest agent allows",
+       "resource_params": "[]",
+       "run_time": 3.8e-05,
+       "start_time": "2026-10-12T21:39:24-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "RPCs the guest agent allows is expected not to include \"guest-file-seek\"",
+       "resource_class": "Object",
+       "resource_id": "RPCs the guest agent allows",
+       "resource_params": "[]",
+       "run_time": 3.9e-05,
+       "start_time": "2026-10-12T21:39:24-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "RPCs the guest agent allows is expected not to include \"guest-file-flush\"",
+       "resource_class": "Object",
+       "resource_id": "RPCs the guest agent allows",
+       "resource_params": "[]",
+       "run_time": 0.000137,
+       "start_time": "2026-10-12T21:39:24-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Command: `systemctl show -p DropInPaths --value qemu-guest-agent.service` stdout.strip is expected to be empty",
+       "resource_class": "command",
+       "resource_id": "Command: `systemctl show -p DropInPaths --value qemu-guest-agent.service`",
+       "resource_params": "[\"systemctl show -p DropInPaths --value qemu-guest-agent.service\"]",
+       "run_time": 0.137777,
+       "start_time": "2026-10-12T21:39:24-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Command: `rpm -V --nomtime qemu-guest-agent` stdout is expected to be empty",
+       "resource_class": "command",
+       "resource_id": "Command: `rpm -V --nomtime qemu-guest-agent`",
+       "resource_params": "[\"rpm -V --nomtime qemu-guest-agent\"]",
+       "run_time": 0.246048,
+       "start_time": "2026-10-12T21:39:24-04:00",
+       "status": "passed"
+      }
+     ],
+     "source_location": {
+      "line": 22
+     },
+     "tags": {},
+     "title": "The guest agent keeps the distribution's RPC filter: no in-guest exec or file access",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-platform-1' do\n  impact 1.0\n  title 'The operating system is one the appliance layer supports'\n  desc 'ADR-0001: RHEL 10 family for v1 (Rocky Linux 10 or AlmaLinux 10); Debian family untested but present.'\n\n  describe os.family do\n    it { should be_in %w[redhat debian] }\n  end\n\n  if os.redhat?\n    describe 'PLATFORM_ID in /etc/os-release' do\n      subject { os_release_value.call('PLATFORM_ID') }\n      it { should cmp input('expected_platform_id') }\n    end\n    describe os.release.to_s do\n      it { should match(/^10(\\.|$)/) }\n    end\n  end\nend\n",
+     "desc": "ADR-0001: RHEL 10 family for v1 (Rocky Linux 10 or AlmaLinux 10); Debian family untested but present.",
+     "descriptions": [
+      {
+       "data": "ADR-0001: RHEL 10 family for v1 (Rocky Linux 10 or AlmaLinux 10); Debian family untested but present.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-platform-1",
+     "impact": 1.0,
+     "refs": [],
+     "results": [
+      {
+       "code_desc": "redhat is expected to be in \"redhat\" and \"debian\"",
+       "resource_class": "Object",
+       "resource_id": "redhat",
+       "resource_params": "[]",
+       "run_time": 0.000112,
+       "start_time": "2026-10-12T21:39:24-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "PLATFORM_ID in /etc/os-release is expected to cmp == \"platform:el10\"",
+       "resource_class": "Object",
+       "resource_id": "PLATFORM_ID in /etc/os-release",
+       "resource_params": "[]",
+       "run_time": 9.3e-05,
+       "start_time": "2026-10-12T21:39:24-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "10.2 is expected to match /^10(\\.|$)/",
+       "resource_class": "Object",
+       "resource_id": "10.2",
+       "resource_params": "[]",
+       "run_time": 4.1e-05,
+       "start_time": "2026-10-12T21:39:24-04:00",
+       "status": "passed"
+      }
+     ],
+     "source_location": {
+      "line": 8
+     },
+     "tags": {},
+     "title": "The operating system is one the appliance layer supports",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-platform-2' do\n  impact 1.0\n  title 'The distribution and microarchitecture level of the running image are recorded'\n  desc 'ADR-0001 Risks: validation records which distribution and microarchitecture level an image ' \\\n       'was built from so a lab artifact is never mistaken for a release artifact. The values appear ' \\\n       'in the test descriptions of this control: the package architecture is what the image was ' \\\n       'built from (x86_64_v2 on the AlmaLinux v2 media), the loader level is what this CPU supports.'\n\n  describe \"distribution #{os_release_value.call('PRETTY_NAME')} (#{os.arch})\" do\n    subject { os.name }\n    it { should_not be_nil }\n  end\n\n  package_arch = if os.redhat?\n                   command(\"rpm -q --qf '%{ARCH}' glibc\").stdout.strip\n                 else\n                   command('dpkg --print-architecture').stdout.strip\n                 end\n  describe \"image package architecture #{package_arch}\" do\n    subject { package_arch }\n    it { should match(/^(x86_64(_v[234])?|aarch64|amd64|arm64)$/) }\n  end\n\n  loader = command('/lib64/ld-linux-x86-64.so.2 --help')\n  if loader.exit_status.zero?\n    level = loader.stdout[/x86-64-v\\d+(?= \\(supported)/] || 'none'\n    describe \"highest microarchitecture level this CPU supports #{level}\" do\n      subject { level }\n      it { should match(/^x86-64-v[234]$/) }\n    end\n  else\n    describe \"microarchitecture level not applicable on #{os.arch}\" do\n      subject { os.arch }\n      it { should_not eq 'x86_64' }\n    end\n  end\nend\n",
+     "desc": "ADR-0001 Risks: validation records which distribution and microarchitecture level an image was built from so a lab artifact is never mistaken for a release artifact. The values appear in the test descriptions of this control: the package architecture is what the image was built from (x86_64_v2 on the AlmaLinux v2 media), the loader level is what this CPU supports.",
+     "descriptions": [
+      {
+       "data": "ADR-0001 Risks: validation records which distribution and microarchitecture level an image was built from so a lab artifact is never mistaken for a release artifact. The values appear in the test descriptions of this control: the package architecture is what the image was built from (x86_64_v2 on the AlmaLinux v2 media), the loader level is what this CPU supports.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-platform-2",
+     "impact": 1.0,
+     "refs": [],
+     "results": [
+      {
+       "code_desc": "distribution AlmaLinux 10.2 (Lavender Lion) (x86_64) is expected not to be nil",
+       "resource_class": "Object",
+       "resource_id": "distribution AlmaLinux 10.2 (Lavender Lion) (x86_64)",
+       "resource_params": "[]",
+       "run_time": 7.3e-05,
+       "start_time": "2026-10-12T21:39:24-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "image package architecture x86_64_v2 is expected to match /^(x86_64(_v[234])?|aarch64|amd64|arm64)$/",
+       "resource_class": "Object",
+       "resource_id": "image package architecture x86_64_v2",
+       "resource_params": "[]",
+       "run_time": 2.8e-05,
+       "start_time": "2026-10-12T21:39:24-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "highest microarchitecture level this CPU supports x86-64-v2 is expected to match /^x86-64-v[234]$/",
+       "resource_class": "Object",
+       "resource_id": "highest microarchitecture level this CPU supports x86-64-v2",
+       "resource_params": "[]",
+       "run_time": 2.7e-05,
+       "start_time": "2026-10-12T21:39:24-04:00",
+       "status": "passed"
+      }
+     ],
+     "source_location": {
+      "line": 28
+     },
+     "tags": {},
+     "title": "The distribution and microarchitecture level of the running image are recorded",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-podman-1' do\n  impact 1.0\n  title 'podman is installed and the Quadlet unit directory exists'\n  desc 'ADR-0001 \u00a7Decision: services run as podman Quadlets from the distribution podman stack.'\n\n  describe package('podman') do\n    it { should be_installed }\n  end\n\n  describe command('podman --version') do\n    its('exit_status') { should eq 0 }\n    its('stdout') { should match(/podman version \\d+\\./) }\n  end\n\n  describe directory('/etc/containers/systemd') do\n    it { should exist }\n    its('owner') { should eq 'root' }\n    its('mode') { should cmp '0755' }\n  end\n\n  describe file('/etc/containers/registries.conf.d/50-safbox.conf') do\n    it { should exist }\n    its('content') { should match(/^short-name-mode = \"enforcing\"$/) }\n  end\nend\n",
+     "desc": "ADR-0001 \u00a7Decision: services run as podman Quadlets from the distribution podman stack.",
+     "descriptions": [
+      {
+       "data": "ADR-0001 \u00a7Decision: services run as podman Quadlets from the distribution podman stack.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-podman-1",
+     "impact": 1.0,
+     "refs": [],
+     "results": [
+      {
+       "code_desc": "System Package podman is expected to be installed",
+       "resource_class": "package",
+       "resource_id": "podman",
+       "resource_params": "[\"podman\"]",
+       "run_time": 0.174221,
+       "start_time": "2026-10-12T21:39:24-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Command: `podman --version` exit_status is expected to eq 0",
+       "resource_class": "command",
+       "resource_id": "Command: `podman --version`",
+       "resource_params": "[\"podman --version\"]",
+       "run_time": 0.236902,
+       "start_time": "2026-10-12T21:39:25-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Command: `podman --version` stdout is expected to match /podman version \\d+\\./",
+       "resource_class": "command",
+       "resource_id": "Command: `podman --version`",
+       "resource_params": "[\"podman --version\"]",
+       "run_time": 7e-05,
+       "start_time": "2026-10-12T21:39:25-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Directory /etc/containers/systemd is expected to exist",
+       "resource_class": "directory",
+       "resource_id": "/etc/containers/systemd",
+       "resource_params": "[\"/etc/containers/systemd\"]",
+       "run_time": 0.244848,
+       "start_time": "2026-10-12T21:39:25-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Directory /etc/containers/systemd owner is expected to eq \"root\"",
+       "resource_class": "directory",
+       "resource_id": "/etc/containers/systemd",
+       "resource_params": "[\"/etc/containers/systemd\"]",
+       "run_time": 9e-05,
+       "start_time": "2026-10-12T21:39:25-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Directory /etc/containers/systemd mode is expected to cmp == \"0755\"",
+       "resource_class": "directory",
+       "resource_id": "/etc/containers/systemd",
+       "resource_params": "[\"/etc/containers/systemd\"]",
+       "run_time": 0.000182,
+       "start_time": "2026-10-12T21:39:25-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "File /etc/containers/registries.conf.d/50-safbox.conf is expected to exist",
+       "resource_class": "file",
+       "resource_id": "/etc/containers/registries.conf.d/50-safbox.conf",
+       "resource_params": "[\"/etc/containers/registries.conf.d/50-safbox.conf\"]",
+       "run_time": 0.122659,
+       "start_time": "2026-10-12T21:39:25-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "File /etc/containers/registries.conf.d/50-safbox.conf content is expected to match /^short-name-mode = \"enforcing\"$/",
+       "resource_class": "file",
+       "resource_id": "/etc/containers/registries.conf.d/50-safbox.conf",
+       "resource_params": "[\"/etc/containers/registries.conf.d/50-safbox.conf\"]",
+       "run_time": 0.126819,
+       "start_time": "2026-10-12T21:39:25-04:00",
+       "status": "passed"
+      }
+     ],
+     "source_location": {
+      "line": 3
+     },
+     "tags": {},
+     "title": "podman is installed and the Quadlet unit directory exists",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-podman-2' do\n  impact 1.0\n  title 'The smoke test Quadlet unit is present and running'\n  desc 'Phase 2 acceptance: a trivial Quadlet unit starts on boot of a clone and survives reboot.'\n  only_if('smoke test unit not installed in this build') do\n    file('/etc/containers/systemd/safbox-example.container').exist?\n  end\n\n  describe service('safbox-example') do\n    it { should be_running }\n  end\nend\n",
+     "desc": "Phase 2 acceptance: a trivial Quadlet unit starts on boot of a clone and survives reboot.",
+     "descriptions": [
+      {
+       "data": "Phase 2 acceptance: a trivial Quadlet unit starts on boot of a clone and survives reboot.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-podman-2",
+     "impact": 1.0,
+     "refs": [],
+     "results": [
+      {
+       "code_desc": "No-op",
+       "resource": "No-op",
+       "resource_class": "noop",
+       "resource_id": "No-op",
+       "resource_params": "[]",
+       "run_time": 3e-06,
+       "skip_message": "Skipped control due to only_if condition: smoke test unit not installed in this build",
+       "start_time": "2026-10-12T21:39:25-04:00",
+       "status": "skipped"
+      }
+     ],
+     "source_location": {
+      "line": 29
+     },
+     "tags": {},
+     "title": "The smoke test Quadlet unit is present and running",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-seal-1' do\n  impact 1.0\n  title 'The build user, its SSH key and its sudo drop-in are gone'\n  desc 'ADR-0001 Phase 2: the seal step deletes the build account the install layer created, with its ' \\\n       'authorized key and passwordless sudo rule, so the template carries no build credential.'\n  only_if('the seal step has not run yet') { input('build_info_expected') }\n\n  build_user = input('build_user')\n  describe user(build_user) do\n    it { should_not exist }\n  end\n  describe file(\"/etc/sudoers.d/90-#{build_user}\") do\n    it { should_not exist }\n  end\n  describe file(\"/home/#{build_user}\") do\n    it { should_not exist }\n  end\nend\n",
+     "desc": "ADR-0001 Phase 2: the seal step deletes the build account the install layer created, with its authorized key and passwordless sudo rule, so the template carries no build credential.",
+     "descriptions": [
+      {
+       "data": "ADR-0001 Phase 2: the seal step deletes the build account the install layer created, with its authorized key and passwordless sudo rule, so the template carries no build credential.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-seal-1",
+     "impact": 1.0,
+     "refs": [],
+     "results": [
+      {
+       "code_desc": "No-op",
+       "resource": "No-op",
+       "resource_class": "noop",
+       "resource_id": "No-op",
+       "resource_params": "[]",
+       "run_time": 1e-06,
+       "skip_message": "Skipped control due to only_if condition: the seal step has not run yet",
+       "start_time": "2026-10-12T21:39:25-04:00",
+       "status": "skipped"
+      }
+     ],
+     "source_location": {
+      "line": 3
+     },
+     "tags": {},
+     "title": "The build user, its SSH key and its sudo drop-in are gone",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-seal-2' do\n  impact 1.0\n  title 'No installer residue: kickstart copies, the %post log or installer logs'\n  desc 'The kickstart copies and logs carry the build user name and public key. The seal step removes ' \\\n       '/root/*ks*.cfg, /root/ks-post.log and /var/log/anaconda.'\n  only_if('the seal step has not run yet') { input('build_info_expected') }\n\n  describe command(\"find /root -maxdepth 1 -name '*ks*.cfg'\") do\n    its('stdout') { should be_empty }\n  end\n  describe file('/root/ks-post.log') do\n    it { should_not exist }\n  end\n  describe file('/var/log/anaconda') do\n    it { should_not exist }\n  end\nend\n",
+     "desc": "The kickstart copies and logs carry the build user name and public key. The seal step removes /root/*ks*.cfg, /root/ks-post.log and /var/log/anaconda.",
+     "descriptions": [
+      {
+       "data": "The kickstart copies and logs carry the build user name and public key. The seal step removes /root/*ks*.cfg, /root/ks-post.log and /var/log/anaconda.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-seal-2",
+     "impact": 1.0,
+     "refs": [],
+     "results": [
+      {
+       "code_desc": "No-op",
+       "resource": "No-op",
+       "resource_class": "noop",
+       "resource_id": "No-op",
+       "resource_params": "[]",
+       "run_time": 1e-06,
+       "skip_message": "Skipped control due to only_if condition: the seal step has not run yet",
+       "start_time": "2026-10-12T21:39:25-04:00",
+       "status": "skipped"
+      }
+     ],
+     "source_location": {
+      "line": 22
+     },
+     "tags": {},
+     "title": "No installer residue: kickstart copies, the %post log or installer logs",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-services-1' do\n  impact 1.0\n  title 'The guest agent, cloud-init and sshd are enabled'\n  desc 'ADR-0001 install layer contract: a booted, SSH-reachable OS with the guest agent and cloud-init present.'\n\n  %w[qemu-guest-agent cloud-init].push(sshd_unit).each do |unit|\n    describe service(unit) do\n      it { should be_installed }\n      it { should be_enabled }\n    end\n  end\n\n  describe service(sshd_unit) do\n    it { should be_running }\n  end\nend\n",
+     "desc": "ADR-0001 install layer contract: a booted, SSH-reachable OS with the guest agent and cloud-init present.",
+     "descriptions": [
+      {
+       "data": "ADR-0001 install layer contract: a booted, SSH-reachable OS with the guest agent and cloud-init present.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-services-1",
+     "impact": 1.0,
+     "refs": [],
+     "results": [
+      {
+       "code_desc": "Service qemu-guest-agent is expected to be installed",
+       "resource_class": "service",
+       "resource_id": "qemu-guest-agent",
+       "resource_params": "[\"qemu-guest-agent\"]",
+       "run_time": 0.408941,
+       "start_time": "2026-10-12T21:39:25-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Service qemu-guest-agent is expected to be enabled",
+       "resource_class": "service",
+       "resource_id": "qemu-guest-agent",
+       "resource_params": "[\"qemu-guest-agent\"]",
+       "run_time": 0.000177,
+       "start_time": "2026-10-12T21:39:26-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Service cloud-init is expected to be installed",
+       "resource_class": "service",
+       "resource_id": "cloud-init",
+       "resource_params": "[\"cloud-init\"]",
+       "run_time": 0.405714,
+       "start_time": "2026-10-12T21:39:26-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Service cloud-init is expected to be enabled",
+       "resource_class": "service",
+       "resource_id": "cloud-init",
+       "resource_params": "[\"cloud-init\"]",
+       "run_time": 8.1e-05,
+       "start_time": "2026-10-12T21:39:26-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Service sshd is expected to be installed",
+       "resource_class": "service",
+       "resource_id": "sshd",
+       "resource_params": "[\"sshd\"]",
+       "run_time": 0.000898,
+       "start_time": "2026-10-12T21:39:26-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Service sshd is expected to be enabled",
+       "resource_class": "service",
+       "resource_id": "sshd",
+       "resource_params": "[\"sshd\"]",
+       "run_time": 3.9e-05,
+       "start_time": "2026-10-12T21:39:26-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Service sshd is expected to be running",
+       "resource_class": "service",
+       "resource_id": "sshd",
+       "resource_params": "[\"sshd\"]",
+       "run_time": 0.000696,
+       "start_time": "2026-10-12T21:39:26-04:00",
+       "status": "passed"
+      }
+     ],
+     "source_location": {
+      "line": 6
+     },
+     "tags": {},
+     "title": "The guest agent, cloud-init and sshd are enabled",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-services-2' do\n  impact 1.0\n  title 'Time synchronisation and the firewall are enabled with SSH allowed'\n  desc 'platform role: chrony and firewalld run; the firewall allows SSH (ADR-0001 Quality Standards).'\n\n  describe service(chrony_unit) do\n    it { should be_enabled }\n    it { should be_running }\n  end\n\n  describe service('firewalld') do\n    it { should be_enabled }\n    it { should be_running }\n  end\n\n  describe command('firewall-cmd --list-services') do\n    its('stdout') { should match(/(^|\\s)ssh(\\s|$)/) }\n  end\nend\n",
+     "desc": "platform role: chrony and firewalld run; the firewall allows SSH (ADR-0001 Quality Standards).",
+     "descriptions": [
+      {
+       "data": "platform role: chrony and firewalld run; the firewall allows SSH (ADR-0001 Quality Standards).",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-services-2",
+     "impact": 1.0,
+     "refs": [],
+     "results": [
+      {
+       "code_desc": "Service chronyd is expected to be enabled",
+       "resource_class": "service",
+       "resource_id": "chronyd",
+       "resource_params": "[\"chronyd\"]",
+       "run_time": 14.131384,
+       "start_time": "2026-10-12T21:39:26-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Service chronyd is expected to be running",
+       "resource_class": "service",
+       "resource_id": "chronyd",
+       "resource_params": "[\"chronyd\"]",
+       "run_time": 7.8e-05,
+       "start_time": "2026-10-12T21:39:40-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Service firewalld is expected to be enabled",
+       "resource_class": "service",
+       "resource_id": "firewalld",
+       "resource_params": "[\"firewalld\"]",
+       "run_time": 0.362758,
+       "start_time": "2026-10-12T21:39:40-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Service firewalld is expected to be running",
+       "resource_class": "service",
+       "resource_id": "firewalld",
+       "resource_params": "[\"firewalld\"]",
+       "run_time": 7.8e-05,
+       "start_time": "2026-10-12T21:39:41-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Command: `firewall-cmd --list-services` stdout is expected to match /(^|\\s)ssh(\\s|$)/",
+       "resource_class": "command",
+       "resource_id": "Command: `firewall-cmd --list-services`",
+       "resource_params": "[\"firewall-cmd --list-services\"]",
+       "run_time": 0.573959,
+       "start_time": "2026-10-12T21:39:41-04:00",
+       "status": "passed"
+      }
+     ],
+     "source_location": {
+      "line": 23
+     },
+     "tags": {},
+     "title": "Time synchronisation and the firewall are enabled with SSH allowed",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-services-3' do\n  impact 1.0\n  title 'The journal persists across reboots'\n  desc 'platform role: journald keeps the journal on disk (Storage=persistent), so first-boot output and ' \\\n       'security-relevant logs survive a reboot. The distribution default keeps it in memory only.'\n\n  describe command('systemd-analyze cat-config systemd/journald.conf') do\n    its('stdout') { should match(/^Storage=persistent$/) }\n  end\n\n  describe file('/var/log/journal') do\n    it { should be_directory }\n  end\nend\n",
+     "desc": "platform role: journald keeps the journal on disk (Storage=persistent), so first-boot output and security-relevant logs survive a reboot. The distribution default keeps it in memory only.",
+     "descriptions": [
+      {
+       "data": "platform role: journald keeps the journal on disk (Storage=persistent), so first-boot output and security-relevant logs survive a reboot. The distribution default keeps it in memory only.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-services-3",
+     "impact": 1.0,
+     "refs": [],
+     "results": [
+      {
+       "code_desc": "Command: `systemd-analyze cat-config systemd/journald.conf` stdout is expected to match /^Storage=persistent$/",
+       "resource_class": "command",
+       "resource_id": "Command: `systemd-analyze cat-config systemd/journald.conf`",
+       "resource_params": "[\"systemd-analyze cat-config systemd/journald.conf\"]",
+       "run_time": 0.144815,
+       "start_time": "2026-10-12T21:39:41-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "File /var/log/journal is expected to be directory",
+       "resource_class": "file",
+       "resource_id": "/var/log/journal",
+       "resource_params": "[\"/var/log/journal\"]",
+       "run_time": 0.124828,
+       "start_time": "2026-10-12T21:39:41-04:00",
+       "status": "passed"
+      }
+     ],
+     "source_location": {
+      "line": 43
+     },
+     "tags": {},
+     "title": "The journal persists across reboots",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-tools-1' do\n  impact 1.0\n  title 'CINC Auditor is installed at its pinned version'\n  desc 'ADR-0001 Phase 3: CINC Auditor ships on the box as an assessment tool (tools group ' \\\n       'safbox-tools-1), at the version pinned in group_vars. Only the version is compared, so ' \\\n       'a site build of the same version (another release) passes.'\n  only_if('CINC Auditor is not in expected_tools (tools group safbox-tools-1 switched off)') do\n    tool_expected.call('cinc-auditor')\n  end\n\n  version = input('cinc_auditor_version')\n  describe command('cinc-auditor version') do\n    its('exit_status') { should eq 0 }\n    its('stdout') { should match(/^#{Regexp.escape(version)}$/) }\n  end\n\n  instance_exec('CINC Auditor', version, &status_row)\nend\n",
+     "desc": "ADR-0001 Phase 3: CINC Auditor ships on the box as an assessment tool (tools group safbox-tools-1), at the version pinned in group_vars. Only the version is compared, so a site build of the same version (another release) passes.",
+     "descriptions": [
+      {
+       "data": "ADR-0001 Phase 3: CINC Auditor ships on the box as an assessment tool (tools group safbox-tools-1), at the version pinned in group_vars. Only the version is compared, so a site build of the same version (another release) passes.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-tools-1",
+     "impact": 1.0,
+     "refs": [],
+     "results": [
+      {
+       "code_desc": "Command: `cinc-auditor version` exit_status is expected to eq 0",
+       "resource_class": "command",
+       "resource_id": "Command: `cinc-auditor version`",
+       "resource_params": "[\"cinc-auditor version\"]",
+       "run_time": 8.252119,
+       "start_time": "2026-10-12T21:39:42-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Command: `cinc-auditor version` stdout is expected to match /^7\\.2\\.1$/",
+       "resource_class": "command",
+       "resource_id": "Command: `cinc-auditor version`",
+       "resource_params": "[\"cinc-auditor version\"]",
+       "run_time": 7.4e-05,
+       "start_time": "2026-10-12T21:39:50-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Command: `runuser -u nobody -- /usr/local/bin/safbox status` stdout is expected to match /^CINC\\ Auditor:\\s+7\\.2\\.1(\\s|$)/",
+       "resource_class": "command",
+       "resource_id": "Command: `runuser -u nobody -- /usr/local/bin/safbox status`",
+       "resource_params": "[\"runuser -u nobody -- /usr/local/bin/safbox status\"]",
+       "run_time": 0.84283,
+       "start_time": "2026-10-12T21:39:50-04:00",
+       "status": "passed"
+      }
+     ],
+     "source_location": {
+      "line": 22
+     },
+     "tags": {},
+     "title": "CINC Auditor is installed at its pinned version",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-tools-2' do\n  impact 1.0\n  title 'The SAF CLI is installed at its pinned version on the distribution Node.js'\n  desc 'ADR-0001 Phase 3: the MITRE SAF CLI (tools group safbox-tools-2), installed from npm at ' \\\n       \"its pinned version and run by the distribution's Node.js, which uses the system OpenSSL and so its FIPS provider.\"\n  only_if('the SAF CLI is not in expected_tools (tools group safbox-tools-2 switched off)') do\n    tool_expected.call('saf-cli')\n  end\n\n  version = input('saf_cli_version')\n  # Run in a scratch directory that is removed afterwards: the SAF CLI\n  # writes saf-cli.log to its working directory and has no option to stop it.\n  # One sh -c, because sudo (the profile's --sudo) applies to the first word\n  # of a command line only.\n  saf_version = %q(sh -c 'd=$(mktemp -d) && cd \"$d\" && /usr/local/bin/saf --version; rc=$?; cd / && rm -rf \"$d\"; exit $rc')\n  describe command(saf_version) do\n    its('exit_status') { should eq 0 }\n    its('stdout') { should match(%r{^@mitre/saf/#{Regexp.escape(version)} }) }\n  end\n\n  instance_exec('SAF CLI', version, &status_row)\n\n  # The SAF CLI writes saf-cli.log to its working directory on every run,\n  # even for --version. Running it must leave nothing in the scanning\n  # user's home or in /, so a scan of a consumer's box leaves no residue.\n  scan_user = command('printf %s \"${SUDO_USER:-$(id -un)}\"').stdout.strip\n  scan_home = command(\"getent passwd #{scan_user} | cut -d: -f6\").stdout.strip\n  [\"#{scan_home}/saf-cli.log\", '/saf-cli.log'].uniq.each do |residue|\n    describe file(residue) do\n      it { should_not exist }\n    end\n  end\n\n  if input('fips_required')\n    describe command(\"node -p \\\"require('crypto').getFips()\\\"\") do\n      its('exit_status') { should eq 0 }\n      its('stdout.strip') { should cmp '1' }\n    end\n  end\nend\n",
+     "desc": "ADR-0001 Phase 3: the MITRE SAF CLI (tools group safbox-tools-2), installed from npm at its pinned version and run by the distribution's Node.js, which uses the system OpenSSL and so its FIPS provider.",
+     "descriptions": [
+      {
+       "data": "ADR-0001 Phase 3: the MITRE SAF CLI (tools group safbox-tools-2), installed from npm at its pinned version and run by the distribution's Node.js, which uses the system OpenSSL and so its FIPS provider.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-tools-2",
+     "impact": 1.0,
+     "refs": [],
+     "results": [
+      {
+       "code_desc": "Command: `sh -c 'd=$(mktemp -d) && cd \"$d\" && /usr/local/bin/saf --version; rc=$?; cd / && rm -rf \"$d\"; exit $rc'` exit_status is expected to eq 0",
+       "resource_class": "command",
+       "resource_id": "Command: `sh -c 'd=$(mktemp -d) && cd \"$d\" && /usr/local/bin/saf --version; rc=$?; cd / && rm -rf \"$d\"; exit $rc'`",
+       "resource_params": "[\"sh -c 'd=$(mktemp -d) && cd \\\"$d\\\" && /usr/local/bin/saf --version; rc=$?; cd / && rm -rf \\\"$d\\\"; exit $rc'\"]",
+       "run_time": 5.551984,
+       "start_time": "2026-10-12T21:39:51-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Command: `sh -c 'd=$(mktemp -d) && cd \"$d\" && /usr/local/bin/saf --version; rc=$?; cd / && rm -rf \"$d\"; exit $rc'` stdout is expected to match /^@mitre\\/saf\\/1\\.7\\.0 /",
+       "resource_class": "command",
+       "resource_id": "Command: `sh -c 'd=$(mktemp -d) && cd \"$d\" && /usr/local/bin/saf --version; rc=$?; cd / && rm -rf \"$d\"; exit $rc'`",
+       "resource_params": "[\"sh -c 'd=$(mktemp -d) && cd \\\"$d\\\" && /usr/local/bin/saf --version; rc=$?; cd / && rm -rf \\\"$d\\\"; exit $rc'\"]",
+       "run_time": 8.3e-05,
+       "start_time": "2026-10-12T21:39:56-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Command: `runuser -u nobody -- /usr/local/bin/safbox status` stdout is expected to match /^SAF\\ CLI:\\s+1\\.7\\.0(\\s|$)/",
+       "resource_class": "command",
+       "resource_id": "Command: `runuser -u nobody -- /usr/local/bin/safbox status`",
+       "resource_params": "[\"runuser -u nobody -- /usr/local/bin/safbox status\"]",
+       "run_time": 5e-05,
+       "start_time": "2026-10-12T21:39:56-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "File /home/packer/saf-cli.log is expected not to exist",
+       "resource_class": "file",
+       "resource_id": "/home/packer/saf-cli.log",
+       "resource_params": "[\"/home/packer/saf-cli.log\"]",
+       "run_time": 0.13161,
+       "start_time": "2026-10-12T21:39:56-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "File /saf-cli.log is expected not to exist",
+       "resource_class": "file",
+       "resource_id": "/saf-cli.log",
+       "resource_params": "[\"/saf-cli.log\"]",
+       "run_time": 0.128811,
+       "start_time": "2026-10-12T21:39:56-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Command: `node -p \"require('crypto').getFips()\"` exit_status is expected to eq 0",
+       "resource_class": "command",
+       "resource_id": "Command: `node -p \"require('crypto').getFips()\"`",
+       "resource_params": "[\"node -p \\\"require('crypto').getFips()\\\"\"]",
+       "run_time": 0.514013,
+       "start_time": "2026-10-12T21:39:56-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Command: `node -p \"require('crypto').getFips()\"` stdout.strip is expected to cmp == \"1\"",
+       "resource_class": "command",
+       "resource_id": "Command: `node -p \"require('crypto').getFips()\"`",
+       "resource_params": "[\"node -p \\\"require('crypto').getFips()\\\"\"]",
+       "run_time": 0.000114,
+       "start_time": "2026-10-12T21:39:57-04:00",
+       "status": "passed"
+      }
+     ],
+     "source_location": {
+      "line": 41
+     },
+     "tags": {},
+     "title": "The SAF CLI is installed at its pinned version on the distribution Node.js",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-tools-3' do\n  impact 1.0\n  title 'Ansible and the collections the Lockdown STIG role needs are installed at their pinned versions'\n  desc 'ADR-0001 Phase 3: ansible-core from the distribution at the version pinned in group_vars ' \\\n       '(tools group safbox-tools-3), and the collections the Ansible Lockdown RHEL10-STIG role ' \\\n       'requires, installed system-wide at their pinned versions so every user on the box can ' \\\n       'run Lockdown playbooks.'\n  only_if('Ansible is not in expected_tools (tools group safbox-tools-3 switched off)') do\n    tool_expected.call('ansible')\n  end\n\n  version = input('ansible_core_version')\n  describe command('ansible --version') do\n    its('exit_status') { should eq 0 }\n    its('stdout') { should match(/^ansible \\[core #{Regexp.escape(version)}\\]$/) }\n  end\n\n  instance_exec('Ansible core', version, &status_row)\n\n  listing = command('ansible-galaxy collection list --format json -p /usr/share/ansible/collections')\n  installed = begin\n    JSON.parse(listing.stdout).fetch('/usr/share/ansible/collections/ansible_collections', {})\n  rescue JSON::ParserError\n    {}\n  end\n  input('ansible_collections').each do |name, pinned|\n    describe \"collection #{name} in /usr/share/ansible/collections\" do\n      subject { installed.dig(name.to_s, 'version') }\n      it { should cmp pinned.to_s }\n    end\n  end\nend\n",
+     "desc": "ADR-0001 Phase 3: ansible-core from the distribution at the version pinned in group_vars (tools group safbox-tools-3), and the collections the Ansible Lockdown RHEL10-STIG role requires, installed system-wide at their pinned versions so every user on the box can run Lockdown playbooks.",
+     "descriptions": [
+      {
+       "data": "ADR-0001 Phase 3: ansible-core from the distribution at the version pinned in group_vars (tools group safbox-tools-3), and the collections the Ansible Lockdown RHEL10-STIG role requires, installed system-wide at their pinned versions so every user on the box can run Lockdown playbooks.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-tools-3",
+     "impact": 1.0,
+     "refs": [],
+     "results": [
+      {
+       "code_desc": "Command: `ansible --version` exit_status is expected to eq 0",
+       "resource_class": "command",
+       "resource_id": "Command: `ansible --version`",
+       "resource_params": "[\"ansible --version\"]",
+       "run_time": 0.813947,
+       "start_time": "2026-10-12T21:39:57-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Command: `ansible --version` stdout is expected to match /^ansible \\[core 2\\.16\\.16\\]$/",
+       "resource_class": "command",
+       "resource_id": "Command: `ansible --version`",
+       "resource_params": "[\"ansible --version\"]",
+       "run_time": 0.0001,
+       "start_time": "2026-10-12T21:39:58-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Command: `runuser -u nobody -- /usr/local/bin/safbox status` stdout is expected to match /^Ansible\\ core:\\s+2\\.16\\.16(\\s|$)/",
+       "resource_class": "command",
+       "resource_id": "Command: `runuser -u nobody -- /usr/local/bin/safbox status`",
+       "resource_params": "[\"runuser -u nobody -- /usr/local/bin/safbox status\"]",
+       "run_time": 6.5e-05,
+       "start_time": "2026-10-12T21:39:58-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "collection ansible.posix in /usr/share/ansible/collections is expected to cmp == \"2.2.2\"",
+       "resource_class": "Object",
+       "resource_id": "collection ansible.posix in /usr/share/ansible/collections",
+       "resource_params": "[]",
+       "run_time": 9.8e-05,
+       "start_time": "2026-10-12T21:39:58-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "collection community.crypto in /usr/share/ansible/collections is expected to cmp == \"2.26.9\"",
+       "resource_class": "Object",
+       "resource_id": "collection community.crypto in /usr/share/ansible/collections",
+       "resource_params": "[]",
+       "run_time": 4.7e-05,
+       "start_time": "2026-10-12T21:39:58-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "collection community.general in /usr/share/ansible/collections is expected to cmp == \"11.4.9\"",
+       "resource_class": "Object",
+       "resource_id": "collection community.general in /usr/share/ansible/collections",
+       "resource_params": "[]",
+       "run_time": 4.1e-05,
+       "start_time": "2026-10-12T21:39:58-04:00",
+       "status": "passed"
+      }
+     ],
+     "source_location": {
+      "line": 82
+     },
+     "tags": {},
+     "title": "Ansible and the collections the Lockdown STIG role needs are installed at their pinned versions",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-tools-4' do\n  impact 1.0\n  title 'HashiCorp Packer is installed at its pinned version with its license'\n  desc 'ADR-0001 Phase 3 and Risks (Packer license): Packer is its own switchable tools group ' \\\n       '(safbox-tools-4) so a distributor can exclude it, and its Business Source License text ' \\\n       'ships beside the unmodified binary.'\n  only_if('Packer is not in expected_tools (tools group safbox-tools-4 switched off)') do\n    tool_expected.call('packer')\n  end\n\n  version = input('packer_version')\n  describe command('CHECKPOINT_DISABLE=1 /usr/local/bin/packer version') do\n    its('exit_status') { should eq 0 }\n    its('stdout') { should match(/^Packer v#{Regexp.escape(version)}$/) }\n  end\n\n  instance_exec('Packer', version, &status_row)\n\n  describe file('/usr/local/share/licenses/packer/LICENSE.txt') do\n    it { should exist }\n    its('content') { should match(/Business Source License/) }\n  end\nend\n",
+     "desc": "ADR-0001 Phase 3 and Risks (Packer license): Packer is its own switchable tools group (safbox-tools-4) so a distributor can exclude it, and its Business Source License text ships beside the unmodified binary.",
+     "descriptions": [
+      {
+       "data": "ADR-0001 Phase 3 and Risks (Packer license): Packer is its own switchable tools group (safbox-tools-4) so a distributor can exclude it, and its Business Source License text ships beside the unmodified binary.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-tools-4",
+     "impact": 1.0,
+     "refs": [],
+     "results": [
+      {
+       "code_desc": "Command: `CHECKPOINT_DISABLE=1 /usr/local/bin/packer version` exit_status is expected to eq 0",
+       "resource_class": "command",
+       "resource_id": "Command: `CHECKPOINT_DISABLE=1 /usr/local/bin/packer version`",
+       "resource_params": "[\"CHECKPOINT_DISABLE=1 /usr/local/bin/packer version\"]",
+       "run_time": 0.23405,
+       "start_time": "2026-10-12T21:39:58-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Command: `CHECKPOINT_DISABLE=1 /usr/local/bin/packer version` stdout is expected to match /^Packer v1\\.16\\.1$/",
+       "resource_class": "command",
+       "resource_id": "Command: `CHECKPOINT_DISABLE=1 /usr/local/bin/packer version`",
+       "resource_params": "[\"CHECKPOINT_DISABLE=1 /usr/local/bin/packer version\"]",
+       "run_time": 8.7e-05,
+       "start_time": "2026-10-12T21:39:58-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Command: `runuser -u nobody -- /usr/local/bin/safbox status` stdout is expected to match /^Packer:\\s+1\\.16\\.1(\\s|$)/",
+       "resource_class": "command",
+       "resource_id": "Command: `runuser -u nobody -- /usr/local/bin/safbox status`",
+       "resource_params": "[\"runuser -u nobody -- /usr/local/bin/safbox status\"]",
+       "run_time": 5.1e-05,
+       "start_time": "2026-10-12T21:39:58-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "File /usr/local/share/licenses/packer/LICENSE.txt is expected to exist",
+       "resource_class": "file",
+       "resource_id": "/usr/local/share/licenses/packer/LICENSE.txt",
+       "resource_params": "[\"/usr/local/share/licenses/packer/LICENSE.txt\"]",
+       "run_time": 0.120842,
+       "start_time": "2026-10-12T21:39:58-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "File /usr/local/share/licenses/packer/LICENSE.txt content is expected to match /Business Source License/",
+       "resource_class": "file",
+       "resource_id": "/usr/local/share/licenses/packer/LICENSE.txt",
+       "resource_params": "[\"/usr/local/share/licenses/packer/LICENSE.txt\"]",
+       "run_time": 0.120727,
+       "start_time": "2026-10-12T21:39:58-04:00",
+       "status": "passed"
+      }
+     ],
+     "source_location": {
+      "line": 115
+     },
+     "tags": {},
+     "title": "HashiCorp Packer is installed at its pinned version with its license",
+     "waiver_data": {}
+    }
+   ],
+   "copyright": "The MITRE Corporation",
+   "copyright_email": "saf@mitre.org",
+   "groups": [],
+   "license": "Apache-2.0",
+   "maintainer": "MITRE SAF",
+   "name": "el10-infrastructure",
+   "parent_profile": "inspec-safbox",
+   "sha256": "e682f3419d2fffc2e1be7a639d01a0cb0b39eb6e51b285e2c6b661e0271232cb",
+   "status": "loaded",
+   "status_message": "",
+   "summary": "Asserts that a SAFBox image or clone on the RHEL 10 family carries the appliance foundation (ADR-0001 Phases 2 and 3): FIPS mode, Secure Boot, the expected OS, enabled units, the guest agent's RPC filter, podman and Quadlet, the safbox CLI, the first-boot framework, the pinned tools (CINC Auditor, SAF CLI, Ansible and the Lockdown collections, Packer), no distribution default user and, once sealed, the build record and the absence of build residue. Every control is impact 1.0, so the thresholds in verify/thresholds/ can name each one in the critical bucket, which no STIG control uses. Runs alone or through the verify/inspec-safbox wrapper, from the build runner over SSH; the sealed template's own invariants are asserted by the seal step itself.",
+   "supports": [
+    {
+     "platform-family": "redhat",
+     "release": "10.*"
+    }
+   ],
+   "title": "SAFBox infrastructure validation for the RHEL 10 family",
+   "version": "0.5.0"
+  },
+  {
+   "attributes": [],
+   "controls": [],
+   "copyright": "The MITRE Corporation",
+   "copyright_email": "saf@mitre.org",
+   "depends": [
+    {
+     "git": "https://github.com/mitre/redhat-enterprise-linux-10-stig-baseline",
+     "name": "redhat-enterprise-linux-10-stig-baseline",
+     "ref": "49293f95b61f25c243b44365d8c16857db7f698c",
+     "status": "loaded"
+    }
+   ],
+   "groups": [],
+   "license": "Apache-2.0",
+   "maintainer": "MITRE SAF",
+   "name": "safbox-rhel10-stig-overlay",
+   "parent_profile": "inspec-safbox",
+   "sha256": "e7c117d19b22c22b55be57adee05a29595114aec9e19b8cae04ec4c229ba5622",
+   "status": "loaded",
+   "status_message": "",
+   "summary": "The MITRE RHEL 10 STIG baseline with SAFBox's deviations applied (ADR-0001: hardening with documented deviations). Every baseline control runs; a deviation is marked and explained, never dropped.",
+   "supports": [
+    {
+     "platform-family": "redhat"
+    }
+   ],
+   "title": "SAFBox overlay for the RHEL 10 STIG",
+   "version": "0.1.0"
+  },
+  {
+   "attributes": [],
+   "controls": [],
+   "copyright": "MITRE",
+   "depends": [
+    {
+     "git": "https://github.com/mitre/inspec-profile-resources.git",
+     "name": "inspec-profile-resources",
+     "ref": "cbfb11c210cd914c69ec8caaa2bfaf0d7c45037f",
+     "status": "loaded"
+    }
+   ],
+   "groups": [],
+   "license": "Apache-2.0",
+   "maintainer": "MITRE SAF Team",
+   "name": "redhat-enterprise-linux-10-stig-baseline",
+   "parent_profile": "safbox-rhel10-stig-overlay",
+   "sha256": "9c252195ad9c6e1a4189a535f8768a178a4168b3296cd53c2de98640344c7fc0",
+   "status": "loaded",
+   "status_message": "",
+   "summary": "InSpec profile aligned to DISA STIG for RHEL10",
+   "supports": [
+    {
+     "platform-family": "redhat",
+     "release": "10.*"
+    }
+   ],
+   "title": "redhat-enterprise-linux-10-stig-baseline",
+   "version": "1.1.1"
+  },
+  {
+   "attributes": [],
+   "controls": [],
+   "copyright": "MITRE",
+   "copyright_email": "saf@groups.mitre.org",
+   "groups": [],
+   "license": "Apache-2.0",
+   "maintainer": "MITRE SAF Team",
+   "name": "inspec-profile-resources",
+   "parent_profile": "redhat-enterprise-linux-10-stig-baseline",
+   "sha256": "f9ee3fbffc104bfeedcfe1bb8faa44446f36b5669efa37dc2fcd9d272923a9ec",
+   "status": "loaded",
+   "status_message": "",
+   "summary": "Shared resources and libraries for MITRE InSpec profiles.",
+   "supports": [
+    {
+     "platform-family": "linux"
+    }
+   ],
+   "title": "InSpec Profile Development Resources",
+   "version": "0.1.0"
+  }
+ ],
+ "statistics": {
+  "duration": 84.044574
+ },
+ "version": "7.0.107"
+}

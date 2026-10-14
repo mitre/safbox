@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
 # Static checks for the RHEL 10 STIG overlay (ADR-0001 §Decision: encryption
 # at rest). The overlay must include every control of the pinned MITRE
-# baseline (no skip_control), mark the data-at-rest requirement Not
-# Applicable through the baseline's own input, and explain why in a caveat.
+# baseline (no skip_control). A requirement SAFBox cannot implement as
+# written is set Not Applicable in the overlay itself, per the SAF overlay
+# convention: impact 0.0, a 'justification' description, and a deliberate
+# describe/skip. The baseline's exemption inputs (data_at_rest_exempt and
+# the like) record a documented organisational exemption, a different
+# claim, so the overlay must not set them.
 # Included controls only resolve against a RHEL target (the baseline
 # supports the redhat family alone), so this checks the profile's source and
 # metadata; the live proof is a run against a clone.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
-OVERLAY=${1:-$ROOT/verify/rhel10-stig-overlay}
+OVERLAY=${1:-$ROOT/verify/safbox-rhel10-stig-overlay}
 command -v cinc-auditor >/dev/null || { echo "FAIL: cinc-auditor not installed" >&2; exit 1; }
 test -f "$OVERLAY/inspec.yml" || { echo "FAIL: $OVERLAY/inspec.yml missing" >&2; exit 1; }
 
@@ -44,27 +48,33 @@ if not dep:
 elif not (dep.get("git") and re.fullmatch(r"[0-9a-f]{40}", str(dep.get("ref", "")))):
     errors.append("depends: the baseline must be pinned by git URL and a full commit SHA as ref")
 
-inputs = {(i.get("profile"), i.get("name")): i.get("value") for i in meta.get("inputs") or []}
-if inputs.get((BASE, "data_at_rest_exempt")) is not True:
-    errors.append(f"inputs: data_at_rest_exempt must be true for profile {BASE}")
+for i in meta.get("inputs") or []:
+    if i.get("profile") == BASE and str(i.get("name", "")).endswith("_exempt"):
+        errors.append(f"inputs: {i['name']} records a documented exemption; set the control Not Applicable in the overlay instead")
 
 if f"include_controls '{BASE}'" not in src:
     errors.append("controls: the overlay does not include_controls the baseline")
 if "skip_control" in src:
     errors.append("controls: skip_control hides a baseline control; deviations are marked, never dropped")
+if "desc 'caveat'" in src:
+    errors.append("controls: a Not Applicable override explains itself with desc 'justification', not 'caveat'")
 
-m = re.search(r"control 'SV-280935' do(.*?)\n  end", src, re.S)
-if not m:
+# Every override block inside include_controls (indented two spaces).
+overrides = dict(re.findall(r"\n  control '([^']+)' do\n(.*?)\n  end\n", src, re.S))
+for cid, body in sorted(overrides.items()):
+    if not re.search(r"^\s*impact 0\.0\s*$", body, re.M):
+        errors.append(f"{cid}: an override must set impact 0.0 (Not Applicable)")
+    if not re.search(r"desc 'justification',\s*\S", body):
+        errors.append(f"{cid}: no desc 'justification'")
+    if not re.search(r"describe .*? do\s*\n\s*skip '[^']+'\s*\n\s*end", body, re.S):
+        errors.append(f"{cid}: no deliberate describe ... do skip '<reason>' end")
+if "SV-280935" not in overrides:
     errors.append("controls: no SV-280935 (data at rest) override")
 else:
-    body = m.group(1)
-    if "desc 'caveat'" not in body:
-        errors.append("SV-280935: no caveat description")
-    for needle in ["Not Applicable", "template", "hypervisor", "authorizing official",
-                   "documented and approved reason for not having data-at-rest encryption"]:
-        if needle.lower() not in body.lower():
-            errors.append(f"SV-280935: caveat does not mention '{needle}'")
+    for needle in ["template", "hypervisor"]:
+        if needle not in overrides["SV-280935"].lower():
+            errors.append(f"SV-280935: justification does not mention '{needle}'")
 if errors:
     print("\n".join("FAIL: " + e for e in errors), file=sys.stderr); sys.exit(1)
-print("PASS: overlay includes the pinned baseline; SV-280935 is Not Applicable with a caveat")
+print(f"PASS: overlay includes the pinned baseline; {len(overrides)} Not Applicable override(s), each with impact 0.0, a justification and a skip")
 PY

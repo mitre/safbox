@@ -1,0 +1,15 @@
+---
+# Inputs for the build-time gate (ADR-0001 §Validation stages): the build VM
+# after the appliance playbook and before the seal. packer/build.pkr.hcl
+# passes this file to scripts/validate.sh, which hands it to CINC Auditor
+# with --input-file; every child of verify/inspec-safbox reads the inputs it
+# declares. A site layers its own file after this one (the Packer variable
+# build_gate_site_inputs_file); see docs/rebuild.md.
+
+# The seal has not run: no build record yet, the build user and installer
+# residue are still present.
+build_info_expected: false
+# The build VM's first boot is the install's, not a deployment's.
+firstboot_completed_expected: false
+# The build platform provides a guest-agent channel.
+guest_agent_expected: true

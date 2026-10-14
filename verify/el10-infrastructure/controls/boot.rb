@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 control 'safbox-secureboot-1' do
-  impact 0.7
+  impact 1.0
   title 'UEFI Secure Boot is enabled'
   desc 'The install layer boots the image with Secure Boot enforced; the shim and kernel signature ' \
        'chain is what makes the FIPS kernel the kernel that actually runs.'

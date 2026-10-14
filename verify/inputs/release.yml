@@ -1,0 +1,17 @@
+---
+# Inputs for the release gate (ADR-0001 §Validation stages): a clone of a
+# sealed template, deployed with cloud-init, after its first boot.
+# scripts/clone-and-ssh.sh passes this file to scripts/validate.sh, which
+# hands it to CINC Auditor with --input-file; every child of
+# verify/inspec-safbox reads the inputs it declares. A site layers its own
+# file after this one (SAFBOX_SITE_INPUTS); see docs/rebuild.md.
+
+# The seal ran: the build record exists, the build user and installer
+# residue are gone.
+build_info_expected: true
+# Only a fully sealed template may be released.
+seal_mode_expected: full
+# The clone's first boot has finished, exactly once.
+firstboot_completed_expected: true
+# The deploy platform provides a guest-agent channel.
+guest_agent_expected: true

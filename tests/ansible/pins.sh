@@ -61,7 +61,7 @@ for name, pin in tools.items():
 # The validation profile's expected versions are inputs whose defaults must
 # equal the pins: safbox_tool_<name> -> input <name>_version, and a list pin
 # (the collections) -> input <name> as a map of name to version.
-profile = yaml.safe_load((root / "verify/inspec-safbox/inspec.yml").read_text())
+profile = yaml.safe_load((root / "verify/el10-infrastructure/inspec.yml").read_text())
 inputs = {i["name"]: i.get("value") for i in profile.get("inputs") or []}
 for name, pin in tools.items():
     short = name[len("safbox_tool_"):]
@@ -81,7 +81,7 @@ for name, pin in tools.items():
 
 # Every tools group switch has a control naming the tool it checks, and that
 # tool is in the expected_tools default, so a default build checks them all.
-tools_rb = root / "verify/inspec-safbox/controls/tools.rb"
+tools_rb = root / "verify/el10-infrastructure/controls/tools.rb"
 tools_rb = tools_rb.read_text() if tools_rb.exists() else ""
 control_tool = {}
 for n, body in re.findall(r"^control 'safbox-tools-(\d+)'(.*?)(?=^control |\Z)", tools_rb, re.S | re.M):

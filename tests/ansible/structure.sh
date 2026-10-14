@@ -69,7 +69,7 @@ for role_dir in sorted(p for p in (root / "ansible/roles").iterdir() if (p / "va
 # Every tools group installs a tool the validation profile checks at its
 # pinned version (ADR-0001 Phase 3 verification), in a control named after
 # the group so a switched-off group maps to the control that skips.
-tools_controls = (root / "verify/inspec-safbox/controls/tools.rb")
+tools_controls = (root / "verify/el10-infrastructure/controls/tools.rb")
 tools_controls = tools_controls.read_text() if tools_controls.exists() else ""
 for switch in sorted(k for k in gv if re.fullmatch(r"safbox_tools_\d+", k)):
     n = switch.rsplit("_", 1)[1]

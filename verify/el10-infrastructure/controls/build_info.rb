@@ -3,7 +3,7 @@
 build_info_path = '/usr/local/share/safbox/build-info'
 
 control 'safbox-build-info-1' do
-  impact 0.7
+  impact 1.0
   title 'The build record exists and names the distribution and microarchitecture level'
   desc 'ADR-0001 Risks: the image records which distribution and microarchitecture level it was built ' \
        'from so a lab artifact is never mistaken for a release artifact. Written by the seal step ' \

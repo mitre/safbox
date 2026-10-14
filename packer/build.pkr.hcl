@@ -34,7 +34,8 @@ locals {
   ]
   boot_command = var.boot_command != null ? var.boot_command : local.default_boot_command
 
-  ansible_dir = coalesce(var.ansible_dir, "${abspath(path.root)}/../ansible")
+  repo_root   = abspath("${path.root}/..")
+  ansible_dir = coalesce(var.ansible_dir, "${local.repo_root}/ansible")
   ansible_env = [
     "ANSIBLE_CONFIG=${local.ansible_dir}/ansible.cfg",
     "ANSIBLE_ROLES_PATH=${local.ansible_dir}/roles",
@@ -78,13 +79,20 @@ build {
     extra_arguments  = local.ansible_extra
   }
 
-  # Outside-in check of the build VM before the seal: the inspec-safbox
-  # profile runs from this machine over SSH as the build user, and the SAF
-  # CLI gates the build on verify/threshold.yml. Nothing is installed or
-  # left on the image for it.
+  # Outside-in check of the build VM before the seal: the verify/inspec-safbox
+  # wrapper runs from this machine over SSH as the build user with the
+  # build-context inputs, and the SAF CLI gates the build on the build
+  # threshold. A site that changes what the image carries (a tools group
+  # switched off) names its own inputs and threshold files through
+  # build_gate_site_inputs_file and build_gate_site_threshold_file. Nothing
+  # is installed or left on the image for it.
   provisioner "shell-local" {
+    environment_vars = [
+      "SITE_INPUTS=${var.build_gate_site_inputs_file == null ? "" : abspath(var.build_gate_site_inputs_file)}",
+      "SITE_THRESHOLD=${var.build_gate_site_threshold_file == null ? "" : abspath(var.build_gate_site_threshold_file)}",
+    ]
     inline = [
-      "${abspath(path.root)}/../scripts/validate.sh '${build.User}@${build.Host}:${build.Port}' '${var.ssh_private_key_file}' build build_info_expected=false",
+      "'${local.repo_root}/scripts/validate.sh' $${SITE_INPUTS:+--site-inputs \"$SITE_INPUTS\"} $${SITE_THRESHOLD:+--site-threshold \"$SITE_THRESHOLD\"} '${build.User}@${build.Host}:${build.Port}' '${var.ssh_private_key_file}' build '${local.repo_root}/verify/inspec-safbox' '${local.repo_root}/verify/thresholds/build.yml' '${local.repo_root}/verify/inputs/build.yml'",
     ]
   }
 

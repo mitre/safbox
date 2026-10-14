@@ -1,0 +1,139 @@
+---
+name: el10-infrastructure
+title: SAFBox infrastructure validation for the RHEL 10 family
+maintainer: MITRE SAF
+copyright: The MITRE Corporation
+copyright_email: saf@mitre.org
+license: Apache-2.0
+summary: >-
+  Asserts that a SAFBox image or clone on the RHEL 10 family carries the
+  appliance foundation (ADR-0001 Phases 2 and 3): FIPS mode, Secure Boot,
+  the expected OS, enabled units, the guest agent's RPC filter, podman and
+  Quadlet, the safbox CLI, the first-boot framework, the pinned tools (CINC
+  Auditor, SAF CLI, Ansible and the Lockdown collections, Packer), no
+  distribution default user and, once sealed, the build record and the
+  absence of build residue. Every control is impact 1.0, so the thresholds
+  in verify/thresholds/ can name each one in the critical bucket, which no
+  STIG control uses. Runs alone or through the verify/inspec-safbox
+  wrapper, from the build runner over SSH; the sealed template's own
+  invariants are asserted by the seal step itself.
+version: 0.5.0
+inspec_version: ">= 5.0"
+supports:
+  - platform-family: redhat
+    release: 10.*
+inputs:
+  - name: build_info_expected
+    description: >-
+      True on a clone of a sealed template: asserts the build record exists
+      and that the build user and installer residue are gone. The build's
+      own check, which runs before the seal, sets it false
+      (verify/inputs/build.yml).
+    type: Boolean
+    value: true
+  - name: seal_mode_expected
+    description: >-
+      Seal mode the build record must name. full on a release template's
+      clone, so the release gate rejects a development (unsealed) template;
+      set development to check a clone of one.
+    type: String
+    value: full
+  - name: guest_agent_expected
+    description: >-
+      True where the hypervisor provides a guest-agent channel, so the agent
+      must be running. Set false on platforms that have none.
+    type: Boolean
+    value: true
+  - name: firstboot_completed_expected
+    description: True on a deployed clone whose first boot has finished.
+    type: Boolean
+    value: false
+  - name: fips_required
+    description: FIPS mode is an image property on the RHEL family (ADR-0001).
+    type: Boolean
+    value: true
+  - name: secure_boot_required
+    description: The image boots with UEFI Secure Boot enforced.
+    type: Boolean
+    value: true
+  - name: expected_platform_id
+    description: PLATFORM_ID the RHEL family image must report.
+    type: String
+    value: platform:el10
+  - name: build_user
+    description: >-
+      The account the install layer creates for the build; the seal step
+      deletes it.
+    type: String
+    value: packer
+  - name: distro_default_users
+    description: >-
+      Default accounts distribution cloud images create. None may exist on a
+      SAFBox; the default_user name in the cloud-init configuration is
+      checked as well.
+    type: Array
+    value:
+      - cloud-user
+      - almalinux
+      - rocky
+      - ubuntu
+      - debian
+  - name: guest_agent_denied_rpcs
+    description: >-
+      Guest agent commands that give the hypervisor administrator command
+      execution or file access inside the guest. The distribution default
+      filter must keep every one of them disabled.
+    type: Array
+    value:
+      - guest-exec
+      - guest-exec-status
+      - guest-file-open
+      - guest-file-close
+      - guest-file-read
+      - guest-file-write
+      - guest-file-seek
+      - guest-file-flush
+  - name: expected_tools
+    description: >-
+      Tools the image ships, one per tools task group: cinc-auditor
+      (safbox_tools_1), saf-cli (2), ansible (3), packer (4). A site that
+      switches a tools group off removes its tool here, and that tool's
+      control skips; an expected tool that is missing fails. Override it in
+      a site inputs file (see docs/rebuild.md), which also needs a site
+      threshold without that tool's control.
+    type: Array
+    value:
+      - cinc-auditor
+      - saf-cli
+      - ansible
+      - packer
+  # Expected tool versions. Each default equals its pin in
+  # ansible/group_vars/all/main.yml (tests/ansible/pins.sh fails on drift);
+  # a site that overrides a pin sets the matching input in its site inputs
+  # file.
+  - name: cinc_auditor_version
+    description: CINC Auditor version (safbox_tool_cinc_auditor.version). The release is not compared.
+    type: String
+    value: 7.2.1
+  - name: saf_cli_version
+    description: SAF CLI version (safbox_tool_saf_cli.version).
+    type: String
+    value: 1.7.0
+  - name: ansible_core_version
+    description: ansible-core version (safbox_tool_ansible_core.version).
+    type: String
+    value: 2.16.16
+  - name: ansible_collections
+    description: >-
+      Collections the Lockdown RHEL10-STIG role needs, name to version
+      (safbox_tool_ansible_collections), installed in
+      /usr/share/ansible/collections.
+    type: Hash
+    value:
+      ansible.posix: 2.2.2
+      community.crypto: 2.26.9
+      community.general: 11.4.9
+  - name: packer_version
+    description: HashiCorp Packer version (safbox_tool_packer.version).
+    type: String
+    value: 1.16.1

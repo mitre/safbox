@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 control 'safbox-cli-1' do
-  impact 0.7
+  impact 1.0
   title 'The safbox command and its subcommand registry are installed'
   desc 'ADR-0001 §Shared Abstractions: the safbox command of the base role, with subcommand registration.'
 

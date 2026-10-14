@@ -28,6 +28,11 @@ env:
   # Ubuntu build for the runner.
   CINC_AUDITOR_URL: https://packages.cinc.sh/files/stable/cinc-auditor/7.2.1/ubuntu/24.04/cinc-auditor_7.2.1-1_amd64.deb
   CINC_AUDITOR_SHA256: 371108577ccb9499041a6d052c56f91175468fda4d60963c1fd0ece4b70c23d9
+  # Same release as the appliance's own pin, on the Node.js major its
+  # distribution ships; tests/verify/thresholds.sh runs saf validate
+  # threshold against recorded results.
+  SAF_CLI_VERSION: 1.7.0
+  NODE_VERSION: '22'
 
 jobs:
   secrets:
@@ -77,6 +82,13 @@ jobs:
           curl -fsSLo "$RUNNER_TEMP/cinc-auditor.deb" "$CINC_AUDITOR_URL"
           echo "${CINC_AUDITOR_SHA256}  $RUNNER_TEMP/cinc-auditor.deb" | sha256sum -c -
           sudo apt-get install -y --no-install-recommends "$RUNNER_TEMP/cinc-auditor.deb"
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install the SAF CLI
+        run: npm install -g "@mitre/saf@${SAF_CLI_VERSION}"
 
       - name: Install Ansible collections
         run: ansible-galaxy collection install -r ansible/requirements.yml
