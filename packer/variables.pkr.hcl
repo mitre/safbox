@@ -245,3 +245,9 @@ variable "build_gate_site_threshold_file" {
   description = "A site's SAF CLI threshold for the build-time gate, used instead of verify/thresholds/build.yml. Set it with build_gate_site_inputs_file when the site changes which infrastructure controls apply, listing the exact set its image passes. Keep it out of git; verify/local/ is git-ignored for this. Null passes none."
   default     = null
 }
+
+variable "build_gate_ssh_config_file" {
+  type        = string
+  description = "SSH client config CINC Auditor reads for the build-time gate instead of its defaults (~/.ssh/config, /etc/ssh/ssh_config), passed to scripts/validate.sh --ssh-config. \"/dev/null\" reads none, for a runner whose default config CINC Auditor's SSH library cannot open or use. Null keeps the defaults, so ProxyJump or bastion settings there still apply."
+  default     = null
+}

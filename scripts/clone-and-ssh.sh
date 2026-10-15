@@ -14,7 +14,9 @@
 #      SAFBOX_SITE_INPUTS and SAFBOX_SITE_THRESHOLD (optional: a site's inputs
 #      file layered after verify/inputs/release.yml, and a site threshold used
 #      instead of verify/thresholds/release.yml, for a template built with
-#      the same site files; see scripts/validate.sh).
+#      the same site files; see scripts/validate.sh), SAFBOX_SSH_CONFIG
+#      (optional: the SSH client config CINC Auditor reads instead of its
+#      defaults, /dev/null for none; validate.sh --ssh-config).
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 TEMPLATE_ID=${1:?template vmid}
@@ -137,6 +139,7 @@ for _ in $(seq 1 72); do
       site=()
       if [ -n "${SAFBOX_SITE_INPUTS:-}" ]; then site+=(--site-inputs "$SAFBOX_SITE_INPUTS"); fi
       if [ -n "${SAFBOX_SITE_THRESHOLD:-}" ]; then site+=(--site-threshold "$SAFBOX_SITE_THRESHOLD"); fi
+      if [ -n "${SAFBOX_SSH_CONFIG:-}" ]; then site+=(--ssh-config "$SAFBOX_SSH_CONFIG"); fi
       "$ROOT/scripts/validate.sh" ${site[@]+"${site[@]}"} "$USER_NAME@$ip" "$KEY" "clone-$CLONE_ID" \
         "$ROOT/verify/inspec-safbox" "$ROOT/verify/thresholds/release.yml" "$ROOT/verify/inputs/release.yml"
     fi

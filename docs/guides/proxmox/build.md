@@ -177,6 +177,7 @@ every variable from the tables above, plus:
 | `disk_format = "qcow2"` | the disk storage is a directory, NFS, or CIFS storage |
 | `vlan_tag` | the build network is a tagged VLAN |
 | `http_bind_address` | the runner should offer the rendered kickstart on one address only |
+| `build_gate_ssh_config_file` | CINC Auditor cannot read or use the runner's SSH client config (the build gate fails with `Permission denied @ rb_sysopen - /etc/ssh/ssh_config`); `"/dev/null"` reads none. Set `SAFBOX_SSH_CONFIG` the same way for the clone test. See `scripts/validate.sh` in the rebuild guide |
 
 ## 8. Build and prove
 

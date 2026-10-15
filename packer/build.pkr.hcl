@@ -95,15 +95,18 @@ build {
   # build-context inputs, and the SAF CLI gates the build on the build
   # threshold. A site that changes what the image carries (a tools group
   # switched off) names its own inputs and threshold files through
-  # build_gate_site_inputs_file and build_gate_site_threshold_file. Nothing
-  # is installed or left on the image for it.
+  # build_gate_site_inputs_file and build_gate_site_threshold_file, and a
+  # runner whose SSH client config CINC Auditor cannot use names another
+  # through build_gate_ssh_config_file. Nothing is installed or left on the
+  # image for it.
   provisioner "shell-local" {
     environment_vars = [
       "SITE_INPUTS=${var.build_gate_site_inputs_file == null ? "" : abspath(var.build_gate_site_inputs_file)}",
       "SITE_THRESHOLD=${var.build_gate_site_threshold_file == null ? "" : abspath(var.build_gate_site_threshold_file)}",
+      "SSH_CONFIG=${var.build_gate_ssh_config_file == null ? "" : abspath(var.build_gate_ssh_config_file)}",
     ]
     inline = [
-      "'${local.repo_root}/scripts/validate.sh' $${SITE_INPUTS:+--site-inputs \"$SITE_INPUTS\"} $${SITE_THRESHOLD:+--site-threshold \"$SITE_THRESHOLD\"} '${build.User}@${build.Host}:${build.Port}' '${var.ssh_private_key_file}' build '${local.repo_root}/verify/inspec-safbox' '${local.repo_root}/verify/thresholds/build.yml' '${local.repo_root}/verify/inputs/build.yml'",
+      "'${local.repo_root}/scripts/validate.sh' $${SITE_INPUTS:+--site-inputs \"$SITE_INPUTS\"} $${SITE_THRESHOLD:+--site-threshold \"$SITE_THRESHOLD\"} $${SSH_CONFIG:+--ssh-config \"$SSH_CONFIG\"} '${build.User}@${build.Host}:${build.Port}' '${var.ssh_private_key_file}' build '${local.repo_root}/verify/inspec-safbox' '${local.repo_root}/verify/thresholds/build.yml' '${local.repo_root}/verify/inputs/build.yml'",
     ]
   }
 

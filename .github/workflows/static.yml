@@ -96,6 +96,9 @@ jobs:
       - name: pre-commit hooks
         run: pre-commit run --all-files --show-diff-on-failure
 
+      - name: validate.sh options
+        run: tests/scripts/validate.sh
+
       - name: Packer validate
         run: tests/packer/validate.sh
 

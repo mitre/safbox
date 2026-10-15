@@ -217,7 +217,7 @@ from GitHub on each scan, so the workstation needs network access.
 ### `scripts/validate.sh`
 
 ```
-scripts/validate.sh [--site-inputs FILE] [--site-threshold FILE] \
+scripts/validate.sh [--site-inputs FILE] [--site-threshold FILE] [--ssh-config FILE] \
   <user@host[:port]> <private-key> <label> <profile> <threshold> <inputs-file>
 ```
 
@@ -226,6 +226,17 @@ reads the inputs it declares from it. Inputs never go on the command line,
 so a result is reproducible from tracked files plus the site files named.
 `--site-inputs` is layered after the tracked inputs file (its values win);
 `--site-threshold` replaces the tracked threshold.
+
+`--ssh-config` names the SSH client config CINC Auditor reads instead of
+its defaults, `~/.ssh/config` and `/etc/ssh/ssh_config` (with the files
+that one includes); `/dev/null` reads none. Leave it unset unless you need
+it: the defaults are what carry a `ProxyJump` or bastion you use to reach
+the build network. Use it when the runner's default config cannot be read
+or used: CINC Auditor's SSH library, unlike OpenSSH, stops with
+`Permission denied @ rb_sysopen - /etc/ssh/ssh_config` on a default file it
+cannot open, as inside a sandboxed agent session. The build gate takes it
+from the Packer variable `build_gate_ssh_config_file`, the release gate
+from `SAFBOX_SSH_CONFIG` for `scripts/clone-and-ssh.sh`.
 
 ### The thresholds
 
@@ -322,7 +333,11 @@ and to the release gate with `SAFBOX_SITE_INPUTS` and
 Relative paths in the Packer variables resolve against the repository root
 (`scripts/build.sh` runs from there); the `SAFBOX_SITE_*` paths resolve
 against the directory you run `scripts/clone-and-ssh.sh` from, so give
-absolute paths or run it from the repository root.
+absolute paths or run it from the repository root. The same holds for
+`build_gate_ssh_config_file` and `SAFBOX_SSH_CONFIG`, which name the SSH
+client config both gates read (see `scripts/validate.sh` below); unlike
+the site files they describe the runner, not the image, so they usually
+stay unset.
 
 ### On-box exercise profiles
 

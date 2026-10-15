@@ -5,7 +5,7 @@
 # clone test against a deployed clone as the release gate (ADR-0001
 # §Validation stages), both with the verify/inspec-safbox wrapper.
 #
-#   scripts/validate.sh [--site-inputs FILE] [--site-threshold FILE] \
+#   scripts/validate.sh [--site-inputs FILE] [--site-threshold FILE] [--ssh-config FILE] \
 #     <user@host[:port]> <private-key> <label> <profile> <threshold> <inputs-file>
 #
 #   <profile>      profile directory, normally verify/inspec-safbox
@@ -18,6 +18,12 @@
 #                          one: a site that changes which controls apply
 #                          (a tools group switched off) states the exact
 #                          set it expects
+#   --ssh-config FILE      the SSH client config CINC Auditor reads instead
+#                          of its defaults (~/.ssh/config, /etc/ssh/ssh_config);
+#                          /dev/null reads none. Unlike OpenSSH, its SSH
+#                          library fails on a default file it cannot open.
+#                          Absent, the defaults apply, so an operator's
+#                          ProxyJump or bastion settings keep working
 #
 # Inputs only ever come from files, never --input on the command line, so a
 # run is reproducible from what is tracked plus what the site names.
@@ -25,16 +31,18 @@
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 usage() {
-  echo "usage: $0 [--site-inputs FILE] [--site-threshold FILE] <user@host[:port]> <private-key> <label> <profile> <threshold> <inputs-file>" >&2
+  echo "usage: $0 [--site-inputs FILE] [--site-threshold FILE] [--ssh-config FILE] <user@host[:port]> <private-key> <label> <profile> <threshold> <inputs-file>" >&2
   exit 2
 }
 
 SITE_INPUTS=""
 SITE_THRESHOLD=""
+SSH_CONFIG=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --site-inputs) [ -n "${2:-}" ] || usage; SITE_INPUTS=$2; shift 2 ;;
     --site-threshold) [ -n "${2:-}" ] || usage; SITE_THRESHOLD=$2; shift 2 ;;
+    --ssh-config) [ -n "${2:-}" ] || usage; SSH_CONFIG=$2; shift 2 ;;
     --) shift; break ;;
     -*) echo "validate.sh: unknown option $1" >&2; usage ;;
     *) break ;;
@@ -56,6 +64,12 @@ THRESHOLD=$(abs "$5" threshold)
 INPUT_FILES=("$(abs "$6" "inputs file")")
 if [ -n "$SITE_INPUTS" ]; then INPUT_FILES+=("$(abs "$SITE_INPUTS" "site inputs file")"); fi
 if [ -n "$SITE_THRESHOLD" ]; then THRESHOLD=$(abs "$SITE_THRESHOLD" "site threshold"); fi
+# /dev/null (no config) is passed as is: abs() accepts regular files only.
+SSH_ARGS=()
+if [ -n "$SSH_CONFIG" ]; then
+  if [ "$SSH_CONFIG" = /dev/null ]; then SSH_ARGS=(--ssh-config-file /dev/null)
+  else SSH_ARGS=(--ssh-config-file "$(abs "$SSH_CONFIG" "ssh config file")"); fi
+fi
 
 for tool in cinc-auditor saf; do
   command -v "$tool" >/dev/null || { echo "validate.sh: $tool not found on this machine" >&2; exit 1; }
@@ -77,7 +91,7 @@ echo "validate.sh: threshold $THRESHOLD"
 find "$ROOT/verify" -name inspec.lock -type f -delete
 rc=0
 cinc-auditor exec "$PROFILE" \
-  -t "ssh://$TARGET" -i "$KEY" --sudo \
+  -t "ssh://$TARGET" -i "$KEY" --sudo ${SSH_ARGS[@]+"${SSH_ARGS[@]}"} \
   --input-file "${INPUT_FILES[@]}" --no-create-lockfile \
   --reporter cli "json:$RESULTS" --no-color --chef-license accept-silent || rc=$?
 # 0 all passed, 100 a test failed, 101 a test was skipped; anything else is
