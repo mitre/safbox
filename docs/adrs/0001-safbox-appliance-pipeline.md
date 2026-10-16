@@ -114,11 +114,16 @@ SSH, validate the result from outside, then seal the image.
    template, so the seal's final privileged script asserts its own
    post-conditions (no build user, sudo rule, host keys, initialised
    machine-id, cloud-init instance state, installer residue, first-boot
-   secrets, or build-VM network profiles) and fails the build otherwise.
-   A development build runs the same seal in its development mode, which
-   scrubs identity and residue but stops before deleting the build user,
-   host keys and logs; the build record names the mode, and the release
-   gate requires `full`.
+   secrets, build-VM network profiles, or root's tool residue) and fails
+   the build otherwise. The temporary directories are checked earlier, right
+   after the scrub empties them, by a raw command rather than a module:
+   every Ansible module, the final script included, runs from a payload
+   under `/tmp`. A development build runs the same seal in its development
+   mode, which scrubs identity and residue but stops before deleting the
+   build user, host keys and logs, and verifies none of this; the build
+   record names the mode, and the release gate requires `full`. (Amended
+   2026-10-15 by the owner: root's tool residue and the temporary
+   directories are checked; development templates are not verified.)
 3. *Release gate.* Some promises only exist on a deployed instance: fresh
    host keys and machine-id, the consumer's cloud-init user, first boot
    running once. Before an image is published, a clone is booted and the

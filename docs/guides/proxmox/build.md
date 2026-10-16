@@ -205,7 +205,9 @@ asserts its own result. A build with `seal = false` runs the development
 seal instead: machine identity, cloud-init state and installer residue are
 still scrubbed, but the build user, its key and sudo rule and the shared SSH
 host keys stay for inspection. Such a template is tagged `unsealed` and says
-so in its description; use it only to develop and test the appliance layer. The rendered kickstart is also served to the build VM
+so in its description, and nothing checks it for leftovers (the seal's
+post-conditions run only in a full seal); use it only to develop and test
+the appliance layer. The rendered kickstart is also served to the build VM
 over plain HTTP from the runner, so the build network segment is trusted;
 for release builds host it over HTTPS via `kickstart_url` or use the ISO
 route described in the rebuild guide.

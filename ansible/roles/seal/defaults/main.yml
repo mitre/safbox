@@ -11,6 +11,8 @@
 # (groups 1 and 2) so clones boot as new instances, but keeps the build user,
 # its key and sudo rule, the SSH host keys and the logs, so the template can
 # be inspected. Not distributable; Packer tags such templates 'unsealed'.
+# Not verified either: the post-conditions are finalize's, so they run in
+# full mode only (an owner decision, safbox-m5f.24).
 seal_mode: full
 
 # Build user created by the install layer, and its sudo drop-in, named the
@@ -55,3 +57,12 @@ seal_cloud_init_instance_files:
 seal_root_tool_residue:
   - /root/.ansible
   - /root/.cache
+
+# Temporary directories the scrub empties, and what it leaves: systemd's
+# private /tmp of running services. A full seal then asserts the same
+# directories hold nothing else (in the scrub, not finalize: finalize runs
+# from Ansible's own payload under /tmp).
+seal_tmp_dirs:
+  - /tmp
+  - /var/tmp
+seal_tmp_keep: 'systemd-private-*'

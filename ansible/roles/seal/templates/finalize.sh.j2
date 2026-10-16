@@ -43,7 +43,8 @@ keys=(/etc/ssh/ssh_host_*)
 if [ -n "${keys[*]-}" ]; then fail "SSH host keys present: ${keys[*]}"; fi
 if [ -s /etc/machine-id ] && [ "$(cat /etc/machine-id)" != uninitialized ]; then fail "/etc/machine-id is initialised"; fi
 if [ -e /var/lib/cloud/instance ]; then fail "cloud-init instance state present"; fi
-residue=(/root/*ks*.cfg /root/ks-post.log /var/log/anaconda {{ seal_firstboot_state | map('quote') | join(' ') }})
+residue=(/root/*ks*.cfg /root/ks-post.log /var/log/anaconda {{ seal_firstboot_state | map('quote') | join(' ') }}
+  {{ seal_root_tool_residue | map('quote') | join(' ') }})
 for f in "${residue[@]}"; do
   if [ -e "$f" ]; then fail "build residue present: $f"; fi
 done

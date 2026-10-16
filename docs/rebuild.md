@@ -164,7 +164,11 @@ template. Set `seal = false` in your local vars for a development build: the
 development seal still records the build and scrubs machine identity,
 cloud-init state and installer residue, but keeps the build user, its key,
 the SSH host keys and the logs for inspection. Such a template is tagged
-`unsealed`.
+`unsealed`. It is also not verified: the seal's post-conditions (no build
+user, host keys, machine identity, installer residue, first-boot secrets,
+network profiles, root's tool residue, or files left in `/tmp` and
+`/var/tmp`) run only in the full seal, so a development template can carry
+leftovers a full seal would refuse.
 
 ## How a build is validated
 

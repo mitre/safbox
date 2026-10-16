@@ -70,11 +70,9 @@
 
 - name: Find temporary files left by the build
   ansible.builtin.find:
-    paths:
-      - /tmp
-      - /var/tmp
+    paths: "{{ seal_tmp_dirs }}"
     excludes:
-      - 'systemd-private-*'
+      - "{{ seal_tmp_keep }}"
     file_type: any
     hidden: true
   register: seal_tmp_entries
@@ -86,6 +84,29 @@
   loop: "{{ seal_tmp_entries.files }}"
   loop_control:
     label: "{{ item.path }}"
+
+# Checked here, right after emptying them, not in finalize: finalize runs
+# from Ansible's own payload under /tmp. Every module unpacks its payload
+# there while it runs, so the listing is a raw command (no payload) and the
+# verdict an assert (runs on the controller). Full seal only; a development
+# template is not verified (owner decision, safbox-m5f.24).
+- name: List what the scrub left in the temporary directories
+  ansible.builtin.raw: >-
+    find {{ seal_tmp_dirs | map('quote') | join(' ') }} -mindepth 1 -maxdepth 1
+    ! -name {{ seal_tmp_keep | quote }} -print
+  register: seal_tmp_left
+  changed_when: false
+  when: seal_mode == 'full'
+
+- name: Assert the temporary directories are empty
+  ansible.builtin.assert:
+    that:
+      - seal_tmp_leftovers | length == 0
+    fail_msg: "temporary files present after the scrub: {{ seal_tmp_leftovers | join(', ') }}"
+    quiet: true
+  vars:
+    seal_tmp_leftovers: "{{ seal_tmp_left.stdout_lines | map('trim') | select | list }}"
+  when: seal_mode == 'full'
 
 - name: Clean the package manager cache
   ansible.builtin.command:
