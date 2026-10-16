@@ -564,6 +564,19 @@ cannot ship on a FIPS image as it stands. The box needs outbound HTTPS to
 `fips_exercise_url` (`verify/inputs/fips-exercise.yml`); on a restricted
 network, name a reachable endpoint in a site inputs file.
 
+One known failure is outside the exercise: under FIPS enforcement,
+`saf convert jfrog_xray2hdf` fails on a JFrog Xray report in which any
+finding's `id` is empty. The converter (`@mitre/hdf-converters` 2.14.0,
+bundled in SAF CLI 1.7.0) makes such a finding's control ID from an MD5
+hash of its summary, and Node.js refuses MD5 in FIPS mode
+(`ERR_OSSL_EVP_UNSUPPORTED`). The SAF CLI prints the error, writes no
+output file, and still exits 0, so check that the output file exists.
+Reports in which every finding has an `id` convert normally. Re-enabling
+MD5 for Node.js would take the tool out of FIPS mode, so the box offers
+no workaround: convert such a report on a host without FIPS enforcement
+until the converter is fixed upstream. Heimdall's upload is not affected:
+it converts the report in the browser, not on the box.
+
 ## Services on the box
 
 The `heimdall` and `vulcan` roles run each application and its PostgreSQL
