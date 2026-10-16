@@ -720,11 +720,15 @@ Changing modes inside `/var/lib/containers/storage` is not a fix: it alters
 pulled layers behind podman's back, so the digest no longer describes what
 runs.
 
-The login banner is a site setting: SAFBox ships a short placeholder
-(`safbox_logon_banner` in `ansible/group_vars/all/main.yml`). A site sets
-its own text there in `ansible/local.yml`, and the same text for the STIG
-overlay's `banner_message_text_cli`, `_ral` and `_gui` inputs in its site
-inputs file.
+The login banner is a site setting: SAFBox ships "Welcome to SAFBox!", a
+greeting rather than a legal notice, since it cannot know whether a site
+monitors the box (`safbox_logon_banner` in
+`ansible/group_vars/all/main.yml`). It is not the DoD Notice and Consent
+Banner the STIG requires; the STIG banner controls check for SAFBox's text
+instead of the DoD notice. A site that needs a notice, a DoD site included,
+sets its own text there in `ansible/local.yml`, and the same text for the
+STIG overlay's `banner_message_text_cli`, `_ral` and `_gui` inputs in its
+site inputs file.
 
 Remote logging is off by default: `safbox_remote_log_server` is empty, the
 hardening role switches off the forwarding rule (RHEL-10-200642), and the

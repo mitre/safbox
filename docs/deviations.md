@@ -218,9 +218,14 @@ only there:
 
 ## Settings a site will want to know about
 
-- **Login banner.** SAFBox ships a short placeholder banner, not the DoD
-  notice (`safbox_logon_banner` in `ansible/group_vars/all/main.yml`).
-  Set your own in `ansible/local.yml`, and the same text for the
+- **Login banner.** SAFBox ships a friendly greeting, "Welcome to
+  SAFBox!", not a legal notice: it cannot know whether your site
+  monitors the box (`safbox_logon_banner` in
+  `ansible/group_vars/all/main.yml`). It is not the DoD Notice and
+  Consent Banner the STIG requires: the banner controls check for
+  SAFBox's text instead of the DoD notice, and a DoD site must set
+  the DoD banner itself. Set your own notice in
+  `ansible/local.yml`, and the same text for the
   overlay's `banner_message_text_cli`, `banner_message_text_ral` and
   `banner_message_text_gui` inputs in your site inputs file.
 - **Remote logging is off by default.** SAFBox forwards no logs, and

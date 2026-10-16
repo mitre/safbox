@@ -18,9 +18,10 @@ depends:
   - name: redhat-enterprise-linux-10-stig-baseline
     git: https://github.com/mitre/redhat-enterprise-linux-10-stig-baseline
     ref: 49293f95b61f25c243b44365d8c16857db7f698c
-# The login banner SAFBox ships is a placeholder site setting, not the DoD
-# notice (ansible/group_vars/all/main.yml safbox_logon_banner); the
-# baseline's banner controls check the configured text against these.
+# The login banner SAFBox ships is a friendly greeting, a site setting and not
+# a legal notice (ansible/group_vars/all/main.yml safbox_logon_banner), and
+# not the DoD Notice and Consent Banner the STIG requires; the baseline's
+# banner controls check the configured text against these instead.
 # tests/verify/overlay.sh fails if they differ from group_vars.
 inputs:
   # SAFBox's own input, not the baseline's: the remote log server a site has
@@ -32,16 +33,10 @@ inputs:
     value: ""
   - name: banner_message_text_cli
     profile: redhat-enterprise-linux-10-stig-baseline
-    value: >-
-      SAFBox security appliance. Authorized use only. Activity on this system
-      may be monitored and recorded.
+    value: "Welcome to SAFBox!"
   - name: banner_message_text_ral
     profile: redhat-enterprise-linux-10-stig-baseline
-    value: >-
-      SAFBox security appliance. Authorized use only. Activity on this system
-      may be monitored and recorded.
+    value: "Welcome to SAFBox!"
   - name: banner_message_text_gui
     profile: redhat-enterprise-linux-10-stig-baseline
-    value: >-
-      SAFBox security appliance. Authorized use only. Activity on this system
-      may be monitored and recorded.
+    value: "Welcome to SAFBox!"

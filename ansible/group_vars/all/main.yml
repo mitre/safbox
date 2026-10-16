@@ -135,13 +135,13 @@ create_benchmark_facts: false
 rhel10stig_custom_firewall_zone: "{{ safbox_firewall_zone }}"
 
 # Login banner shown before local and SSH logins (/etc/issue, which sshd's
-# Banner names). A SAFBox placeholder, not the DoD notice: a site replaces it
-# with its own notice in ansible/local.yml, and sets the same text for the
-# STIG overlay's banner_message_text_* inputs in its site inputs file
+# Banner names). A friendly greeting, not a legal notice: SAFBox cannot know
+# whether the deploying site monitors the box, so the distributed banner makes
+# no such claim. A site that needs a notice (the DoD banner, say) sets its own
+# here in ansible/local.yml, and the same text for the STIG overlay's
+# banner_message_text_* inputs in its site inputs file
 # (tests/verify/overlay.sh checks the tracked pair agree).
-safbox_logon_banner: >-
-  SAFBox security appliance. Authorized use only. Activity on this system may
-  be monitored and recorded.
+safbox_logon_banner: "Welcome to SAFBox!"
 rhel10stig_logon_banner_nice: "{{ safbox_logon_banner }}"
 
 # Remote log server for audit records (RHEL-10-200642, SV-280985). Empty by
