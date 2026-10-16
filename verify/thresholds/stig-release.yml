@@ -1,0 +1,11 @@
+---
+# STIG overlay on a deployed clone (release gate).
+# 76: the release scan of clone 9190 on 2026-10-16, 292 of 383 applicable controls passed (76.2%), rounded down.
+compliance:
+  min: 76
+failed:
+  critical:
+    max: 0
+error:
+  total:
+    max: 0

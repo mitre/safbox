@@ -29,8 +29,8 @@ env:
   CINC_AUDITOR_URL: https://packages.cinc.sh/files/stable/cinc-auditor/7.2.1/ubuntu/24.04/cinc-auditor_7.2.1-1_amd64.deb
   CINC_AUDITOR_SHA256: 371108577ccb9499041a6d052c56f91175468fda4d60963c1fd0ece4b70c23d9
   # Same release as the appliance's own pin, on the Node.js major its
-  # distribution ships; tests/verify/thresholds.sh runs saf validate
-  # threshold against recorded results.
+  # distribution ships; scripts/check-tools.sh (from tests/packer/validate.sh)
+  # requires it, as the build does.
   SAF_CLI_VERSION: 1.7.0
   NODE_VERSION: '22'
 
@@ -96,25 +96,16 @@ jobs:
       - name: pre-commit hooks
         run: pre-commit run --all-files --show-diff-on-failure
 
-      - name: Workstation prerequisite check
-        run: tests/scripts/check-tools.sh
-
       - name: build.sh credentials file check
         run: tests/scripts/build-env.sh
 
       - name: Concurrent build.sh runs
         run: tests/scripts/build-concurrency.sh
 
-      - name: validate.sh options
-        run: tests/scripts/validate.sh
-
-      - name: Packer validate
-        run: tests/packer/validate.sh
-
       - name: Kickstart lint
         run: tests/kickstart/ks-lint.sh
 
-      - name: Ansible and validation profile lint
+      - name: Linters (yamllint, ansible-lint, shellcheck, packer validate, cinc-auditor check)
         run: tests/ansible/lint.sh
 
       - name: Platform discipline

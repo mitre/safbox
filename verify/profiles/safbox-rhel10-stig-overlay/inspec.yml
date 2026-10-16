@@ -1,0 +1,42 @@
+---
+name: safbox-rhel10-stig-overlay
+title: SAFBox overlay for the RHEL 10 STIG
+maintainer: MITRE SAF
+copyright: The MITRE Corporation
+copyright_email: saf@mitre.org
+license: Apache-2.0
+summary: >-
+  The MITRE RHEL 10 STIG baseline with SAFBox's deviations applied.
+  This is the record of how SAFBox deviates from the STIG. Every baseline control
+  runs; a deviation is marked and explained, never dropped.
+version: 0.1.0
+inspec_version: ">= 5.0"
+supports:
+  - platform-family: redhat
+depends:
+  # Pinned by commit; update deliberately and re-run the release gate.
+  - name: redhat-enterprise-linux-10-stig-baseline
+    git: https://github.com/mitre/redhat-enterprise-linux-10-stig-baseline
+    ref: 49293f95b61f25c243b44365d8c16857db7f698c
+# The login banner SAFBox ships is a friendly greeting, a site setting and not
+# a legal notice (ansible/group_vars/all/main.yml safbox_logon_banner), and
+# not the DoD Notice and Consent Banner the STIG requires; the baseline's
+# banner controls check the configured text against these instead.
+# A site that changes safbox_logon_banner sets these to the same text.
+inputs:
+  # SAFBox's own input, not the baseline's: the remote log server a site has
+  # configured (group_vars safbox_remote_log_server). While it is empty,
+  # SV-280985 is Not Applicable as a deploy-time deviation; a site that sets
+  # it sets this input to the same value, and the control is evaluated.
+  - name: remote_log_server
+    type: String
+    value: ""
+  - name: banner_message_text_cli
+    profile: redhat-enterprise-linux-10-stig-baseline
+    value: "Welcome to SAFBox!"
+  - name: banner_message_text_ral
+    profile: redhat-enterprise-linux-10-stig-baseline
+    value: "Welcome to SAFBox!"
+  - name: banner_message_text_gui
+    profile: redhat-enterprise-linux-10-stig-baseline
+    value: "Welcome to SAFBox!"

@@ -10,8 +10,7 @@
 # file, read the evaluation back), and that Heimdall's own port and its
 # database are not reachable from outside. Creates an account and an
 # evaluation on the box: run it against a clone. The HDF uploaded is
-# SAFBOX_HDF, by default a recorded scan of a SAFBox clone from this
-# repository's fixtures.
+# SAFBOX_HDF, for example a results file scripts/validate.sh wrote in .build/.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 # shellcheck source=tests/services/lib.sh
@@ -23,7 +22,7 @@ if [[ $# -lt 1 ]]; then
 fi
 HOST=$1
 PORT=${2:-8443}
-HDF=${SAFBOX_HDF:-$ROOT/tests/verify/fixtures/release-infrastructure.json}
+HDF=${SAFBOX_HDF:?set SAFBOX_HDF to an HDF results file, such as one scripts/validate.sh wrote in .build/}
 [[ -r "$HDF" ]] || die "HDF file $HDF not readable"
 require_tools
 BASE="https://$HOST:$PORT"

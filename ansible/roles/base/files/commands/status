@@ -132,16 +132,12 @@ tool_versions() {
   row "SAF CLI" "${version:-not installed}"
 
   # `ansible --version` fails for a user without a writable home (it creates
-  # ~/.ansible/tmp), so ask ansible-core's own interpreter for the release.
+  # ~/.ansible/tmp), so ask the package manager for the release.
   version=""
-  local ansible_bin python python_argv
-  if ansible_bin=$(command -v ansible 2>/dev/null); then
-    python=$(sed -n '1s/^#![[:space:]]*//p' "$ansible_bin")
-    if [[ -n "$python" ]]; then
-      # The shebang may carry interpreter flags (#!/usr/bin/python3 -sP).
-      read -r -a python_argv <<<"$python"
-      version=$("${python_argv[@]}" -c 'from ansible.release import __version__; print(__version__)' 2>/dev/null || true)
-    fi
+  if rpm -q ansible-core >/dev/null 2>&1; then
+    version=$(rpm -q --qf '%{VERSION}' ansible-core)
+  elif dpkg-query -W ansible-core >/dev/null 2>&1; then
+    version=$(dpkg-query -W -f '${Version}' ansible-core)
   fi
   row "Ansible core" "${version:-not installed}"
 

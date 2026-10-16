@@ -5,7 +5,7 @@
 # name a hypervisor or cloud; tests/platform-discipline.sh enforces it.
 #
 # The build runs this playbook, then checks the result from outside with the
-# inspec-safbox profile (verify/), then runs seal.yml. This playbook is
+# validation profiles (verify/profiles/), then runs seal.yml. This playbook is
 # idempotent: a second run reports changed=0 (tests/ansible/idempotence.sh).
 #
 # group_vars are loaded explicitly so the pins apply regardless of which

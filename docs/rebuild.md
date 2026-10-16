@@ -60,8 +60,7 @@ file. Other targets get their own guide alongside their Packer source.
   appliance playbooks from here against the build VM, and installs the
   pinned collections from `ansible/requirements.yml` itself
 - CINC Auditor and the SAF CLI on the workstation; the build validates the
-  VM from here, and the clone test uses them as the release gate. The
-  static suite needs the SAF CLI too (`tests/verify/thresholds.sh`)
+  VM from here, and the clone test uses them as the release gate.
 - `pipx install pykickstart` for the kickstart lint. The versions the
   static suite is verified with are pinned in `tests/requirements.txt`
 - `pre-commit install` after cloning (gitleaks, shellcheck, packer fmt,
@@ -178,201 +177,90 @@ leftovers a full seal would refuse.
 
 Three checks, at three moments:
 
-1. **During the build**, before the seal, `scripts/validate.sh` runs the
-   `verify/inspec-safbox` profile from your workstation against the build
-   VM over SSH with the inputs in `verify/inputs/build.yml`, and
-   `saf validate threshold` against `verify/thresholds/build.yml` decides
-   whether the build continues. Nothing is installed on the image for
-   this. Results land in `.build/validate-build-<timestamp>.json`, readable
-   in Heimdall.
+1. **During the build**, before the seal, `scripts/validate.sh` scans the
+   build VM from your workstation over SSH in the `build` context, and the
+   SAF CLI thresholds decide whether the build continues. Nothing is
+   installed on the image for this.
 2. **At the end of the seal**, the seal's own final script asserts that the
    build user, its sudo rule, host keys, machine identity, cloud-init
    instance state, installer residue, first-boot secrets, and build-VM
    network profiles are all gone. Nothing outside can log in afterwards, so
    the seal checks itself; any miss fails the build.
 3. **Before publishing an image** (the release gate), a clone is booted and
-   the same profile runs against it from outside as the deploy user, with
-   `verify/inputs/release.yml` and `verify/thresholds/release.yml`, which
-   also proves what only a first boot does: fresh host keys and machine
-   identity, the consumer's cloud-init user, first boot running once.
+   scanned from outside as the deploy user in the `release` context, which
+   also proves what only a first boot does: the secrets, the certificate and
+   the running services.
 
 ### The profiles
 
-`verify/inspec-safbox` is a wrapper: it holds no controls of its own and
-includes every child profile whole.
+Two InSpec profiles live in `verify/profiles/`:
 
-| Profile | Holds | Runs on |
-|---|---|---|
-| `verify/el10-infrastructure` | the SAFBox infrastructure controls (`safbox-*`), impact 1.0 except documented findings (low, tagged `finding`) | redhat family, release 10.* |
-| `verify/safbox-rhel10-stig-overlay` | the pinned MITRE RHEL 10 STIG baseline with SAFBox's deviations marked | redhat family, release 10.* (the baseline's) |
+| Profile | Checks |
+|---|---|
+| `verify/profiles/safbox` | the appliance itself: OS, FIPS mode, Secure Boot, accounts, the hardening record, the tools at their pinned versions, Heimdall, Vulcan and the TLS proxy, and on a clone the seal and first boot |
+| `verify/profiles/safbox-rhel10-stig-overlay` | the pinned MITRE RHEL 10 STIG baseline, with SAFBox's deviations marked Not Applicable |
 
-Each child declares the platforms it supports, and CINC Auditor skips a
-child that does not match the target, so one scan of the wrapper is right
-for any image. A later OS family adds its own children (an infrastructure
-profile and a STIG overlay for that OS) to the wrapper's `depends` and
-`controls/children.rb`. Each child also runs alone, for example while
-developing a control:
+`verify/profiles/safbox` is plain InSpec: `package`, `service`, `port`,
+`file`, `http`, `parse_config_file` and the like, one control per thing
+an operator cares about, grouped in `os.rb`, `accounts.rb`, `hardening.rb`,
+`tools.rb`, `services.rb` and `sealed.rb`. Its inputs, with defaults in its
+`inspec.yml`, are what a site varies: which tools and services the image
+ships (`expected_tools`, `expected_services`), the CA roots it trusts
+(`trusted_roots`), the pinned versions, and `deployed`, which is true on a
+clone and false on the build VM (`verify/inputs/build.yml`). A control that
+does not apply (a service switched off, a clone-only control on the build
+VM) is Not Applicable and does not count. Pin changes in
+`ansible/group_vars/all/main.yml` need the matching input default changed
+too.
 
-```
-scripts/validate.sh <user@host> <key> infra-only verify/el10-infrastructure \
-  verify/thresholds/build.yml verify/inputs/build.yml
-```
-
-(the threshold then fails on the missing STIG results, but the results
-file is written first). The wrapper fetches the overlay's pinned baseline
-from GitHub on each scan, so the workstation needs network access.
+The overlay fetches its pinned baseline from GitHub on each scan, so the
+workstation needs network access.
 
 ### `scripts/validate.sh`
 
 ```
-scripts/validate.sh [--site-inputs FILE] [--site-threshold FILE] [--ssh-config FILE] \
-  <user@host[:port]> <private-key> <label> <profile> <threshold> <inputs-file>
+scripts/validate.sh [--site-inputs FILE] [--ssh-config FILE] \
+  <user@host[:port]> <private-key> <build|release> [label]
 ```
 
-The inputs file goes to CINC Auditor with `--input-file`; every child
-reads the inputs it declares from it. Inputs never go on the command line,
-so a result is reproducible from tracked files plus the site files named.
-`--site-inputs` is layered after the tracked inputs file (its values win);
-`--site-threshold` replaces the tracked threshold.
-
-`--ssh-config` names the SSH client config CINC Auditor reads instead of
-its defaults, `~/.ssh/config` and `/etc/ssh/ssh_config` (with the files
-that one includes); `/dev/null` reads none. Leave it unset unless you need
-it: the defaults are what carry a `ProxyJump` or bastion you use to reach
-the build network. Use it when the runner's default config cannot be read
-or used: CINC Auditor's SSH library, unlike OpenSSH, stops with
-`Permission denied @ rb_sysopen - /etc/ssh/ssh_config` on a default file it
-cannot open, as inside a sandboxed agent session. The build gate takes it
-from the Packer variable `build_gate_ssh_config_file`, the release gate
-from `SAFBOX_SSH_CONFIG` for `scripts/clone-and-ssh.sh`.
+It scans both profiles and checks each against its threshold. Results land
+in `.build/validate-<label>-<profile>-<timestamp>.json`, readable in
+Heimdall. `--site-inputs` is layered after the context's inputs (its values
+win); `--ssh-config /dev/null` stops CINC Auditor reading an SSH client
+config it cannot use.
 
 ### The thresholds
 
-Every infrastructure control is impact 1.0, the SAF CLI's critical
-severity, and no STIG control is (a CAT I finding is 0.7, high). Each
-threshold therefore lists, under `passed.critical.controls`, exactly the
-infrastructure controls a repository-default image passes in that context,
-and holds `failed.critical.max: 0` and `error.total.max: 0`. The list is an
-exact set: a control that fails, is skipped, is missing, or passes without
-being listed fails the gate.
+`verify/thresholds/` holds three short SAF CLI threshold files, written by
+hand:
 
-- **build** (the build VM before the seal): every control except those
-  that need a sealed, deployed clone (`safbox-build-info-1`,
-  `safbox-sealed-1`, `safbox-sealed-2`, `safbox-firstboot-2`, and the
-  running-service controls `safbox-heimdall-3`, `safbox-vulcan-3`,
-  `safbox-proxy-2`, `-3` and `-6`). The service units and their absent
-  secrets are checked here (`safbox-heimdall-1` and `-2`, `safbox-vulcan-1`
-  and `-2`, `safbox-proxy-1`, `-4` and `-5`).
-- **release** (a deployed clone of a full-sealed template): those as well.
-- `safbox-podman-2` (the smoke-test Quadlet unit) is in neither: it skips
-  unless the build opts in with `safbox_example_quadlet_enabled=true`.
+- `safbox.yml`, for the safbox profile in both contexts: a compliance
+  percentage and no errors.
+- `stig-build.yml` and `stig-release.yml`, for the overlay: a compliance
+  percentage taken from a real scan in that context, rounded down, no
+  failed control of critical severity and no errors. The build VM has not
+  rebooted since hardening, so some settings apply only on a clone and the
+  build percentage is lower.
 
-**Documented findings.** A known weakness SAFBox ships with is recorded as
-an infrastructure control of low impact (0.1 to 0.39) with a `finding` tag,
-which fails on every image it applies to; it is never waived or skipped.
-Being low, it is not in the critical bucket: it sits in
-`failed.low.controls` with the STIG controls, where
-`scripts/lock-stig-threshold.sh` puts it, and `tests/verify/thresholds.sh`
-requires it there in each context where it applies. The current findings
-are crypto inside the service containers that does not go through a FIPS
-provider (see "Services on the box").
+A comment in each file says which scan its percentage came from. When the
+image gets better, raise the percentage by hand from a new scan.
 
-STIG controls are held at their documented state until Phase 7 hardens
-the image: for each of high, medium and low, `passed.<sev>.controls` and
-`failed.<sev>.controls` list exactly which STIG controls pass and which
-fail in that context. Any control that changes status fails the gate,
-whether it got better or worse. To change the documented state on
-purpose, scan, then regenerate the lists and review the diff:
+### Site inputs
+
+A site that builds a different image than the repository default (a tool
+or service switched off, a pin overridden) writes an inputs file in
+`verify/local/`, which is git-ignored, for example
+`verify/local/inputs.yml`:
 
 ```
-scripts/lock-stig-threshold.sh <build|release> .build/validate-<label>-<timestamp>.json
+---
+expected_tools: [cinc-auditor, saf-cli, ansible]
 ```
 
-The script keeps the infrastructure clauses and records the results file
-it used in the threshold's comments. Known weaknesses stay visible as
-findings: no baseline control is ever skipped to pass a threshold, and the
-critical and error clauses are never loosened.
-
-`tests/verify/thresholds.sh` (part of `tests/ansible/lint.sh`) fails when a
-threshold's critical list differs from the controls whose `only_if`
-conditions hold for that context's inputs, so adding or re-gating a control
-means updating the thresholds in the same change.
-
-Limits of the scheme: the SAF CLI counts controls, not tests within them,
-so a control passes or fails as a whole. The STIG lists cover passing and
-failing controls only, so a control moving between skipped and Not
-Applicable goes unnoticed. The critical list depends
-on the inputs and on build options; a site that changes either must supply
-its own threshold.
-
-### Site inputs and thresholds
-
-A site that builds a different image than the repository default (a tools
-group switched off, a pin overridden, a platform without a guest-agent
-channel) names two files of its own. Keep them in `verify/local/`, which
-is git-ignored, and never commit them:
-
-- an inputs file layered after the tracked one, for example
-  `verify/local/build-inputs.yml`:
-
-  ```
-  ---
-  expected_tools: [cinc-auditor, saf-cli, ansible]
-  ```
-
-- a threshold that replaces the tracked one, for example
-  `verify/local/build-threshold.yml`: a copy of
-  `verify/thresholds/build.yml` with the controls that no longer apply
-  (here `safbox-tools-4`) removed from `passed.critical.controls`. A
-  switched-off tools group drops only its own control; the STIG lists
-  stay as they are unless the change moves a STIG control, in which case
-  scan and regenerate them in your copy.
-
-Name them to the build in `packer/local.auto.pkrvars.hcl`:
-
-```
-build_gate_site_inputs_file    = "verify/local/build-inputs.yml"
-build_gate_site_threshold_file = "verify/local/build-threshold.yml"
-```
-
-and to the release gate with `SAFBOX_SITE_INPUTS` and
-`SAFBOX_SITE_THRESHOLD` (release-context copies,
-`verify/local/release-inputs.yml` and `verify/local/release-threshold.yml`).
-Relative paths in the Packer variables resolve against the repository root
-(`scripts/build.sh` runs from there); the `SAFBOX_SITE_*` paths resolve
-against the directory you run `scripts/clone-and-ssh.sh` from, so give
-absolute paths or run it from the repository root. The same holds for
-`build_gate_ssh_config_file` and `SAFBOX_SSH_CONFIG`, which name the SSH
-client config both gates read (see `scripts/validate.sh` below); unlike
-the site files they describe the runner, not the image, so they usually
-stay unset.
-
-### On-box exercise profiles
-
-Every test that talks to the box is an InSpec profile, so its results are
-HDF: viewable in Heimdall and gated by a SAF CLI threshold. Two profiles
-exercise the box rather than inspect it, so they are not in the
-`verify/inspec-safbox` wrapper and run alone, each with its own threshold
-and inputs file:
-
-| Profile | Exercises | Why it runs alone |
-|---|---|---|
-| `verify/el10-fips-exercise` | each tool doing TLS or hashing under FIPS enforcement (see "Tools on the box") | needs outbound HTTPS from the box |
-| `verify/el10-firstboot` | the first-boot runner and secrets library | writes files on the box |
-
-```
-scripts/validate.sh <user@host> <key> firstboot verify/el10-firstboot \
-  verify/thresholds/firstboot.yml verify/inputs/firstboot.yml
-```
-
-Run them against a build VM or clone the playbook was applied to, after
-changing a tool or the `base` role. Each control works in its own scratch
-directory under `/root` and removes it, then asserts it is gone, so the
-target is left as found. The first-boot controls call the runner directly
-with every path pointed into that directory, never `/etc/safbox` or
-`/var/lib/safbox`. `tests/verify/onbox.sh` (part of `tests/ansible/lint.sh`)
-checks both profiles statically and runs the FIPS threshold against a
-recorded result.
+and names it to the build in `packer/local.auto.pkrvars.hcl`
+(`build_gate_site_inputs_file = "verify/local/inputs.yml"`) and to the
+release gate with `SAFBOX_SITE_INPUTS`. The controls of a switched-off tool
+or service become Not Applicable, so the thresholds need no change.
 
 ## Prove the template (release gate)
 
@@ -415,12 +303,8 @@ group are listed in `ansible/group_vars/all/main.yml`.
   profile's `expected_tools` input lists the tools the image ships (default
   `cinc-auditor`, `saf-cli`, `ansible`, `packer`); a tool expected but
   missing fails its control. When you switch a tools group off, drop its
-  tool from that input in a site inputs file and its control from the
-  threshold in a site threshold file, and name both to the build and the
-  release gate (see "Site inputs and thresholds" above). For the FIPS
-  exercise (see "Tools on the box"), use the same site inputs file and a
-  copy of `verify/thresholds/fips-exercise.yml` without the tool's two
-  controls. A distributor who does not
+  tool from that input in a site inputs file (see "Site inputs" above);
+  its control is then Not Applicable. A distributor who does not
   want to ship Packer's Business Source License sets `safbox_tools_4:
   false`; see `docs/third-party.md`.
 - The `services` role holds every long-running service, one task group and
@@ -430,9 +314,8 @@ group are listed in `ansible/group_vars/all/main.yml`.
   with `safbox_services_2: false`; the proxy then serves Heimdall only and
   closes Vulcan's port. The profile's `expected_services` input lists
   the services the image ships (default `heimdall`, `vulcan`, `proxy`):
-  drop a switched-off service there in a site inputs file, and its
-  controls (`safbox-vulcan-*`, and `safbox-proxy-3` for Vulcan's proxy
-  port) from a site threshold, as for a tools group.
+  drop a switched-off service there in a site inputs file, as for a tools
+  group.
 - `safbox_site_config_1` installs the site's CA bundles, the DoD PKI bundle
   by default; see "Site CA bundles" below.
 
@@ -468,15 +351,13 @@ name are renamed:
 | Old control | New control | Checks |
 |---|---|---|
 | `safbox-services-1` | `safbox-system-1` | the guest agent, cloud-init and sshd enabled, sshd running |
-| `safbox-services-2` | `safbox-system-2` | chrony and firewalld running, SSH allowed |
+| `safbox-services-2` | `safbox-system-1` | chrony and firewalld running, SSH allowed (merged into `safbox-system-1`) |
 | `safbox-services-3` | `safbox-system-3` | the journal kept on disk |
 | `safbox-platform-1` | `safbox-os-1` | the operating system is one the appliance supports |
-| `safbox-platform-2` | `safbox-os-2` | the distribution and microarchitecture level are recorded |
+| `safbox-platform-2` | `safbox-os-2` | the CPU supports the image's x86-64 level |
 | `safbox-seal-1` | `safbox-sealed-1` | the build user, its key and its sudo rule are gone |
 | `safbox-seal-2` | `safbox-sealed-2` | no installer residue |
 
-A site threshold that lists an old control name must list the new one
-instead; site inputs need no change.
 
 ## Site CA bundles
 
@@ -599,40 +480,14 @@ ANSIBLE_CONFIG=ansible/ansible.cfg ansible-playbook -i <box>, -u <user> --privat
   ansible/playbooks/safbox.yml -e @ansible/local.yml --tags safbox-site-config-1
 ```
 
-A second run changes nothing. `tests/ansible/trust-bundles.sh` runs this
-path against a box (`SAFBOX_HOST`, `SAFBOX_USER`, `SAFBOX_KEY`, as for the
-idempotence check): the default list, then throwaway CAs it generates:
-install, a second run, wrong checksums, roots the policy rejects, malformed
-entries, an empty bundle, and removal. It leaves the box at the default.
+A second run changes nothing.
 
-**Validation.** `safbox-trust-1` checks that the extracted store holds
-exactly the bundles the image is meant to trust: the identifying roots of
-each bundle named in the input `trust_bundles_expected` (default `[dod]`)
-are trusted, those of every other known bundle (`trust_bundle_anchors`:
-the DoD roots by SHA-256 fingerprint) are not, and every SAFBox anchor
-file belongs to an expected bundle. A site that changes the list says so
-in its site inputs file, for the build gate and the release gate alike:
-`trust_bundles_expected: []` without the DoD bundle, or its bundle names
-and their roots when it adds its own:
-
-```
----
-trust_bundles_expected: [dod, example-org]
-trust_bundle_anchors:
-  dod:
-    DoD Root CA 3: <fingerprint>   # the four DoD lines of the profile's default
-    # ...
-  example-org:
-    Example Org Root CA: <fingerprint>
-```
-
-where each fingerprint is `openssl x509 -noout -fingerprint -sha256 -in
-<root>.pem`. An inputs file replaces an input's whole value, so a site
-that adds a bundle repeats the `dod` entry of the default in
-`verify/el10-infrastructure/inspec.yml`.
-
-The thresholds need no change: `safbox-trust-1` is in both, whichever
-bundles the image trusts.
+**Validation.** `safbox-trust-1` checks that the CA roots named in the
+input `trusted_roots` (by default the four DoD roots, by label, as `trust
+list` shows them) are in the system trust store. A site that changes the
+list names its roots in its site inputs file, for the build gate and the
+release gate alike: `trusted_roots: []` without the DoD bundle, or the
+labels of its own roots.
 
 ## STIG hardening and deviations
 
@@ -649,45 +504,27 @@ ansible-galaxy install -r requirements.yml   # roles go to ansible/galaxy_roles/
 ```
 
 The role refuses to run if another version of the Lockdown role is
-installed. What SAFBox does not apply is listed in
-[docs/deviations.md](deviations.md), generated from two files in
-`ansible/roles/hardening/vars/`:
+installed.
 
-- `deviations.yml`: requirements deliberately not applied, each with a
-  reason code (`usability`, `content-defect` with its upstream issue,
-  `deploy-time`) and a justification. The hardening role switches each off
-  through the Lockdown role's per-rule variable (`rhel10stig_<digits of the
-  RHEL-10 ID>`), and the STIG overlay marks each Not Applicable with the same
-  justification. Every new entry is an owner decision.
-- `not_applied.yml`: rules switched off only because their Lockdown task
-  errors on SAFBox. They are not deviations: the overlay leaves them alone,
-  the baseline control still runs, and the locked STIG lists record its
-  result as it is (each entry notes whether that is a pass, a fail or a
-  skip, and why).
-
-`scripts/deviations-check.sh` fails if the deviations and the overlay's Not
-Applicable overrides differ, or if `docs/deviations.md` is stale; it runs in
-`tests/ansible/lint.sh` and as the first step of every build. After changing
-either file, or relocking a threshold, run `scripts/deviations-doc.sh` to
-regenerate the guide: it also lists every STIG control that still fails on a
-deployed clone (from `verify/thresholds/release.yml`), with its title and
-whether it is a known baseline defect
-(`verify/safbox-rhel10-stig-overlay/known-defects.yml`), a rule whose task
-failed, or not yet triaged. The titles come from
-`verify/safbox-rhel10-stig-overlay/baseline-titles.yml`, generated from the
-pinned baseline by `scripts/baseline-titles.sh` (network needed) so the
-guide is built offline; rerun it whenever the overlay's baseline ref
-changes (`tests/verify/overlay.sh` fails while it is stale).
+**The deviation record is the STIG overlay.** Each requirement SAFBox
+deliberately does not apply is a Not Applicable override, with its
+justification, in
+`verify/profiles/safbox-rhel10-stig-overlay/controls/overlay.rb`; a scan's
+results carry the same text, readable in Heimdall. The hardening role
+switches the matching Lockdown rule off in the Lockdown section of
+`ansible/group_vars/all/main.yml`, one `rhel10stig_<n>: false` per
+line with a one-line comment. A few lines there are not deviations: their
+Lockdown task fails on SAFBox, so the rule is off, and the baseline control
+still runs and reports what it finds. To add a deviation, add the override
+to the overlay and the switch to group_vars; every new deviation is an
+owner decision.
 
 Lockdown's own variables are the knobs for everything else: set any
 `rhel10stig_*` value in `ansible/local.yml` (a rule switch to `false`, a
-banner text, a time server). A site that changes what is applied supplies
-its own threshold (see "Site inputs and thresholds"); switching the whole
-group off (`safbox_hardening_1: false`) also needs `hardening_expected:
-false` in the site inputs. Hardening does not reboot the build VM, because
-a reboot would run the first-boot unit inside the template; kernel
+banner text, a time server). Hardening does not reboot the build VM,
+because a reboot would run the first-boot unit inside the template; kernel
 arguments and some other settings take effect when a clone first boots, so
-the build threshold's STIG lists differ from the release threshold's.
+the build STIG threshold is lower than the release one.
 
 Known upstream defect: the pinned Lockdown release ends every run with
 `POST | Warning a reboot required but skip option set`, a task marked
@@ -746,11 +583,11 @@ that has a log server sets `safbox_remote_log_server` (and, if needed,
 `safbox_remote_log_port` and `safbox_remote_log_protocol`, tcp or udp) in
 `ansible/local.yml`, and the overlay input `remote_log_server` to the same
 server in its site inputs file. The hardening then writes
-`/etc/rsyslog.d/99-forwarding.conf` for that server, SV-280985 is evaluated,
-and the site supplies a threshold that expects it.
+`/etc/rsyslog.d/99-forwarding.conf` for that server and SV-280985 is
+evaluated.
 
-USBGuard is enabled with no rules, so USB devices are blocked
-until a site allows them; see [docs/deviations.md](deviations.md).
+USBGuard is enabled with no rules, so USB devices are blocked until a site
+allows them.
 
 ### The firewall zone
 
@@ -766,8 +603,7 @@ A site that switches Lockdown's zone rule off (`rhel10stig_200532: false`)
 while hardening stays on keeps the interface where it was, so it must also
 set `safbox_firewall_zone` to that zone (usually `public`) in
 `ansible/local.yml`; otherwise the proxy's ports open in a zone the
-interface is not in. `tests/ansible/structure.sh` fails if Lockdown's zone
-or any role's firewalld task stops using `safbox_firewall_zone`.
+interface is not in.
 
 ## Tools on the box
 
@@ -776,8 +612,7 @@ The `tools` role installs each tool at the version pinned in
 To change a pin, update the version there (and, for a downloaded
 artifact, its sha256), and
 the matching expected-version input default in
-`verify/el10-infrastructure/inspec.yml` (`tests/ansible/pins.sh` fails
-while they differ). A site that overrides a pin in `ansible/local.yml` sets
+`verify/profiles/safbox/inspec.yml`. A site that overrides a pin in `ansible/local.yml` sets
 the matching input in its site inputs file, for example
 `packer_version: <version>`. CINC Auditor's control compares the version
 only, so a different build of the same version (the el9 release on
@@ -788,28 +623,11 @@ image is built, so two builds from the same tag can carry different
 releases of those dependencies.
 
 FIPS is not a toggle, so every tool must work under FIPS enforcement. After
-changing a tool, run the FIPS exercise profile against a FIPS-mode build VM
-or clone (see "On-box exercise profiles" above):
+changing a tool, try it on a FIPS-mode build VM or clone. Known gaps: CINC
+Auditor carries its own OpenSSL and Packer uses Go's crypto, neither through
+the system FIPS provider.
 
-```
-scripts/validate.sh <user@host> <key> fips-exercise verify/el10-fips-exercise \
-  verify/thresholds/fips-exercise.yml verify/inputs/fips-exercise.yml
-```
-
-For each tool, `safbox-fips-exercise-<n>` (impact 1.0) runs it once doing
-TLS or SHA-256 hashing, and `safbox-fips-provider-<n>` (low) checks that
-its cryptography goes through the system OpenSSL FIPS provider. Every
-control first asserts FIPS enforcement (`fips_enabled=1`, the FIPS crypto
-policy, the OpenSSL FIPS provider active), so a host without it fails.
-Two provider controls fail by design, each a known finding tagged with its
-issue: CINC Auditor's embedded OpenSSL and Packer's Go crypto. The
-threshold names exactly those two, so a new finding, a fixed one, or a
-tool that stops working fails it. A failing exercise is a tool that
-cannot ship on a FIPS image as it stands. The box needs outbound HTTPS to
-`fips_exercise_url` (`verify/inputs/fips-exercise.yml`); on a restricted
-network, name a reachable endpoint in a site inputs file.
-
-One known failure is outside the exercise: under FIPS enforcement,
+One known failure: under FIPS enforcement,
 `saf convert jfrog_xray2hdf` fails on a JFrog Xray report in which any
 finding's `id` is empty. The converter (`@mitre/hdf-converters` 2.14.0,
 bundled in SAF CLI 1.7.0) makes such a finding's control ID from an MD5
@@ -923,15 +741,13 @@ the containers run a FIPS provider under the host's policy. The proxy uses
 `ubi9/nginx-126` rather than upstream Heimdall's `nginx:alpine` for this
 reason: Alpine's OpenSSL has no FIPS provider. Each application container
 mounts the host's CA trust store read-only, so it trusts the same CAs as the
-host, a site's own included (see "Site CA bundles"). Three
-weaknesses remain and are recorded as findings (`safbox-heimdall-4`,
-`safbox-heimdall-5`, `safbox-vulcan-4`): Heimdall hashes passwords and API
-keys with bcrypt in pure JavaScript, outside any FIPS provider (the finding
-counts both, though a fresh box has no API key until a user creates one;
-upstream [mitre/heimdall2#4145](https://github.com/mitre/heimdall2/issues/4145),
-draft fix [#4850](https://github.com/mitre/heimdall2/pull/4850)), and both
-upstream PostgreSQL images (Debian and Alpine) have no OpenSSL FIPS
-provider at all.
+host, a site's own included (see "Site CA bundles"). Two weaknesses
+remain. Both upstream PostgreSQL images (Debian and Alpine) have no OpenSSL
+FIPS provider at all, so `safbox-heimdall-5` and `safbox-vulcan-4` fail.
+Heimdall hashes passwords and API keys with bcrypt in pure JavaScript,
+outside any FIPS provider (upstream
+[mitre/heimdall2#4145](https://github.com/mitre/heimdall2/issues/4145),
+draft fix [#4850](https://github.com/mitre/heimdall2/pull/4850)).
 
 ## Continuous integration
 
@@ -942,10 +758,10 @@ GitHub-hosted runners. It needs no hypervisor and no credentials.
   which adds rules for Proxmox API token secrets to the defaults, then
   `tests/secrets/gitleaks-rules.sh`, which proves those rules catch a
   generated fake token and pass the repository's placeholders.
-- **static checks:** `pre-commit run --all-files`, `tests/packer/validate.sh`,
-  `tests/kickstart/ks-lint.sh`, `tests/ansible/lint.sh` (including the
-  validation profile checks, which need CINC Auditor, and the threshold
-  checks, which need the SAF CLI) and
+- **static checks:** `pre-commit run --all-files`, the `build.sh` tests in
+  `tests/scripts/`, `tests/kickstart/ks-lint.sh`, `tests/ansible/lint.sh`
+  (yamllint, ansible-lint, the playbook syntax check, shellcheck,
+  `tests/packer/validate.sh` and `cinc-auditor check` on both profiles) and
   `tests/platform-discipline.sh`.
 
 Every input is pinned: actions by commit SHA, gitleaks and CINC Auditor by

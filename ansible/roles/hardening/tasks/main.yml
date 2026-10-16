@@ -24,30 +24,6 @@
           run 'ansible-galaxy install -r requirements.yml' in the ansible/ directory.
         quiet: true
 
-    - name: Load the deviations
-      ansible.builtin.include_vars:
-        file: deviations.yml
-
-    - name: Load the rules not applied because their task fails
-      ansible.builtin.include_vars:
-        file: not_applied.yml
-
-    # Each rule is switched off through the Lockdown role's own per-rule
-    # variable, rhel10stig_<the digits of its RHEL-10 STIG ID>, the knob the
-    # role provides for exactly this. A fact outranks the role's defaults.
-    # A deviation with a site_setting holds only while the site leaves
-    # safbox_<site_setting> empty; once set, the rule is applied.
-    - name: Switch off the deviated rules and the rules whose task fails
-      when: >-
-        item.site_setting is not defined
-        or lookup('ansible.builtin.vars', 'safbox_' ~ item.site_setting, default='') | string | length == 0
-      ansible.builtin.set_fact:
-        "{{ 'rhel10stig_' ~ (item.stig_id | regex_replace('^RHEL-10-', '')) }}": false
-      loop: "{{ hardening_deviations + hardening_not_applied }}"
-      loop_control:
-        label: "{{ item.stig_id }} ({{ item.vuln_id }})"
-      register: hardening_switched_off
-
     - name: Apply the RHEL 10 STIG with the pinned Lockdown role
       ansible.builtin.include_role:
         name: "{{ safbox_hardening_lockdown.name }}"

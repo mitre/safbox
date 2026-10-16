@@ -4,7 +4,7 @@
 # The service tests are clients of a deployed SAFBox over HTTPS, the way a
 # browser is: they run on this machine and reach the box only through the
 # TLS proxy's ports, never over SSH (checks that need a shell on the box
-# are InSpec controls in verify/el10-infrastructure). Each test creates
+# are InSpec controls in verify/profiles/safbox). Each test creates
 # accounts and data on the box it runs against, so point them at a clone,
 # never at an appliance in use.
 #

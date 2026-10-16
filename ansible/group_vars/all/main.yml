@@ -71,7 +71,8 @@ safbox_services_3: true   # nginx TLS proxy for the enabled applications, certif
 
 # hardening (the last role; ADR-0001 §Decision: hardened with documented
 # deviations). Which STIG rules it applies is set by the Lockdown role's own
-# variables (rhel10stig_*) and the deviations file; see docs/deviations.md.
+# variables (rhel10stig_*), and the rules it switches off are listed in the
+# Lockdown section below.
 safbox_hardening_1: true  # apply the RHEL 10 STIG with the pinned Ansible Lockdown role
 
 # ---------------------------------------------------------------------------
@@ -106,8 +107,8 @@ safbox_trust_bundles:
 # ports. 443 is reserved for the landing page (ADR-0001 Phase 8). Both
 # applications listen on 3000 inside their pods (upstream); Vulcan's
 # loopback port is 3001, the port its compose file documents for running
-# beside another service on 3000. The validation profile's proxy_ports and
-# loopback_ports inputs default to these values (tests/ansible/pins.sh).
+# beside another service on 3000. The safbox validation profile expects
+# these values.
 safbox_heimdall_loopback_port: 3000
 safbox_heimdall_https_port: 8443
 safbox_vulcan_loopback_port: 3001
@@ -122,9 +123,9 @@ safbox_firewall_zone: "{{ 'drop' if safbox_hardening_1 | bool else 'public' }}"
 # ---------------------------------------------------------------------------
 # Ansible Lockdown RHEL10-STIG role variables
 # ---------------------------------------------------------------------------
-# The Lockdown role's defaults apply except where set here. These are not
-# STIG rules: rule switches (rhel10stig_<n>) are set only from the hardening
-# role's deviations.yml and not_applied.yml (docs/deviations.md).
+# The Lockdown role's defaults apply except where set here. The rule
+# switches (rhel10stig_<n>) SAFBox turns off are listed at the end of this
+# section.
 
 # The role's local fact file records its run time, so it is rewritten on
 # every run and a second run is never clean. The hardening role writes its
@@ -139,15 +140,14 @@ rhel10stig_custom_firewall_zone: "{{ safbox_firewall_zone }}"
 # whether the deploying site monitors the box, so the distributed banner makes
 # no such claim. A site that needs a notice (the DoD banner, say) sets its own
 # here in ansible/local.yml, and the same text for the STIG overlay's
-# banner_message_text_* inputs in its site inputs file
-# (tests/verify/overlay.sh checks the tracked pair agree).
+# banner_message_text_* inputs in its site inputs file.
 safbox_logon_banner: "Welcome to SAFBox!"
 rhel10stig_logon_banner_nice: "{{ safbox_logon_banner }}"
 
 # Remote log server for audit records (RHEL-10-200642, SV-280985). Empty by
-# default: SAFBox forwards no logs, the hardening role switches the rule off
-# and the STIG overlay marks SV-280985 Not Applicable (a deploy-time
-# deviation, docs/deviations.md). A site names its server here in
+# default: SAFBox forwards no logs, the rule is switched off (below) and the
+# STIG overlay marks SV-280985 Not Applicable (a deploy-time deviation). A
+# site names its server here in
 # ansible/local.yml, and sets the overlay input remote_log_server to the same
 # value in its site inputs file; the rule is then applied with these values
 # and the control evaluated. Lockdown writes /etc/rsyslog.d/99-forwarding.conf
@@ -158,6 +158,39 @@ safbox_remote_log_protocol: tcp
 rhel10stig_rsyslog_remote_server_ip: "{{ safbox_remote_log_server }}"
 rhel10stig_rsyslog_remote_server_port: "{{ safbox_remote_log_port }}"
 rhel10stig_rsyslog_remote_server_protocol: "{{ safbox_remote_log_protocol }}"
+
+# Lockdown rules SAFBox switches off, one per line. "N/A in the overlay": a
+# deviation, justified in the STIG overlay
+# (verify/profiles/safbox-rhel10-stig-overlay/controls/overlay.rb).
+# "Lockdown task fails": the task errors or misapplies on SAFBox; the
+# baseline control still runs. A site that decides differently sets the
+# switch in ansible/local.yml.
+rhel10stig_000510: false  # RHEL-10-000510 SV-280935 disk encryption: N/A in the overlay
+rhel10stig_200601: false  # RHEL-10-200601 SV-280970 fapolicyd: N/A in the overlay
+rhel10stig_200602: false  # RHEL-10-200602 SV-280971 fapolicyd policy: N/A in the overlay
+# RHEL-10-200642 SV-280985 log forwarding: N/A in the overlay until a site sets safbox_remote_log_server
+rhel10stig_200642: "{{ safbox_remote_log_server | length > 0 }}"
+rhel10stig_200644: false  # RHEL-10-200644 SV-280987 log server authentication: N/A in the overlay
+rhel10stig_200645: false  # RHEL-10-200645 SV-280988 log offload encryption: N/A in the overlay
+# RHEL-10-300010 SV-281008 crypto policy: Lockdown task fails: reads a fact set only under disruption_high
+rhel10stig_300010: false
+# RHEL-10-300040 SV-281011 sshd ciphers: Lockdown task fails: unclosed parenthesis in its when
+rhel10stig_300040: false
+rhel10stig_500035: false  # RHEL-10-500035 SV-281103 audit failure panic: N/A in the overlay
+rhel10stig_600000: false  # RHEL-10-600000 SV-281166 boot loader password: N/A in the overlay
+rhel10stig_600010: false  # RHEL-10-600010 SV-281167 boot loader superuser: N/A in the overlay
+rhel10stig_600100: false  # RHEL-10-600100 SV-281169 password maximum age: N/A in the overlay
+rhel10stig_600160: false  # RHEL-10-600160 SV-281175 inactive account lock: N/A in the overlay
+rhel10stig_600415: false  # RHEL-10-600415 SV-281195 root lockout: N/A in the overlay
+rhel10stig_600425: false  # RHEL-10-600425 SV-281197 lockout until admin release: N/A in the overlay
+# RHEL-10-701150 SV-281317 core dump size: Lockdown task fails: writes coredump.conf outside its section
+rhel10stig_701150: false
+# RHEL-10-701160 SV-281318 core dump storage: Lockdown task fails: writes coredump.conf outside its section
+rhel10stig_701160: false
+rhel10stig_701230: false  # RHEL-10-701230 SV-281325 MFA certificate status: N/A in the overlay
+rhel10stig_701270: false  # RHEL-10-701270 SV-281329 PKI trust anchor: N/A in the overlay
+rhel10stig_701280: false  # RHEL-10-701280 SV-281330 PKI identity mapping: N/A in the overlay
+rhel10stig_800060: false  # RHEL-10-800060 SV-281338 two name servers: N/A in the overlay
 
 # ---------------------------------------------------------------------------
 # Pins: container images
@@ -176,10 +209,8 @@ safbox_image_pause:
   digest: sha256:f548e0e8e3dc1896ca956272154dde3314e8cc4fde0a57577ee9fa1c63f5baf4
 
 # Service images. Each is the image the upstream compose file names, at an
-# exact release, unless noted. The validation profile's service_images input
-# lists the same name@digest references (tests/ansible/pins.sh fails on
-# drift). Bump deliberately, reviewing the Quadlet unit against the new
-# upstream compose file (ADR-0001 Risks: upstream images change shape).
+# exact release, unless noted. Bump deliberately, reviewing the Quadlet unit
+# against the new upstream compose file (upstream images change shape).
 
 # Heimdall (mitre/heimdall2 docker-compose.yml: server, mitre/heimdall2:
 # release-latest, which is 2.14.0).
@@ -297,10 +328,10 @@ safbox_tool_ansible_collections:
 # ---------------------------------------------------------------------------
 # The Ansible Lockdown RHEL 10 STIG role (hardening group 1), installed on the
 # build runner from ansible/requirements.yml by the commit its release tag
-# names; tests/ansible/pins.sh fails if the two differ. The hardening role
+# names. The hardening role
 # refuses to run any other installed version. Release 1.1.0 targets the
 # RHEL 10 STIG V1R1, as does the MITRE baseline the STIG overlay pins
-# (verify/safbox-rhel10-stig-overlay); both cover the same 434 requirements.
+# (verify/profiles/safbox-rhel10-stig-overlay); both cover the same 434 requirements.
 # The role needs ansible-core 2.16.1 or newer on the build runner.
 safbox_hardening_lockdown:
   name: RHEL10-STIG

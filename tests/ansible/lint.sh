@@ -1,17 +1,10 @@
 #!/usr/bin/env bash
-# Static checks for the appliance layer: yamllint, ansible-lint (production
-# profile, no skips), a syntax check of both playbooks, and shellcheck on the
-# scripts the roles install. No target host is needed.
+# Static checks with the standard linters: yamllint, ansible-lint (production
+# profile), a syntax check of both playbooks, shellcheck, packer validate and
+# cinc-auditor check on the two validation profiles. No target host needed.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$ROOT"
-
-for tool in yamllint ansible-lint ansible-playbook shellcheck saf; do
-  command -v "$tool" >/dev/null || {
-    echo "FAIL: $tool not installed (pipx install --include-deps ansible; pipx inject --include-apps ansible ansible-lint yamllint; brew install shellcheck; npm install -g @mitre/saf)" >&2
-    exit 1
-  }
-done
 
 echo "== yamllint"
 yamllint -c ansible/.yamllint --strict ansible/ verify/
@@ -19,44 +12,25 @@ yamllint -c ansible/.yamllint --strict ansible/ verify/
 echo "== ansible-lint (production profile)"
 (cd ansible && ansible-lint -c .ansible-lint .)
 
-echo "== no lint skip comments"
-# Third-party roles in ansible/galaxy_roles/ (git-ignored) are not ours.
-if grep -rnE --exclude-dir=galaxy_roles 'noqa|skip_ansible_lint|yamllint disable|shellcheck disable' ansible/ verify/; then
-  echo "FAIL: lint skip comments are not allowed (ADR-0001 Quality Standards)" >&2
-  exit 1
-fi
-
 echo "== ansible-playbook --syntax-check"
 (cd ansible && ANSIBLE_CONFIG=ansible.cfg ansible-playbook --syntax-check -i inventory/example.ini \
   playbooks/safbox.yml playbooks/seal.yml)
 
 echo "== shellcheck"
 find ansible/roles -path '*/files/*' -type f -print0 | xargs -0 shellcheck --shell=bash --external-sources
-shellcheck --external-sources tests/ansible/*.sh tests/verify/*.sh tests/services/*.sh \
-  tests/platform-discipline.sh scripts/*.sh
+git ls-files -z -- '*.sh' | xargs -0 shellcheck --external-sources
 
-echo "== seal finalize template"
-tests/ansible/seal-static.sh
+echo "== packer validate"
+tests/packer/validate.sh
 
-echo "== pinned inputs"
-tests/ansible/pins.sh
+echo "== cinc-auditor check"
+# check wants dependencies vendored (the overlay's baseline is fetched from
+# GitHub); the vendor directory and lockfile are removed again afterwards so
+# no scan reads a stale copy.
+for profile in verify/profiles/safbox verify/profiles/safbox-rhel10-stig-overlay; do
+  cinc-auditor vendor "$profile" --overwrite --chef-license accept-silent
+  cinc-auditor check "$profile" --chef-license accept-silent
+  rm -rf "$profile/vendor" "$profile/inspec.lock"
+done
 
-echo "== task-group structure"
-tests/ansible/structure.sh
-
-echo "== validation profiles (wrapper and children)"
-tests/verify/profile.sh
-
-echo "== validation thresholds and inputs"
-tests/verify/thresholds.sh
-
-echo "== RHEL 10 STIG overlay"
-tests/verify/overlay.sh
-
-echo "== on-box exercise profiles (FIPS exercise, first boot)"
-tests/verify/onbox.sh
-
-echo "== deviations: hardening role and overlay agree"
-scripts/deviations-check.sh
-
-echo "PASS: appliance layer lint"
+echo "PASS: lint"

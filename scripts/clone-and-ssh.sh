@@ -14,10 +14,8 @@
 #      SAFBOX_BUILD_KEY (optional: when SSH fails on a development template,
 #      the build key of the run that built it, .build/runs/<run id>/build_key,
 #      kept by SAFBOX_DEV=1; default: every kept run key, newest first),
-#      SAFBOX_SITE_INPUTS and SAFBOX_SITE_THRESHOLD (optional: a site's inputs
-#      file layered after verify/inputs/release.yml, and a site threshold used
-#      instead of verify/thresholds/release.yml, for a template built with
-#      the same site files; see scripts/validate.sh), SAFBOX_SSH_CONFIG
+#      SAFBOX_SITE_INPUTS (optional: a site's inputs file for the release
+#      gate, validate.sh --site-inputs), SAFBOX_SSH_CONFIG
 #      (optional: the SSH client config CINC Auditor reads instead of its
 #      defaults, /dev/null for none; validate.sh --ssh-config).
 set -euo pipefail
@@ -135,16 +133,13 @@ for _ in $(seq 1 72); do
     echo "$out" | grep -q '^fips_enabled=1$' || { echo "FAIL: clone is not in FIPS mode" >&2; exit 1; }
     echo "$out" | grep -q "^hostname=safbox-clone-$CLONE_ID\$" || { echo "FAIL: cloud-init did not set the clone's hostname" >&2; exit 1; }
     echo "PASS: clone $CLONE_ID reachable over SSH with the cloud-init user, FIPS on"
-    # Release gate: the same wrapper profile the build ran, now from outside
-    # against what a consumer receives, after first boot, with the release
-    # inputs and threshold (or the site's).
+    # Release gate: both profiles, from outside, against what a consumer
+    # receives, after first boot.
     if [ "${SAFBOX_SKIP_VALIDATE:-0}" != 1 ]; then
       site=()
       if [ -n "${SAFBOX_SITE_INPUTS:-}" ]; then site+=(--site-inputs "$SAFBOX_SITE_INPUTS"); fi
-      if [ -n "${SAFBOX_SITE_THRESHOLD:-}" ]; then site+=(--site-threshold "$SAFBOX_SITE_THRESHOLD"); fi
       if [ -n "${SAFBOX_SSH_CONFIG:-}" ]; then site+=(--ssh-config "$SAFBOX_SSH_CONFIG"); fi
-      "$ROOT/scripts/validate.sh" ${site[@]+"${site[@]}"} "$USER_NAME@$ip" "$KEY" "clone-$CLONE_ID" \
-        "$ROOT/verify/inspec-safbox" "$ROOT/verify/thresholds/release.yml" "$ROOT/verify/inputs/release.yml"
+      "$ROOT/scripts/validate.sh" ${site[@]+"${site[@]}"} "$USER_NAME@$ip" "$KEY" release "clone-$CLONE_ID"
     fi
     exit 0
   fi

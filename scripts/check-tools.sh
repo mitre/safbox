@@ -8,7 +8,7 @@
 # Called by tests/packer/validate.sh and scripts/build.sh. Version sources:
 #   Packer        required_version in packer/build.pkr.hcl (minimum)
 #   Ansible       the ansible pin in tests/requirements.txt (exact)
-#   CINC Auditor  inspec_version in verify/*/inspec.yml (minimum)
+#   CINC Auditor  inspec_version in verify/profiles/*/inspec.yml (minimum)
 #   SAF CLI       SAF_CLI_VERSION in .github/workflows/static.yml (warn only)
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -56,7 +56,7 @@ else
 fi
 
 # CINC Auditor
-cinc_min=$(sed -nE 's/^inspec_version: *">= *([0-9.]+)".*/\1/p' "$ROOT"/verify/*/inspec.yml | sort -V | tail -1)
+cinc_min=$(sed -nE 's/^inspec_version: *">= *([0-9.]+)".*/\1/p' "$ROOT"/verify/profiles/*/inspec.yml | sort -V | tail -1)
 if ! command -v cinc-auditor >/dev/null; then
   problem "CINC Auditor (cinc-auditor) not found; install it, see $GUIDE"
 else

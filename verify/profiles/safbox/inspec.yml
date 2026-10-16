@@ -1,0 +1,62 @@
+---
+name: safbox
+title: SAFBox appliance
+maintainer: MITRE SAF
+copyright: The MITRE Corporation
+copyright_email: saf@mitre.org
+license: Apache-2.0
+summary: >-
+  Checks that a SAFBox build VM or deployed clone is what it should be: the
+  operating system, FIPS mode and Secure Boot, the accounts, the hardening
+  record, the assessment tools at their pinned versions, Heimdall and
+  Vulcan behind the TLS proxy, and, on a clone, a sealed template's
+  clean state.
+version: 1.0.0
+inspec_version: ">= 5.0"
+supports:
+  - platform-family: redhat
+    release: 10.*
+inputs:
+  - name: deployed
+    description: >-
+      True on a deployed clone of a sealed template, false on the build VM
+      before the seal (verify/inputs/build.yml).
+    type: Boolean
+    value: true
+  - name: expected_tools
+    description: Tools the image ships. Remove one a site switches off.
+    type: Array
+    value: [cinc-auditor, saf-cli, ansible, packer]
+  - name: expected_services
+    description: Services the image ships. Remove one a site switches off.
+    type: Array
+    value: [heimdall, vulcan, proxy]
+  - name: trusted_roots
+    description: >-
+      Labels of CA certificates that must be in the system trust store. The
+      DoD roots by default; [] for an image built without the DoD bundle.
+    type: Array
+    value: [DoD Root CA 3, DoD Root CA 4, DoD Root CA 5, DoD Root CA 6]
+  # Versions pinned in ansible/group_vars/all/main.yml. A site that
+  # overrides a pin sets the matching input.
+  - name: cinc_auditor_version
+    type: String
+    value: 7.2.1
+  - name: saf_cli_version
+    type: String
+    value: 1.7.0
+  - name: ansible_core_version
+    type: String
+    value: 2.16.16
+  - name: ansible_collections
+    type: Hash
+    value:
+      ansible.posix: 2.2.2
+      community.crypto: 2.26.9
+      community.general: 11.4.9
+  - name: packer_version
+    type: String
+    value: 1.16.1
+  - name: lockdown_version
+    type: String
+    value: 1.1.0

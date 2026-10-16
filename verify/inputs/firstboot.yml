@@ -1,9 +1,0 @@
----
-# Inputs for the first-boot behaviour test (verify/el10-firstboot) against a
-# build VM or clone the appliance playbook was applied to:
-#   scripts/validate.sh <user@host> <key> <label> verify/el10-firstboot \
-#     verify/thresholds/firstboot.yml verify/inputs/firstboot.yml
-# The profile's defaults are the paths the base role installs, so nothing is
-# set here; a site that installs them elsewhere layers its own file with
-# --site-inputs.
-{}

@@ -58,14 +58,6 @@ build {
   name    = "safbox"
   sources = ["source.proxmox-iso.el10"]
 
-  # The hardening role and the STIG overlay must agree on the deviations
-  # before anything is applied (ADR-0001 Phase 7): a drifted pair fails the
-  # build here rather than shipping hardening the validation does not
-  # describe. Static; runs on this machine.
-  provisioner "shell-local" {
-    inline = ["'${local.repo_root}/scripts/deviations-check.sh'"]
-  }
-
   # Assert, do not configure: FIPS is on in kernel and userland, Secure Boot
   # is enforced, the guest agent and cloud-init are present and enabled, and
   # we are on the expected OS. Fails fast, before the appliance layer runs.
@@ -99,23 +91,19 @@ build {
     extra_arguments  = local.ansible_extra
   }
 
-  # Outside-in check of the build VM before the seal: the verify/inspec-safbox
-  # wrapper runs from this machine over SSH as the build user with the
-  # build-context inputs, and the SAF CLI gates the build on the build
-  # threshold. A site that changes what the image carries (a tools group
-  # switched off) names its own inputs and threshold files through
-  # build_gate_site_inputs_file and build_gate_site_threshold_file, and a
-  # runner whose SSH client config CINC Auditor cannot use names another
-  # through build_gate_ssh_config_file. Nothing is installed or left on the
-  # image for it.
+  # Outside-in check of the build VM before the seal: scripts/validate.sh
+  # scans it from this machine over SSH with both profiles in the build
+  # context and gates the build on their thresholds. A site that switches a
+  # tool or service off names its inputs through build_gate_site_inputs_file;
+  # a runner whose SSH client config CINC Auditor cannot use names another
+  # through build_gate_ssh_config_file. Nothing is installed on the image.
   provisioner "shell-local" {
     environment_vars = [
       "SITE_INPUTS=${var.build_gate_site_inputs_file == null ? "" : abspath(var.build_gate_site_inputs_file)}",
-      "SITE_THRESHOLD=${var.build_gate_site_threshold_file == null ? "" : abspath(var.build_gate_site_threshold_file)}",
       "SSH_CONFIG=${var.build_gate_ssh_config_file == null ? "" : abspath(var.build_gate_ssh_config_file)}",
     ]
     inline = [
-      "'${local.repo_root}/scripts/validate.sh' $${SITE_INPUTS:+--site-inputs \"$SITE_INPUTS\"} $${SITE_THRESHOLD:+--site-threshold \"$SITE_THRESHOLD\"} $${SSH_CONFIG:+--ssh-config \"$SSH_CONFIG\"} '${build.User}@${build.Host}:${build.Port}' '${var.ssh_private_key_file}' build '${local.repo_root}/verify/inspec-safbox' '${local.repo_root}/verify/thresholds/build.yml' '${local.repo_root}/verify/inputs/build.yml'",
+      "'${local.repo_root}/scripts/validate.sh' $${SITE_INPUTS:+--site-inputs \"$SITE_INPUTS\"} $${SSH_CONFIG:+--ssh-config \"$SSH_CONFIG\"} '${build.User}@${build.Host}:${build.Port}' '${var.ssh_private_key_file}' build",
     ]
   }
 

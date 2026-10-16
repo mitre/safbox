@@ -331,18 +331,18 @@ scripts/build.sh -var vm_id=9004 -var vm_name=safbox-alma -var iso_file=<storage
 - Each run installs the pinned Lockdown role from its Git source itself, so
   each needs to reach it.
 - The build gates write separate results files: a second scan in the same
-  second gets `.build/validate-build-<timestamp>-2.json`.
+  second gets `.build/validate-build-<profile>-<timestamp>-2.json`.
 - CINC Auditor shares one cache for profile dependencies (the STIG
   baseline). The first scan after the baseline pin changes, or on a new
   workstation, clones it into the cache while holding a lock, and a second
   scan waits for that lock for at most 30 seconds. If the clone takes
   longer, the second build's gate fails with `Giving up waiting on cache
-  lock` and `validate.sh: cinc-auditor exited 1 (tool or connection
-  error)`. It fails loudly, with no verdict recorded, and the template is
+  lock` and `validate.sh: cinc-auditor exited 1`. It fails loudly, with
+  no verdict recorded, and the template is
   not made. Rerun it. To avoid it, start the parallel builds only once one
   scan has filled the cache, for example one earlier build, or
-  `cinc-auditor vendor` of a scratch copy of `verify/` (as
-  `tests/verify/profile.sh` does).
+  `cinc-auditor vendor verify/profiles/safbox-rhel10-stig-overlay` (as
+  `tests/ansible/lint.sh` does).
 
 ## What the account cannot do, on purpose
 

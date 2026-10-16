@@ -8,13 +8,9 @@
 # What is applied is decided by:
 #   - the Lockdown role's own variables (rhel10stig_* in its defaults), which
 #     a site sets in ansible/local.yml to make its own risk decisions;
-#   - vars/deviations.yml, the requirements SAFBox deliberately does not
-#     apply, each with a reason code and a justification, which the STIG
-#     overlay marks Not Applicable with the same text;
-#   - vars/not_applied.yml, rules switched off only because their Lockdown
-#     task fails to apply on SAFBox, pending investigation; the overlay does
-#     not touch them, and each records its control's scan result.
-# docs/deviations.md is generated from both files (scripts/deviations-doc.sh).
+#   - the Lockdown rules SAFBox switches off, one per line in group_vars:
+#     deviations (Not Applicable, with their justification, in the STIG
+#     overlay) and rules whose Lockdown task fails on SAFBox.
 
 # Where ansible-galaxy records, inside an installed role, the version it
 # installed; used to refuse a Lockdown release other than the pin.

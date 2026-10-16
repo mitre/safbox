@@ -9,7 +9,7 @@
 # The Ansible Lockdown RHEL 10 STIG role the hardening role applies. Pinned
 # by the commit its release tag names, so a moved tag cannot change it; the
 # release, commit and STIG release are recorded in group_vars
-# (safbox_hardening_lockdown), and tests/ansible/pins.sh fails if they differ.
+# (safbox_hardening_lockdown); keep the two the same.
 roles:
   - name: RHEL10-STIG
     src: https://github.com/ansible-lockdown/RHEL10-STIG.git

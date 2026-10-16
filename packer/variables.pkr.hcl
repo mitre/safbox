@@ -256,13 +256,7 @@ variable "install_timeout" {
 
 variable "build_gate_site_inputs_file" {
   type        = string
-  description = "A site's inputs file for the build-time gate, layered after verify/inputs/build.yml (its values win). Set it when the site changes what the image carries, for example expected_tools without the tool of a tools group switched off. Keep it out of git; verify/local/ is git-ignored for this. Null passes none."
-  default     = null
-}
-
-variable "build_gate_site_threshold_file" {
-  type        = string
-  description = "A site's SAF CLI threshold for the build-time gate, used instead of verify/thresholds/build.yml. Set it with build_gate_site_inputs_file when the site changes which infrastructure controls apply, listing the exact set its image passes. Keep it out of git; verify/local/ is git-ignored for this. Null passes none."
+  description = "A site's inputs file for the build-time gate, layered after verify/inputs/build.yml (its values win), for example expected_tools without a tool the site switches off. Keep it out of git; verify/local/ is git-ignored for this. Null passes none."
   default     = null
 }
 

@@ -1,0 +1,12 @@
+---
+# STIG overlay on the build VM before the seal and before the reboot that
+# applies the hardening's kernel and boot settings (build gate).
+# 71: the build scan of 2026-10-16T16:05Z, 274 of 385 applicable controls passed (71.2%), rounded down.
+compliance:
+  min: 71
+failed:
+  critical:
+    max: 0
+error:
+  total:
+    max: 0

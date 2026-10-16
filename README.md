@@ -24,7 +24,8 @@ SAFBox's STIG overlay marks it Not Applicable on that basis. Make sure the
 storage that holds your SAFBox is encrypted.
 
 SAFBox is hardened to the DISA RHEL 10 STIG with documented deviations; what
-is relaxed, and why, is in [docs/deviations.md](docs/deviations.md).
+is relaxed, and why, is in the STIG overlay profile,
+[verify/profiles/safbox-rhel10-stig-overlay/controls/overlay.rb](verify/profiles/safbox-rhel10-stig-overlay/controls/overlay.rb).
 
 The design is recorded in [docs/adrs/0001-safbox-appliance-pipeline.md](docs/adrs/0001-safbox-appliance-pipeline.md).
 
