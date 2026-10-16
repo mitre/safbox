@@ -488,6 +488,39 @@ Known upstream defect: the pinned Lockdown release ends every run with
 name; any other change fails the check. The tolerance goes when a fixed
 Lockdown release is pinned.
 
+Known failure from the Vulcan image: SV-281045 (RHEL-10-400140,
+world-writable directories must be owned by a system account) fails on
+every SAFBox that ships Vulcan, and passes without it. The baseline runs
+`find <every /etc/fstab mount point> -xdev -type d -perm -0002 -uid +999`,
+and podman keeps image layers in `/var/lib/containers/storage` on `/var`,
+so directories inside a pulled image are scanned like any host directory.
+The pinned `mitre/vulcan` 2.4.1 image ships four gem directories with mode
+0777, owned by uid 1000, all in the layer its `COPY /usr/local /usr/local`
+step creates:
+
+```
+/usr/local/bundle/ruby/3.4.0/gems/faraday-2.14.3/spec/faraday/adapter
+/usr/local/bundle/ruby/3.4.0/gems/fuzzyurl-0.9.0/lib/fuzzyurl
+/usr/local/bundle/ruby/3.4.0/gems/globalid-1.4.0/lib/global_id/uri
+/usr/local/bundle/ruby/3.4.0/gems/reline-0.7.0/lib/reline/io
+```
+
+On the box they appear as
+`/var/lib/containers/storage/overlay/<layer>/diff/usr/local/bundle/...`.
+The gem archives are not the cause: none of them contains a directory
+entry, and every file in them is 0644. The cause is a race during the
+image build's `bundle install`. Bundler installs gems in parallel threads;
+RubyGems reads the umask with `File.umask` for every file it extracts, and
+Ruby implements that read as `umask(0)` followed by restoring the old
+value, so for an instant the whole process has umask 0. A directory
+another thread creates in that instant gets mode 0777, and nothing in the
+image build removes the other-write bit afterwards. Which directories are
+hit varies from build to build (Vulcan's next release, 2.4.2, has two
+different ones), so the fix belongs in the image build, not in any gem.
+Changing modes inside `/var/lib/containers/storage` is not a fix: it alters
+pulled layers behind podman's back, so the digest no longer describes what
+runs.
+
 The login banner is a site setting: SAFBox ships a short placeholder
 (`safbox_logon_banner` in `ansible/group_vars/all/main.yml`). A site sets
 its own text there in `ansible/local.yml`, and the same text for the STIG
