@@ -28,7 +28,8 @@
 #   build-infrastructure.json    build-time gate of a development build
 #                                (repository defaults, seal = false)
 #   release-infrastructure.json  release gate against a deployed clone of a
-#                                full-sealed template with the Phase 3 tools
+#                                full-sealed template, with the current
+#                                appliance playbook applied to it
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 FIXTURES=$ROOT/tests/verify/fixtures

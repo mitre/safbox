@@ -55,8 +55,17 @@
       ansible.builtin.systemd_service:
         name: "{{ item }}"
         state: started
-      loop:
-        - vulcan-pod.service
-        - vulcan-db.service
-        - vulcan.service
+      loop: "{{ vulcan_units }}"
       when: vulcan_secrets.stat.exists
+
+    # The registry directory belongs to the safbox command (base group 2).
+    - name: Register Vulcan with safbox services
+      when: safbox_base_2 | default(true) | bool
+      ansible.builtin.copy:
+        dest: "{{ base_services_dir }}/30-vulcan"
+        content: |
+          label=Vulcan
+          units={{ vulcan_units | join(' ') }}
+        owner: root
+        group: root
+        mode: '0644'

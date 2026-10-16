@@ -55,8 +55,17 @@
       ansible.builtin.systemd_service:
         name: "{{ item }}"
         state: started
-      loop:
-        - heimdall-pod.service
-        - heimdall-db.service
-        - heimdall.service
+      loop: "{{ heimdall_units }}"
       when: heimdall_secrets.stat.exists
+
+    # The registry directory belongs to the safbox command (base group 2).
+    - name: Register Heimdall with safbox services
+      when: safbox_base_2 | default(true) | bool
+      ansible.builtin.copy:
+        dest: "{{ base_services_dir }}/20-heimdall"
+        content: |
+          label=Heimdall
+          units={{ heimdall_units | join(' ') }}
+        owner: root
+        group: root
+        mode: '0644'

@@ -1,0 +1,152 @@
+#!/usr/bin/env bash
+# Summary: Show the health of each SAFBox service (TLS proxy and landing page, Heimdall, Vulcan) and its units
+#
+# safbox services [--tsv]
+#
+# Each service role registers its service in the registry directory, one
+# file per service named <order>-<name> (the order of its first-boot hook),
+# holding two settings:
+#   label=<what to call it>
+#   units=<the systemd units that make it up, space separated>
+# The files are read, never sourced. The state of every unit comes from
+# systemd, which tells any user, so this command needs no privilege. It asks
+# systemd once per service, because the landing page runs it every 30
+# seconds.
+#
+# A service's health sums up its units:
+#   not-installed  a unit is not loaded (its role was switched off or the
+#                  unit was removed)
+#   failed         a unit failed
+#   starting       a unit is starting or reloading
+#   stopping       a unit is stopping
+#   running        every unit is active
+#   waiting        a unit was skipped because its condition failed: first
+#                  boot has not written the secrets or certificate it needs
+#   stopped        anything else (on the build VM nothing has started)
+#
+# Output: per service its label and health, then one line per unit with its
+# state and since when. --tsv prints only name, label and health, separated
+# by tabs, one service per line, for scripts (the landing page reads it).
+# Exit status: 0 when every registered service is running, 3 when one is
+# not (as systemctl status uses 3), 2 on a usage error.
+set -euo pipefail
+export LC_ALL=C
+
+readonly REGISTRY="${SAFBOX_SERVICES_DIR:-/usr/local/share/safbox/services.d}"
+
+usage() {
+  echo "usage: safbox services [--tsv]" >&2
+  exit 2
+}
+
+tsv=0
+case "${1:-}" in
+  "") ;;
+  --tsv) tsv=1 ;;
+  *) usage ;;
+esac
+[[ $# -le 1 ]] || usage
+
+# Per service, set by read_registry_file and by service_health.
+label="" units=() health="" lines=()
+
+# read_registry_file FILE: label and units from FILE.
+read_registry_file() {
+  local line
+  label="" units=()
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    case "$line" in
+      label=*) [[ -n "$label" ]] || label=${line#label=} ;;
+      units=*) [[ ${#units[@]} -gt 0 ]] || read -r -a units <<<"${line#units=}" ;;
+    esac
+  done < "$1"
+}
+
+# service_health: health and one line per unit, from one systemctl show of
+# every unit in units. systemctl prints one block of KEY=VALUE lines per
+# unit, in the order the units were named, separated by an empty line.
+service_health() {
+  local any_failed=0 any_starting=0 any_stopping=0 any_waiting=0 all_active=1 missing=0
+  local load="" active="" sub="" condition="" condition_time="" since="" line i=0
+  lines=()
+  finish_unit() {
+    local unit=${units[i]} entry
+    i=$((i + 1))
+    if [[ "$load" != loaded ]]; then
+      missing=1
+      printf -v entry '  %-28s %s' "$unit" "not installed"
+      lines+=("$entry")
+    else
+      case "$active" in
+        active) ;;
+        failed) any_failed=1 ;;
+        activating|reloading|refreshing) any_starting=1 ;;
+        deactivating) any_stopping=1 ;;
+      esac
+      [[ "$active" == active ]] || all_active=0
+      if [[ "$active" != active && "$condition" == no && -n "$condition_time" ]]; then
+        any_waiting=1
+      fi
+      [[ "$active" == active ]] || since=""
+      printf -v entry '  %-28s %s (%s)%s' "$unit" "$active" "$sub" "${since:+ since $since}"
+      lines+=("$entry")
+    fi
+    load="" active="" sub="" condition="" condition_time="" since=""
+  }
+  if (( ${#units[@]} > 0 )); then
+    while IFS= read -r line; do
+      case "$line" in
+        "") (( i < ${#units[@]} )) && finish_unit ;;
+        LoadState=*) load=${line#*=} ;;
+        ActiveState=*) active=${line#*=} ;;
+        SubState=*) sub=${line#*=} ;;
+        ConditionResult=*) condition=${line#*=} ;;
+        ConditionTimestamp=*) condition_time=${line#*=} ;;
+        ActiveEnterTimestamp=*) since=${line#*=} ;;
+      esac
+    done < <(systemctl show -p LoadState -p ActiveState -p SubState -p ConditionResult \
+               -p ConditionTimestamp -p ActiveEnterTimestamp -- "${units[@]}" 2>/dev/null || true; echo)
+  fi
+  # A unit systemd printed nothing for is not installed.
+  while (( i < ${#units[@]} )); do finish_unit; done
+
+  if (( ${#units[@]} == 0 || missing )); then health=not-installed
+  elif (( any_failed )); then health=failed
+  elif (( any_starting )); then health=starting
+  elif (( any_stopping )); then health=stopping
+  elif (( all_active )); then health=running
+  elif (( any_waiting )); then health=waiting
+  else health=stopped
+  fi
+}
+
+all_running=1
+shopt -s nullglob
+files=("$REGISTRY"/*)
+shopt -u nullglob
+
+if (( ${#files[@]} == 0 )) && (( tsv == 0 )); then
+  echo "No services are registered in $REGISTRY"
+fi
+
+for file in "${files[@]}"; do
+  [[ -f "$file" ]] || continue
+  name=${file##*/}
+  name=${name#*-}
+  read_registry_file "$file"
+  [[ -n "$label" ]] || label=$name
+  service_health
+  [[ "$health" == running ]] || all_running=0
+
+  if (( tsv )); then
+    printf '%s\t%s\t%s\n' "$name" "$label" "$health"
+  else
+    printf '%-30s %s\n' "$label" "$health"
+    for line in ${lines[@]+"${lines[@]}"}; do
+      printf '%s\n' "$line"
+    done
+  fi
+done
+
+if (( all_running )); then exit 0; fi
+exit 3

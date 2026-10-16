@@ -120,10 +120,30 @@
      "refs": [],
      "results": [],
      "source_location": {
-      "line": 3
+      "line": 15
      },
      "tags": {},
      "title": "The safbox command and its subcommand registry are installed",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-cli-2' do\n  impact 1.0\n  title 'safbox services reports the health of the proxy, Heimdall and Vulcan and of their units'\n  desc \"ADR-0001 Phase 8: safbox services reports unit health for each service the image ships. Each service role registers its service in #{services_registry} (a label and the units that make it up); the command reads systemd's view of each unit, so any user may run it, and sums each service up as running, starting, stopping, waiting (a unit's condition failed: first boot has not written its secrets or certificate), stopped, failed or not installed. It exits 0 only when every registered service runs, and 3 otherwise. On a deployed clone every service runs; on the build VM none has started.\"\n\n  describe file('/usr/local/lib/safbox/commands/services') do\n    it { should exist }\n    it { should be_executable }\n    its('owner') { should eq 'root' }\n  end\n\n  describe command('/usr/local/bin/safbox help') do\n    its('stdout') { should match(/^\\s+services\\s+\\S/) }\n  end\n\n  describe command(\"sh -c 'ls -1 #{services_registry}'\") do\n    its('stdout.split') { should eq expected_services.map { |s| registered_services[s][:file] }.sort }\n  end\n\n  want = deployed ? 'running' : 'stopped'\n  want_active = deployed ? 'active' : 'inactive'\n  tsv = command('runuser -u nobody -- /usr/local/bin/safbox services --tsv')\n  describe tsv do\n    its('exit_status') { should eq(deployed ? 0 : 3) }\n  end\n  describe 'Services safbox services --tsv reports, as name, label and health' do\n    subject { tsv.stdout.lines.map { |line| line.chomp.split(\"\\t\") }.sort }\n    it { should eq expected_services.map { |s| [s, registered_services[s][:label], want] }.sort }\n  end\n\n  human = command('runuser -u nobody -- /usr/local/bin/safbox services')\n  expected_services.each do |service|\n    describe \"safbox services for #{service}\" do\n      subject { human.stdout }\n      it { should match(/^#{Regexp.escape(registered_services[service][:label])}\\s+#{want}$/) }\n      registered_services[service][:units].each do |unit|\n        it { should match(/^\\s+#{Regexp.escape(unit)}\\s+#{want_active} \\(/) }\n      end\n    end\n  end\nend\n",
+     "desc": "ADR-0001 Phase 8: safbox services reports unit health for each service the image ships. Each service role registers its service in /usr/local/share/safbox/services.d (a label and the units that make it up); the command reads systemd's view of each unit, so any user may run it, and sums each service up as running, starting, stopping, waiting (a unit's condition failed: first boot has not written its secrets or certificate), stopped, failed or not installed. It exits 0 only when every registered service runs, and 3 otherwise. On a deployed clone every service runs; on the build VM none has started.",
+     "descriptions": [
+      {
+       "data": "ADR-0001 Phase 8: safbox services reports unit health for each service the image ships. Each service role registers its service in /usr/local/share/safbox/services.d (a label and the units that make it up); the command reads systemd's view of each unit, so any user may run it, and sums each service up as running, starting, stopping, waiting (a unit's condition failed: first boot has not written its secrets or certificate), stopped, failed or not installed. It exits 0 only when every registered service runs, and 3 otherwise. On a deployed clone every service runs; on the build VM none has started.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-cli-2",
+     "impact": 1.0,
+     "refs": [],
+     "results": [],
+     "source_location": {
+      "line": 56
+     },
+     "tags": {},
+     "title": "safbox services reports the health of the proxy, Heimdall and Vulcan and of their units",
      "waiver_data": {}
     },
     {
@@ -184,6 +204,26 @@
      },
      "tags": {},
      "title": "The OpenSSL FIPS provider is loaded and active",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-firewall-1' do\n  impact 1.0\n  title 'The firewall allows SSH and the proxy ports only'\n  desc \"ADR-0001 Quality Standards: the firewall allows SSH and the proxy ports only. Every interface is in the #{zone} zone, which is the default zone and allows exactly the firewall_services input and the HTTPS ports of the landing page and each application the image ships, with no other port, protocol, source port, forward port or rich rule, at runtime and permanently. On a hardened image the zone's target is DROP. The DNS and NTP services the Lockdown role allows by default are left out: they admit inbound queries to servers SAFBox does not run, while the box's own DNS and NTP client traffic returns as related to its outbound connections. Other zones hold no interface, and the only sources they hold are podman's container network subnets.\"\n\n  describe command('firewall-cmd --get-default-zone') do\n    its('stdout.strip') { should eq zone }\n  end\n\n  { 'runtime' => 'firewall-cmd', 'permanent' => 'firewall-cmd --permanent' }.each do |label, cmd|\n    {\n      'services' => want_services,\n      'ports' => want_ports,\n      'protocols' => [],\n      'source-ports' => [],\n      'forward-ports' => [],\n    }.each do |what, want|\n      describe \"#{what.capitalize} the #{zone} zone allows (#{label})\" do\n        subject { command(\"#{cmd} --zone=#{zone} --list-#{what}\").stdout.split.sort }\n        it { should eq want }\n      end\n    end\n\n    describe \"Rich rules in the #{zone} zone (#{label})\" do\n      subject { command(\"#{cmd} --zone=#{zone} --list-rich-rules\").stdout.strip }\n      it { should be_empty }\n    end\n  end\n\n  if hardened\n    describe \"Target of the #{zone} zone\" do\n      subject { command(\"firewall-cmd --permanent --zone=#{zone} --get-target\").stdout.strip }\n      it { should eq 'DROP' }\n    end\n  end\n\n  # Subnets of every podman network, the only sources another zone may hold.\n  podman_subnets = command(\"sh -c 'podman network ls --format \\\"{{.Name}}\\\" | xargs -r podman network inspect --format \\\"{{range .Subnets}}{{.Subnet}} {{end}}\\\"'\").stdout.split\n  other_zones = command('firewall-cmd --get-zones').stdout.split - [zone]\n  describe 'Zones other than the default zone' do\n    subject { other_zones }\n    it { should_not be_empty }\n  end\n  other_zones.each do |other|\n    describe \"Interfaces in the #{other} zone\" do\n      subject { command(\"firewall-cmd --zone=#{other} --list-interfaces\").stdout.split }\n      it { should be_empty }\n    end\n    describe \"Sources in the #{other} zone that are not podman network subnets\" do\n      subject { command(\"firewall-cmd --zone=#{other} --list-sources\").stdout.split - podman_subnets }\n      it { should be_empty }\n    end\n  end\nend\n",
+     "desc": "ADR-0001 Quality Standards: the firewall allows SSH and the proxy ports only. Every interface is in the drop zone, which is the default zone and allows exactly the firewall_services input and the HTTPS ports of the landing page and each application the image ships, with no other port, protocol, source port, forward port or rich rule, at runtime and permanently. On a hardened image the zone's target is DROP. The DNS and NTP services the Lockdown role allows by default are left out: they admit inbound queries to servers SAFBox does not run, while the box's own DNS and NTP client traffic returns as related to its outbound connections. Other zones hold no interface, and the only sources they hold are podman's container network subnets.",
+     "descriptions": [
+      {
+       "data": "ADR-0001 Quality Standards: the firewall allows SSH and the proxy ports only. Every interface is in the drop zone, which is the default zone and allows exactly the firewall_services input and the HTTPS ports of the landing page and each application the image ships, with no other port, protocol, source port, forward port or rich rule, at runtime and permanently. On a hardened image the zone's target is DROP. The DNS and NTP services the Lockdown role allows by default are left out: they admit inbound queries to servers SAFBox does not run, while the box's own DNS and NTP client traffic returns as related to its outbound connections. Other zones hold no interface, and the only sources they hold are podman's container network subnets.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-firewall-1",
+     "impact": 1.0,
+     "refs": [],
+     "results": [],
+     "source_location": {
+      "line": 24
+     },
+     "tags": {},
+     "title": "The firewall allows SSH and the proxy ports only",
      "waiver_data": {}
     },
     {
@@ -491,11 +531,11 @@
      "waiver_data": {}
     },
     {
-     "code": "control 'safbox-proxy-1' do\n  impact 1.0\n  title 'The TLS proxy Quadlet unit and configuration are installed and enabled'\n  desc \"An nginx container from a pinned upstream image (Red Hat UBI 9, whose OpenSSL runs its FIPS provider under the host's FIPS enforcement) on the host network, terminating TLS for each application on its own HTTPS port. Cipher selection defers to the system crypto policy (PROFILE=SYSTEM), which podman maps into the container from the FIPS host. The unit waits for the certificate first boot generates.\"\n  only_if('the proxy is not in expected_services (safbox_proxy_1 switched off)') do\n    service_expected.call('proxy')\n  end\n\n  describe file('/etc/containers/systemd/safbox-proxy.container') do\n    it { should exist }\n    its('owner') { should eq 'root' }\n    its('mode') { should cmp '0644' }\n    its('content') { should match(/^Image=#{Regexp.escape(image)}$/) }\n    its('content') { should match(/^Network=host$/) }\n    its('content') { should match(/^ReadOnly=true$/) }\n    its('content') { should match(/^NoNewPrivileges=true$/) }\n    its('content') { should match(/^DropCapability=all$/) }\n    its('content') { should match(/^Memory=\\d+[kmg]?$/i) }\n    its('content') { should match(%r{^ConditionPathExists=#{Regexp.escape(key)}$}) }\n  end\n\n  describe command(\"podman image exists #{image}\") do\n    its('exit_status') { should eq 0 }\n  end\n\n  describe command('systemctl show -p Restart --value safbox-proxy.service') do\n    its('stdout.strip') { should eq 'always' }\n  end\n\n  describe command('systemctl show -p WantedBy --value safbox-proxy.service') do\n    its('stdout.split') { should include 'multi-user.target' }\n  end\n\n  describe file(nginx_conf) do\n    it { should exist }\n    its('owner') { should eq 'root' }\n    its('content') { should match(/^\\s*ssl_ciphers PROFILE=SYSTEM;$/) }\n    its('content') { should match(/^\\s*ssl_protocols TLSv1\\.2 TLSv1\\.3;$/) }\n    its('content') { should_not match(/^\\s*listen\\s+(\\S+:)?(80|443)[\\s;]/) }\n  end\n\n  apps.each do |app|\n    describe \"#{nginx_conf} listener for #{app}\" do\n      subject { file(nginx_conf).content }\n      it { should match(/^\\s*listen #{proxy_ports[app]} ssl;$/) }\n    end\n  end\n\n  describe file('/etc/safbox/firstboot.d/40-proxy.sh') do\n    it { should exist }\n    it { should be_executable }\n    its('owner') { should eq 'root' }\n  end\nend\n",
-     "desc": "An nginx container from a pinned upstream image (Red Hat UBI 9, whose OpenSSL runs its FIPS provider under the host's FIPS enforcement) on the host network, terminating TLS for each application on its own HTTPS port. Cipher selection defers to the system crypto policy (PROFILE=SYSTEM), which podman maps into the container from the FIPS host. The unit waits for the certificate first boot generates.",
+     "code": "control 'safbox-proxy-1' do\n  impact 1.0\n  title 'The TLS proxy Quadlet unit, its configuration and the landing page are installed and enabled'\n  desc \"An nginx container from a pinned upstream image (Red Hat UBI 9, whose OpenSSL runs its FIPS provider under the host's FIPS enforcement) on the host network, terminating TLS for each application on its own HTTPS port and serving the landing page on #{landing_port}, with nothing on port 80. Cipher selection defers to the system crypto policy (PROFILE=SYSTEM), which podman maps into the container from the FIPS host. The unit waits for the certificate first boot generates. The landing page's status files are written by a sandboxed oneshot service without capabilities, run by an enabled timer.\"\n  only_if('the proxy is not in expected_services (safbox_proxy_1 switched off)') do\n    service_expected.call('proxy')\n  end\n\n  describe file('/etc/containers/systemd/safbox-proxy.container') do\n    it { should exist }\n    its('owner') { should eq 'root' }\n    its('mode') { should cmp '0644' }\n    its('content') { should match(/^Image=#{Regexp.escape(image)}$/) }\n    its('content') { should match(/^Network=host$/) }\n    its('content') { should match(/^ReadOnly=true$/) }\n    its('content') { should match(/^NoNewPrivileges=true$/) }\n    its('content') { should match(/^DropCapability=all$/) }\n    # The workers' user switch, and binding the landing page's port below 1024.\n    its('content') { should match(/^AddCapability=CAP_CHOWN CAP_NET_BIND_SERVICE CAP_SETGID CAP_SETUID$/) }\n    its('content') { should match(/^Memory=\\d+[kmg]?$/i) }\n    its('content') { should match(%r{^ConditionPathExists=#{Regexp.escape(key)}$}) }\n    its('content') { should match(%r{^Volume=#{Regexp.escape(status_dir)}:/etc/nginx/safbox-landing-status:ro,z$}) }\n  end\n\n  describe command(\"podman image exists #{image}\") do\n    its('exit_status') { should eq 0 }\n  end\n\n  describe command('systemctl show -p Restart --value safbox-proxy.service') do\n    its('stdout.strip') { should eq 'always' }\n  end\n\n  describe command('systemctl show -p WantedBy --value safbox-proxy.service') do\n    its('stdout.split') { should include 'multi-user.target' }\n  end\n\n  describe file(nginx_conf) do\n    it { should exist }\n    its('owner') { should eq 'root' }\n    its('content') { should match(/^\\s*ssl_ciphers PROFILE=SYSTEM;$/) }\n    its('content') { should match(/^\\s*ssl_protocols TLSv1\\.2 TLSv1\\.3;$/) }\n    its('content') { should_not match(/^\\s*listen\\s+(\\S+:)?80[\\s;]/) }\n    its('content') { should match(/^\\s*listen #{landing_port} ssl;$/) }\n    its('content') { should match(/^\\s*ssi on;$/) }\n  end\n\n  # The landing page: the static files the proxy role renders, the generator\n  # of the status files the page includes, and the timer that runs it.\n  %w[index.html safbox.css].each do |name|\n    describe file(\"#{landing_dir}/#{name}\") do\n      it { should exist }\n      its('owner') { should eq 'root' }\n      its('mode') { should cmp '0644' }\n    end\n  end\n\n  describe file(\"/usr/local/sbin/#{status_unit}\") do\n    it { should exist }\n    it { should be_executable }\n    its('owner') { should eq 'root' }\n  end\n\n  describe file('/etc/tmpfiles.d/safbox-landing.conf') do\n    its('content') { should match(%r{^d #{Regexp.escape(status_dir)} 0755 root root -$}) }\n  end\n\n  describe file(\"/etc/systemd/system/#{status_unit}.service\") do\n    its('content') { should match(%r{^ExecStart=/usr/local/sbin/#{status_unit}$}) }\n    its('content') { should match(/^CapabilityBoundingSet=$/) }\n    its('content') { should match(/^NoNewPrivileges=yes$/) }\n    its('content') { should match(/^ProtectSystem=strict$/) }\n    its('content') { should match(%r{^ReadWritePaths=#{Regexp.escape(status_dir)}$}) }\n  end\n\n  describe command(\"systemctl show -p WantedBy --value #{status_unit}.timer\") do\n    its('stdout.split') { should include 'timers.target' }\n  end\n\n  apps.each do |app|\n    describe \"#{nginx_conf} listener for #{app}\" do\n      subject { file(nginx_conf).content }\n      it { should match(/^\\s*listen #{proxy_ports[app]} ssl;$/) }\n    end\n  end\n\n  describe file('/etc/safbox/firstboot.d/40-proxy.sh') do\n    it { should exist }\n    it { should be_executable }\n    its('owner') { should eq 'root' }\n  end\nend\n",
+     "desc": "An nginx container from a pinned upstream image (Red Hat UBI 9, whose OpenSSL runs its FIPS provider under the host's FIPS enforcement) on the host network, terminating TLS for each application on its own HTTPS port and serving the landing page on 443, with nothing on port 80. Cipher selection defers to the system crypto policy (PROFILE=SYSTEM), which podman maps into the container from the FIPS host. The unit waits for the certificate first boot generates. The landing page's status files are written by a sandboxed oneshot service without capabilities, run by an enabled timer.",
      "descriptions": [
       {
-       "data": "An nginx container from a pinned upstream image (Red Hat UBI 9, whose OpenSSL runs its FIPS provider under the host's FIPS enforcement) on the host network, terminating TLS for each application on its own HTTPS port. Cipher selection defers to the system crypto policy (PROFILE=SYSTEM), which podman maps into the container from the FIPS host. The unit waits for the certificate first boot generates.",
+       "data": "An nginx container from a pinned upstream image (Red Hat UBI 9, whose OpenSSL runs its FIPS provider under the host's FIPS enforcement) on the host network, terminating TLS for each application on its own HTTPS port and serving the landing page on 443, with nothing on port 80. Cipher selection defers to the system crypto policy (PROFILE=SYSTEM), which podman maps into the container from the FIPS host. The unit waits for the certificate first boot generates. The landing page's status files are written by a sandboxed oneshot service without capabilities, run by an enabled timer.",
        "label": "default"
       }
      ],
@@ -504,10 +544,10 @@
      "refs": [],
      "results": [],
      "source_location": {
-      "line": 42
+      "line": 53
      },
      "tags": {},
-     "title": "The TLS proxy Quadlet unit and configuration are installed and enabled",
+     "title": "The TLS proxy Quadlet unit, its configuration and the landing page are installed and enabled",
      "waiver_data": {}
     },
     {
@@ -524,7 +564,7 @@
      "refs": [],
      "results": [],
      "source_location": {
-      "line": 97
+      "line": 145
      },
      "tags": {},
      "title": "The proxy serves TLS on the Heimdall port",
@@ -544,7 +584,7 @@
      "refs": [],
      "results": [],
      "source_location": {
-      "line": 108
+      "line": 156
      },
      "tags": {},
      "title": "The proxy serves TLS on the Vulcan port",
@@ -564,30 +604,10 @@
      "refs": [],
      "results": [],
      "source_location": {
-      "line": 119
+      "line": 167
      },
      "tags": {},
      "title": "The proxy's certificate is generated on first boot, never at build",
-     "waiver_data": {}
-    },
-    {
-     "code": "control 'safbox-proxy-5' do\n  impact 1.0\n  title 'The firewall opens exactly the proxy ports'\n  desc 'ADR-0001 Quality Standards: the firewall opens no port beyond the proxy ports. Every open port in the default zone, at runtime and permanently, is a proxy port of an application this image ships. The applications themselves listen on the loopback address only.'\n  only_if('the proxy is not in expected_services (safbox_proxy_1 switched off)') do\n    service_expected.call('proxy')\n  end\n\n  want = apps.map { |app| \"#{proxy_ports[app]}/tcp\" }.sort\n  { 'runtime' => 'firewall-cmd --list-ports', 'permanent' => 'firewall-cmd --permanent --list-ports' }.each do |label, cmd|\n    describe \"Open ports in the default zone (#{label})\" do\n      subject { command(cmd).stdout.split.sort }\n      it { should eq want }\n    end\n  end\nend\n",
-     "desc": "ADR-0001 Quality Standards: the firewall opens no port beyond the proxy ports. Every open port in the default zone, at runtime and permanently, is a proxy port of an application this image ships. The applications themselves listen on the loopback address only.",
-     "descriptions": [
-      {
-       "data": "ADR-0001 Quality Standards: the firewall opens no port beyond the proxy ports. Every open port in the default zone, at runtime and permanently, is a proxy port of an application this image ships. The applications themselves listen on the loopback address only.",
-       "label": "default"
-      }
-     ],
-     "id": "safbox-proxy-5",
-     "impact": 1.0,
-     "refs": [],
-     "results": [],
-     "source_location": {
-      "line": 160
-     },
-     "tags": {},
-     "title": "The firewall opens exactly the proxy ports",
      "waiver_data": {}
     },
     {
@@ -604,10 +624,30 @@
      "refs": [],
      "results": [],
      "source_location": {
-      "line": 177
+      "line": 208
      },
      "tags": {},
      "title": "The proxy's TLS stack runs the OpenSSL FIPS provider under the FIPS crypto policy",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-proxy-7' do\n  impact 1.0\n  title 'The landing page on port 443 shows the status of each service and links to the applications, and no secret'\n  desc \"ADR-0001 Phase 8: an HTTPS landing page on #{landing_port} shows service status and links. nginx assembles it with server-side includes from a page the proxy role renders and one status file per service, which the #{status_unit} timer regenerates every 30 seconds from safbox services; each link names the host the browser asked for. The page carries a Content-Security-Policy that allows only its own stylesheet, the status files are reachable only through the page, and the page holds nothing secret: no first-boot secret value appears in it.\"\n  only_if('the proxy is not in expected_services, or this is not a deployed clone') do\n    service_expected.call('proxy') && input('firstboot_completed_expected')\n  end\n\n  instance_exec(landing_port, '/', &tls_port)\n\n  page = command(\"curl -sS -k https://127.0.0.1:#{landing_port}/\").stdout\n  apps.each do |app|\n    describe \"Landing page link to #{labels[app]}\" do\n      subject { page }\n      it { should include %(href=\"https://127.0.0.1:#{proxy_ports[app]}/\") }\n    end\n  end\n  (apps + ['proxy']).each do |service|\n    describe \"Landing page status of #{labels[service]}\" do\n      subject { page[%r{<tr id=\"service-#{service}\">.*?</tr>}m].to_s }\n      it { should include %(<th scope=\"row\">#{labels[service]}</th>) }\n      it { should include '<span class=\"state state-running\">Running</span>' }\n    end\n  end\n\n  describe \"Age in seconds of the landing page's status (#{status_dir}/updated)\" do\n    subject { command(%(sh -c 'echo $(( $(date +%s) - $(stat -c %Y #{status_dir}/updated) ))')).stdout.strip.to_i }\n    it { should be <= status_max_age }\n  end\n\n  describe command(\"systemctl is-active #{status_unit}.timer\") do\n    its('stdout.strip') { should eq 'active' }\n  end\n\n  headers = command(\"curl -sS -k -D - -o /dev/null https://127.0.0.1:#{landing_port}/\").stdout.downcase\n  describe 'Landing page response headers' do\n    subject { headers }\n    it { should match(/^content-security-policy: default-src 'none'; style-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'\\r?$/) }\n    it { should match(/^x-content-type-options: nosniff\\r?$/) }\n    it { should match(/^x-frame-options: deny\\r?$/) }\n    it { should match(/^referrer-policy: no-referrer\\r?$/) }\n    it { should match(/^cache-control: no-store\\r?$/) }\n    it { should match(/^server: nginx\\r?$/) }\n  end\n\n  # The status files and the configuration are not served on their own; a\n  # path above the page's root is refused outright.\n  { '/status/proxy' => '404', '/status/updated' => '404', '/nginx.conf' => '404', '/../nginx.conf' => '400' }.each do |path, code|\n    describe command(\"curl -sS -k --path-as-is -o /dev/null -w '%{http_code}' https://127.0.0.1:#{landing_port}#{path}\") do\n      its('stdout') { should eq code }\n    end\n  end\n\n  # The host a link names comes from the request, so markup in it must\n  # arrive escaped.\n  describe command(%(curl -sS -k -H 'Host: safbox\"><b>x' https://127.0.0.1:#{landing_port}/)) do\n    its('stdout') { should include 'https://safbox&quot;&gt;&lt;b&gt;x:' }\n    its('stdout') { should_not include '\"><b>x' }\n  end\n\n  describe command(\"curl -sS -k -X POST -o /dev/null -w '%{http_code}' https://127.0.0.1:#{landing_port}/\") do\n    its('stdout') { should eq '405' }\n  end\n\n  # Names (never values) of the first-boot secrets whose value appears in the\n  # page. The page is fetched and compared on the box, so no secret value\n  # reaches the results.\n  leak_check = %{sh -c 'page=$(curl -sS -k https://127.0.0.1:#{landing_port}/); for f in /etc/safbox/*.env; do while IFS== read -r k v; do if [ -n \"$v\" ]; then case \"$page\" in *\"$v\"*) echo \"$f:$k\" ;; esac; fi; done < \"$f\"; done; case \"$page\" in *\"PRIVATE KEY\"*) echo private-key ;; esac'}\n  describe 'First-boot secrets that appear in the landing page' do\n    subject { command(leak_check).stdout.split }\n    it { should be_empty }\n  end\nend\n",
+     "desc": "ADR-0001 Phase 8: an HTTPS landing page on 443 shows service status and links. nginx assembles it with server-side includes from a page the proxy role renders and one status file per service, which the safbox-landing-status timer regenerates every 30 seconds from safbox services; each link names the host the browser asked for. The page carries a Content-Security-Policy that allows only its own stylesheet, the status files are reachable only through the page, and the page holds nothing secret: no first-boot secret value appears in it.",
+     "descriptions": [
+      {
+       "data": "ADR-0001 Phase 8: an HTTPS landing page on 443 shows service status and links. nginx assembles it with server-side includes from a page the proxy role renders and one status file per service, which the safbox-landing-status timer regenerates every 30 seconds from safbox services; each link names the host the browser asked for. The page carries a Content-Security-Policy that allows only its own stylesheet, the status files are reachable only through the page, and the page holds nothing secret: no first-boot secret value appears in it.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-proxy-7",
+     "impact": 1.0,
+     "refs": [],
+     "results": [],
+     "source_location": {
+      "line": 229
+     },
+     "tags": {},
+     "title": "The landing page on port 443 shows the status of each service and links to the applications, and no secret",
      "waiver_data": {}
     },
     {
@@ -891,7 +931,7 @@
    "license": "Apache-2.0",
    "maintainer": "MITRE SAF",
    "name": "inspec-safbox",
-   "sha256": "2aeec93ae66bee6c544de7b50f610bf643ba28a9fe782d01b4b71d2f94a3cf3a",
+   "sha256": "6abec45f9c26eb64c47b73e866e1e6f66a68dc897848975922441a8e1998fd24",
    "status": "loaded",
    "status_message": "",
    "summary": "Root wrapper for SAFBox validation (ADR-0001 \u00a7Validation stages). One scan of this profile is the build-time gate and the release gate: it includes every child profile, and each child declares the platforms it supports, so a child that does not match the target is skipped. Today the children are the RHEL 10 family's infrastructure controls and its STIG overlay; a later OS family adds its own pair here. The wrapper declares no platform support, controls or inputs of its own; inputs belong to the child that reads them and reach it from --input-file.",
@@ -1082,8 +1122,18 @@
       "type": "Hash",
       "value": {
        "heimdall": 8443,
+       "landing": 443,
        "vulcan": 9443
       }
+     }
+    },
+    {
+     "name": "firewall_services",
+     "options": {
+      "type": "Array",
+      "value": [
+       "ssh"
+      ]
      }
     },
     {
@@ -1130,8 +1180,8 @@
        "resource_class": "user",
        "resource_id": "cloud-user",
        "resource_params": "[\"cloud-user\"]",
-       "run_time": 0.077228,
-       "start_time": "2026-10-14T03:00:51-04:00",
+       "run_time": 0.095955,
+       "start_time": "2026-10-14T10:28:15-04:00",
        "status": "passed"
       },
       {
@@ -1139,8 +1189,8 @@
        "resource_class": "user",
        "resource_id": "almalinux",
        "resource_params": "[\"almalinux\"]",
-       "run_time": 0.122357,
-       "start_time": "2026-10-14T03:00:51-04:00",
+       "run_time": 0.14945,
+       "start_time": "2026-10-14T10:28:15-04:00",
        "status": "passed"
       },
       {
@@ -1148,8 +1198,8 @@
        "resource_class": "user",
        "resource_id": "rocky",
        "resource_params": "[\"rocky\"]",
-       "run_time": 0.126999,
-       "start_time": "2026-10-14T03:00:51-04:00",
+       "run_time": 0.143694,
+       "start_time": "2026-10-14T10:28:16-04:00",
        "status": "passed"
       },
       {
@@ -1157,8 +1207,8 @@
        "resource_class": "user",
        "resource_id": "ubuntu",
        "resource_params": "[\"ubuntu\"]",
-       "run_time": 0.123167,
-       "start_time": "2026-10-14T03:00:51-04:00",
+       "run_time": 0.141768,
+       "start_time": "2026-10-14T10:28:16-04:00",
        "status": "passed"
       },
       {
@@ -1166,8 +1216,8 @@
        "resource_class": "user",
        "resource_id": "debian",
        "resource_params": "[\"debian\"]",
-       "run_time": 0.120433,
-       "start_time": "2026-10-14T03:00:51-04:00",
+       "run_time": 0.13222,
+       "start_time": "2026-10-14T10:28:16-04:00",
        "status": "passed"
       }
      ],
@@ -1196,8 +1246,8 @@
        "resource_class": "Object",
        "resource_id": "exit_status",
        "resource_params": "[]",
-       "run_time": 9.3e-05,
-       "start_time": "2026-10-14T03:00:52-04:00",
+       "run_time": 9.6e-05,
+       "start_time": "2026-10-14T10:28:16-04:00",
        "status": "passed"
       },
       {
@@ -1205,8 +1255,8 @@
        "resource_class": "Object",
        "resource_id": "cloud-init system users",
        "resource_params": "[]",
-       "run_time": 3.1e-05,
-       "start_time": "2026-10-14T03:00:52-04:00",
+       "run_time": 4.3e-05,
+       "start_time": "2026-10-14T10:28:16-04:00",
        "status": "passed"
       },
       {
@@ -1214,8 +1264,8 @@
        "resource_class": "Object",
        "resource_id": "cloud-init default_user definition (used when user data names a user)",
        "resource_params": "[]",
-       "run_time": 3.9e-05,
-       "start_time": "2026-10-14T03:00:52-04:00",
+       "run_time": 5.3e-05,
+       "start_time": "2026-10-14T10:28:16-04:00",
        "status": "passed"
       }
      ],
@@ -1244,8 +1294,8 @@
        "resource_class": "command",
        "resource_id": "Command: `mokutil --sb-state`",
        "resource_params": "[\"mokutil --sb-state\"]",
-       "run_time": 0.127459,
-       "start_time": "2026-10-14T03:00:52-04:00",
+       "run_time": 0.152158,
+       "start_time": "2026-10-14T10:28:16-04:00",
        "status": "passed"
       },
       {
@@ -1253,8 +1303,8 @@
        "resource_class": "command",
        "resource_id": "Command: `mokutil --sb-state`",
        "resource_params": "[\"mokutil --sb-state\"]",
-       "run_time": 6.8e-05,
-       "start_time": "2026-10-14T03:00:52-04:00",
+       "run_time": 7.9e-05,
+       "start_time": "2026-10-14T10:28:16-04:00",
        "status": "passed"
       }
      ],
@@ -1284,9 +1334,9 @@
        "resource_class": "noop",
        "resource_id": "No-op",
        "resource_params": "[]",
-       "run_time": 6e-06,
+       "run_time": 9e-06,
        "skip_message": "Skipped control due to only_if condition: build record is written by the seal step, which has not run yet",
-       "start_time": "2026-10-14T03:00:52-04:00",
+       "start_time": "2026-10-14T10:28:16-04:00",
        "status": "skipped"
       }
      ],
@@ -1315,8 +1365,8 @@
        "resource_class": "file",
        "resource_id": "/usr/local/bin/safbox",
        "resource_params": "[\"/usr/local/bin/safbox\"]",
-       "run_time": 0.11895,
-       "start_time": "2026-10-14T03:00:52-04:00",
+       "run_time": 0.130314,
+       "start_time": "2026-10-14T10:28:16-04:00",
        "status": "passed"
       },
       {
@@ -1324,8 +1374,8 @@
        "resource_class": "file",
        "resource_id": "/usr/local/bin/safbox",
        "resource_params": "[\"/usr/local/bin/safbox\"]",
-       "run_time": 0.12181,
-       "start_time": "2026-10-14T03:00:52-04:00",
+       "run_time": 0.143311,
+       "start_time": "2026-10-14T10:28:16-04:00",
        "status": "passed"
       },
       {
@@ -1333,8 +1383,8 @@
        "resource_class": "file",
        "resource_id": "/usr/local/bin/safbox",
        "resource_params": "[\"/usr/local/bin/safbox\"]",
-       "run_time": 5.6e-05,
-       "start_time": "2026-10-14T03:00:52-04:00",
+       "run_time": 6.4e-05,
+       "start_time": "2026-10-14T10:28:16-04:00",
        "status": "passed"
       },
       {
@@ -1342,8 +1392,8 @@
        "resource_class": "directory",
        "resource_id": "/usr/local/lib/safbox/commands",
        "resource_params": "[\"/usr/local/lib/safbox/commands\"]",
-       "run_time": 0.25187,
-       "start_time": "2026-10-14T03:00:52-04:00",
+       "run_time": 0.273335,
+       "start_time": "2026-10-14T10:28:16-04:00",
        "status": "passed"
       },
       {
@@ -1351,8 +1401,8 @@
        "resource_class": "directory",
        "resource_id": "/usr/local/lib/safbox/commands",
        "resource_params": "[\"/usr/local/lib/safbox/commands\"]",
-       "run_time": 8.6e-05,
-       "start_time": "2026-10-14T03:00:52-04:00",
+       "run_time": 7.9e-05,
+       "start_time": "2026-10-14T10:28:17-04:00",
        "status": "passed"
       },
       {
@@ -1360,8 +1410,8 @@
        "resource_class": "file",
        "resource_id": "/usr/local/lib/safbox/commands/status",
        "resource_params": "[\"/usr/local/lib/safbox/commands/status\"]",
-       "run_time": 0.124892,
-       "start_time": "2026-10-14T03:00:52-04:00",
+       "run_time": 0.136351,
+       "start_time": "2026-10-14T10:28:17-04:00",
        "status": "passed"
       },
       {
@@ -1369,8 +1419,8 @@
        "resource_class": "file",
        "resource_id": "/usr/local/lib/safbox/commands/status",
        "resource_params": "[\"/usr/local/lib/safbox/commands/status\"]",
-       "run_time": 0.132815,
-       "start_time": "2026-10-14T03:00:52-04:00",
+       "run_time": 0.134825,
+       "start_time": "2026-10-14T10:28:17-04:00",
        "status": "passed"
       },
       {
@@ -1378,8 +1428,8 @@
        "resource_class": "command",
        "resource_id": "Command: `/usr/local/bin/safbox help`",
        "resource_params": "[\"/usr/local/bin/safbox help\"]",
-       "run_time": 0.146754,
-       "start_time": "2026-10-14T03:00:52-04:00",
+       "run_time": 0.177124,
+       "start_time": "2026-10-14T10:28:17-04:00",
        "status": "passed"
       },
       {
@@ -1387,8 +1437,8 @@
        "resource_class": "command",
        "resource_id": "Command: `/usr/local/bin/safbox help`",
        "resource_params": "[\"/usr/local/bin/safbox help\"]",
-       "run_time": 8.7e-05,
-       "start_time": "2026-10-14T03:00:53-04:00",
+       "run_time": 7.5e-05,
+       "start_time": "2026-10-14T10:28:17-04:00",
        "status": "passed"
       },
       {
@@ -1396,8 +1446,8 @@
        "resource_class": "command",
        "resource_id": "Command: `/usr/local/bin/safbox status`",
        "resource_params": "[\"/usr/local/bin/safbox status\"]",
-       "run_time": 1.808712,
-       "start_time": "2026-10-14T03:00:53-04:00",
+       "run_time": 2.547374,
+       "start_time": "2026-10-14T10:28:17-04:00",
        "status": "passed"
       },
       {
@@ -1405,8 +1455,8 @@
        "resource_class": "command",
        "resource_id": "Command: `/usr/local/bin/safbox status`",
        "resource_params": "[\"/usr/local/bin/safbox status\"]",
-       "run_time": 8.8e-05,
-       "start_time": "2026-10-14T03:00:54-04:00",
+       "run_time": 8.9e-05,
+       "start_time": "2026-10-14T10:28:20-04:00",
        "status": "passed"
       },
       {
@@ -1414,8 +1464,8 @@
        "resource_class": "command",
        "resource_id": "Command: `/usr/local/bin/safbox status`",
        "resource_params": "[\"/usr/local/bin/safbox status\"]",
-       "run_time": 3.3e-05,
-       "start_time": "2026-10-14T03:00:54-04:00",
+       "run_time": 3.6e-05,
+       "start_time": "2026-10-14T10:28:20-04:00",
        "status": "passed"
       },
       {
@@ -1423,8 +1473,8 @@
        "resource_class": "command",
        "resource_id": "Command: `/usr/local/bin/safbox status`",
        "resource_params": "[\"/usr/local/bin/safbox status\"]",
-       "run_time": 2.8e-05,
-       "start_time": "2026-10-14T03:00:54-04:00",
+       "run_time": 3.1e-05,
+       "start_time": "2026-10-14T10:28:20-04:00",
        "status": "passed"
       },
       {
@@ -1432,8 +1482,8 @@
        "resource_class": "command",
        "resource_id": "Command: `/usr/local/bin/safbox status`",
        "resource_params": "[\"/usr/local/bin/safbox status\"]",
-       "run_time": 2.6e-05,
-       "start_time": "2026-10-14T03:00:54-04:00",
+       "run_time": 3.2e-05,
+       "start_time": "2026-10-14T10:28:20-04:00",
        "status": "passed"
       },
       {
@@ -1441,8 +1491,8 @@
        "resource_class": "command",
        "resource_id": "Command: `/usr/local/bin/safbox status`",
        "resource_params": "[\"/usr/local/bin/safbox status\"]",
-       "run_time": 3.3e-05,
-       "start_time": "2026-10-14T03:00:54-04:00",
+       "run_time": 3.1e-05,
+       "start_time": "2026-10-14T10:28:20-04:00",
        "status": "passed"
       },
       {
@@ -1450,8 +1500,8 @@
        "resource_class": "command",
        "resource_id": "Command: `/usr/local/bin/safbox status`",
        "resource_params": "[\"/usr/local/bin/safbox status\"]",
-       "run_time": 3e-05,
-       "start_time": "2026-10-14T03:00:54-04:00",
+       "run_time": 3.2e-05,
+       "start_time": "2026-10-14T10:28:20-04:00",
        "status": "passed"
       },
       {
@@ -1459,8 +1509,8 @@
        "resource_class": "command",
        "resource_id": "Command: `/usr/local/bin/safbox status`",
        "resource_params": "[\"/usr/local/bin/safbox status\"]",
-       "run_time": 2.6e-05,
-       "start_time": "2026-10-14T03:00:54-04:00",
+       "run_time": 2.8e-05,
+       "start_time": "2026-10-14T10:28:20-04:00",
        "status": "passed"
       },
       {
@@ -1468,16 +1518,199 @@
        "resource_class": "command",
        "resource_id": "Command: `/usr/local/bin/safbox status`",
        "resource_params": "[\"/usr/local/bin/safbox status\"]",
-       "run_time": 2.6e-05,
-       "start_time": "2026-10-14T03:00:54-04:00",
+       "run_time": 2.8e-05,
+       "start_time": "2026-10-14T10:28:20-04:00",
        "status": "passed"
       }
      ],
      "source_location": {
-      "line": 3
+      "line": 15
      },
      "tags": {},
      "title": "The safbox command and its subcommand registry are installed",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-cli-2' do\n  impact 1.0\n  title 'safbox services reports the health of the proxy, Heimdall and Vulcan and of their units'\n  desc \"ADR-0001 Phase 8: safbox services reports unit health for each service the image ships. Each service role registers its service in #{services_registry} (a label and the units that make it up); the command reads systemd's view of each unit, so any user may run it, and sums each service up as running, starting, stopping, waiting (a unit's condition failed: first boot has not written its secrets or certificate), stopped, failed or not installed. It exits 0 only when every registered service runs, and 3 otherwise. On a deployed clone every service runs; on the build VM none has started.\"\n\n  describe file('/usr/local/lib/safbox/commands/services') do\n    it { should exist }\n    it { should be_executable }\n    its('owner') { should eq 'root' }\n  end\n\n  describe command('/usr/local/bin/safbox help') do\n    its('stdout') { should match(/^\\s+services\\s+\\S/) }\n  end\n\n  describe command(\"sh -c 'ls -1 #{services_registry}'\") do\n    its('stdout.split') { should eq expected_services.map { |s| registered_services[s][:file] }.sort }\n  end\n\n  want = deployed ? 'running' : 'stopped'\n  want_active = deployed ? 'active' : 'inactive'\n  tsv = command('runuser -u nobody -- /usr/local/bin/safbox services --tsv')\n  describe tsv do\n    its('exit_status') { should eq(deployed ? 0 : 3) }\n  end\n  describe 'Services safbox services --tsv reports, as name, label and health' do\n    subject { tsv.stdout.lines.map { |line| line.chomp.split(\"\\t\") }.sort }\n    it { should eq expected_services.map { |s| [s, registered_services[s][:label], want] }.sort }\n  end\n\n  human = command('runuser -u nobody -- /usr/local/bin/safbox services')\n  expected_services.each do |service|\n    describe \"safbox services for #{service}\" do\n      subject { human.stdout }\n      it { should match(/^#{Regexp.escape(registered_services[service][:label])}\\s+#{want}$/) }\n      registered_services[service][:units].each do |unit|\n        it { should match(/^\\s+#{Regexp.escape(unit)}\\s+#{want_active} \\(/) }\n      end\n    end\n  end\nend\n",
+     "desc": "ADR-0001 Phase 8: safbox services reports unit health for each service the image ships. Each service role registers its service in /usr/local/share/safbox/services.d (a label and the units that make it up); the command reads systemd's view of each unit, so any user may run it, and sums each service up as running, starting, stopping, waiting (a unit's condition failed: first boot has not written its secrets or certificate), stopped, failed or not installed. It exits 0 only when every registered service runs, and 3 otherwise. On a deployed clone every service runs; on the build VM none has started.",
+     "descriptions": [
+      {
+       "data": "ADR-0001 Phase 8: safbox services reports unit health for each service the image ships. Each service role registers its service in /usr/local/share/safbox/services.d (a label and the units that make it up); the command reads systemd's view of each unit, so any user may run it, and sums each service up as running, starting, stopping, waiting (a unit's condition failed: first boot has not written its secrets or certificate), stopped, failed or not installed. It exits 0 only when every registered service runs, and 3 otherwise. On a deployed clone every service runs; on the build VM none has started.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-cli-2",
+     "impact": 1.0,
+     "refs": [],
+     "results": [
+      {
+       "code_desc": "File /usr/local/lib/safbox/commands/services is expected to exist",
+       "resource_class": "file",
+       "resource_id": "/usr/local/lib/safbox/commands/services",
+       "resource_params": "[\"/usr/local/lib/safbox/commands/services\"]",
+       "run_time": 0.14679,
+       "start_time": "2026-10-14T10:28:20-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "File /usr/local/lib/safbox/commands/services is expected to be executable",
+       "resource_class": "file",
+       "resource_id": "/usr/local/lib/safbox/commands/services",
+       "resource_params": "[\"/usr/local/lib/safbox/commands/services\"]",
+       "run_time": 0.13357,
+       "start_time": "2026-10-14T10:28:20-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "File /usr/local/lib/safbox/commands/services owner is expected to eq \"root\"",
+       "resource_class": "file",
+       "resource_id": "/usr/local/lib/safbox/commands/services",
+       "resource_params": "[\"/usr/local/lib/safbox/commands/services\"]",
+       "run_time": 9.9e-05,
+       "start_time": "2026-10-14T10:28:20-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Command: `/usr/local/bin/safbox help` stdout is expected to match /^\\s+services\\s+\\S/",
+       "resource_class": "command",
+       "resource_id": "Command: `/usr/local/bin/safbox help`",
+       "resource_params": "[\"/usr/local/bin/safbox help\"]",
+       "run_time": 6.4e-05,
+       "start_time": "2026-10-14T10:28:20-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Command: `sh -c 'ls -1 /usr/local/share/safbox/services.d'` stdout.split is expected to eq [\"20-heimdall\", \"30-vulcan\", \"40-proxy\"]",
+       "resource_class": "command",
+       "resource_id": "Command: `sh -c 'ls -1 /usr/local/share/safbox/services.d'`",
+       "resource_params": "[\"sh -c 'ls -1 /usr/local/share/safbox/services.d'\"]",
+       "run_time": 0.159431,
+       "start_time": "2026-10-14T10:28:20-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Command: `runuser -u nobody -- /usr/local/bin/safbox services --tsv` exit_status is expected to eq 3",
+       "resource_class": "command",
+       "resource_id": "Command: `runuser -u nobody -- /usr/local/bin/safbox services --tsv`",
+       "resource_params": "[\"runuser -u nobody -- /usr/local/bin/safbox services --tsv\"]",
+       "run_time": 0.278939,
+       "start_time": "2026-10-14T10:28:20-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Services safbox services --tsv reports, as name, label and health is expected to eq [[\"heimdall\", \"Heimdall\", \"stopped\"], [\"proxy\", \"TLS proxy and landing page\", \"stopped\"], [\"vulcan\", \"Vulcan\", \"stopped\"]]",
+       "resource_class": "Object",
+       "resource_id": "Services safbox services --tsv reports, as name, label and health",
+       "resource_params": "[]",
+       "run_time": 8.7e-05,
+       "start_time": "2026-10-14T10:28:20-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "safbox services for heimdall is expected to match /^Heimdall\\s+stopped$/",
+       "resource_class": "Object",
+       "resource_id": "safbox services for heimdall",
+       "resource_params": "[]",
+       "run_time": 0.315919,
+       "start_time": "2026-10-14T10:28:20-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "safbox services for heimdall is expected to match /^\\s+heimdall\\-pod\\.service\\s+inactive \\(/",
+       "resource_class": "Object",
+       "resource_id": "safbox services for heimdall",
+       "resource_params": "[]",
+       "run_time": 6.9e-05,
+       "start_time": "2026-10-14T10:28:21-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "safbox services for heimdall is expected to match /^\\s+heimdall\\-db\\.service\\s+inactive \\(/",
+       "resource_class": "Object",
+       "resource_id": "safbox services for heimdall",
+       "resource_params": "[]",
+       "run_time": 3.3e-05,
+       "start_time": "2026-10-14T10:28:21-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "safbox services for heimdall is expected to match /^\\s+heimdall\\.service\\s+inactive \\(/",
+       "resource_class": "Object",
+       "resource_id": "safbox services for heimdall",
+       "resource_params": "[]",
+       "run_time": 2.9e-05,
+       "start_time": "2026-10-14T10:28:21-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "safbox services for vulcan is expected to match /^Vulcan\\s+stopped$/",
+       "resource_class": "Object",
+       "resource_id": "safbox services for vulcan",
+       "resource_params": "[]",
+       "run_time": 3.2e-05,
+       "start_time": "2026-10-14T10:28:21-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "safbox services for vulcan is expected to match /^\\s+vulcan\\-pod\\.service\\s+inactive \\(/",
+       "resource_class": "Object",
+       "resource_id": "safbox services for vulcan",
+       "resource_params": "[]",
+       "run_time": 3e-05,
+       "start_time": "2026-10-14T10:28:21-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "safbox services for vulcan is expected to match /^\\s+vulcan\\-db\\.service\\s+inactive \\(/",
+       "resource_class": "Object",
+       "resource_id": "safbox services for vulcan",
+       "resource_params": "[]",
+       "run_time": 3e-05,
+       "start_time": "2026-10-14T10:28:21-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "safbox services for vulcan is expected to match /^\\s+vulcan\\.service\\s+inactive \\(/",
+       "resource_class": "Object",
+       "resource_id": "safbox services for vulcan",
+       "resource_params": "[]",
+       "run_time": 3.1e-05,
+       "start_time": "2026-10-14T10:28:21-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "safbox services for proxy is expected to match /^TLS\\ proxy\\ and\\ landing\\ page\\s+stopped$/",
+       "resource_class": "Object",
+       "resource_id": "safbox services for proxy",
+       "resource_params": "[]",
+       "run_time": 3e-05,
+       "start_time": "2026-10-14T10:28:21-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "safbox services for proxy is expected to match /^\\s+safbox\\-proxy\\.service\\s+inactive \\(/",
+       "resource_class": "Object",
+       "resource_id": "safbox services for proxy",
+       "resource_params": "[]",
+       "run_time": 3e-05,
+       "start_time": "2026-10-14T10:28:21-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "safbox services for proxy is expected to match /^\\s+safbox\\-landing\\-status\\.timer\\s+inactive \\(/",
+       "resource_class": "Object",
+       "resource_id": "safbox services for proxy",
+       "resource_params": "[]",
+       "run_time": 3.5e-05,
+       "start_time": "2026-10-14T10:28:21-04:00",
+       "status": "passed"
+      }
+     ],
+     "source_location": {
+      "line": 56
+     },
+     "tags": {},
+     "title": "safbox services reports the health of the proxy, Heimdall and Vulcan and of their units",
      "waiver_data": {}
     },
     {
@@ -1498,8 +1731,8 @@
        "resource_class": "file",
        "resource_id": "/proc/sys/crypto/fips_enabled",
        "resource_params": "[\"/proc/sys/crypto/fips_enabled\"]",
-       "run_time": 0.122262,
-       "start_time": "2026-10-14T03:00:54-04:00",
+       "run_time": 0.267821,
+       "start_time": "2026-10-14T10:28:21-04:00",
        "status": "passed"
       },
       {
@@ -1507,8 +1740,8 @@
        "resource_class": "file",
        "resource_id": "/proc/sys/crypto/fips_enabled",
        "resource_params": "[\"/proc/sys/crypto/fips_enabled\"]",
-       "run_time": 0.119336,
-       "start_time": "2026-10-14T03:00:55-04:00",
+       "run_time": 0.44862,
+       "start_time": "2026-10-14T10:28:21-04:00",
        "status": "passed"
       },
       {
@@ -1516,8 +1749,8 @@
        "resource_class": "file",
        "resource_id": "/proc/cmdline",
        "resource_params": "[\"/proc/cmdline\"]",
-       "run_time": 0.122808,
-       "start_time": "2026-10-14T03:00:55-04:00",
+       "run_time": 0.355735,
+       "start_time": "2026-10-14T10:28:21-04:00",
        "status": "passed"
       }
      ],
@@ -1546,8 +1779,8 @@
        "resource_class": "command",
        "resource_id": "Command: `update-crypto-policies --show`",
        "resource_params": "[\"update-crypto-policies --show\"]",
-       "run_time": 0.281076,
-       "start_time": "2026-10-14T03:00:55-04:00",
+       "run_time": 0.459373,
+       "start_time": "2026-10-14T10:28:22-04:00",
        "status": "passed"
       },
       {
@@ -1555,8 +1788,8 @@
        "resource_class": "command",
        "resource_id": "Command: `update-crypto-policies --show`",
        "resource_params": "[\"update-crypto-policies --show\"]",
-       "run_time": 0.000101,
-       "start_time": "2026-10-14T03:00:55-04:00",
+       "run_time": 9.3e-05,
+       "start_time": "2026-10-14T10:28:22-04:00",
        "status": "passed"
       }
      ],
@@ -1585,8 +1818,8 @@
        "resource_class": "command",
        "resource_id": "Command: `openssl list -providers`",
        "resource_params": "[\"openssl list -providers\"]",
-       "run_time": 0.162131,
-       "start_time": "2026-10-14T03:00:55-04:00",
+       "run_time": 0.35861,
+       "start_time": "2026-10-14T10:28:22-04:00",
        "status": "passed"
       },
       {
@@ -1594,8 +1827,8 @@
        "resource_class": "command",
        "resource_id": "Command: `openssl list -providers`",
        "resource_params": "[\"openssl list -providers\"]",
-       "run_time": 6e-05,
-       "start_time": "2026-10-14T03:00:55-04:00",
+       "run_time": 7e-05,
+       "start_time": "2026-10-14T10:28:23-04:00",
        "status": "passed"
       }
      ],
@@ -1604,6 +1837,324 @@
      },
      "tags": {},
      "title": "The OpenSSL FIPS provider is loaded and active",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-firewall-1' do\n  impact 1.0\n  title 'The firewall allows SSH and the proxy ports only'\n  desc \"ADR-0001 Quality Standards: the firewall allows SSH and the proxy ports only. Every interface is in the #{zone} zone, which is the default zone and allows exactly the firewall_services input and the HTTPS ports of the landing page and each application the image ships, with no other port, protocol, source port, forward port or rich rule, at runtime and permanently. On a hardened image the zone's target is DROP. The DNS and NTP services the Lockdown role allows by default are left out: they admit inbound queries to servers SAFBox does not run, while the box's own DNS and NTP client traffic returns as related to its outbound connections. Other zones hold no interface, and the only sources they hold are podman's container network subnets.\"\n\n  describe command('firewall-cmd --get-default-zone') do\n    its('stdout.strip') { should eq zone }\n  end\n\n  { 'runtime' => 'firewall-cmd', 'permanent' => 'firewall-cmd --permanent' }.each do |label, cmd|\n    {\n      'services' => want_services,\n      'ports' => want_ports,\n      'protocols' => [],\n      'source-ports' => [],\n      'forward-ports' => [],\n    }.each do |what, want|\n      describe \"#{what.capitalize} the #{zone} zone allows (#{label})\" do\n        subject { command(\"#{cmd} --zone=#{zone} --list-#{what}\").stdout.split.sort }\n        it { should eq want }\n      end\n    end\n\n    describe \"Rich rules in the #{zone} zone (#{label})\" do\n      subject { command(\"#{cmd} --zone=#{zone} --list-rich-rules\").stdout.strip }\n      it { should be_empty }\n    end\n  end\n\n  if hardened\n    describe \"Target of the #{zone} zone\" do\n      subject { command(\"firewall-cmd --permanent --zone=#{zone} --get-target\").stdout.strip }\n      it { should eq 'DROP' }\n    end\n  end\n\n  # Subnets of every podman network, the only sources another zone may hold.\n  podman_subnets = command(\"sh -c 'podman network ls --format \\\"{{.Name}}\\\" | xargs -r podman network inspect --format \\\"{{range .Subnets}}{{.Subnet}} {{end}}\\\"'\").stdout.split\n  other_zones = command('firewall-cmd --get-zones').stdout.split - [zone]\n  describe 'Zones other than the default zone' do\n    subject { other_zones }\n    it { should_not be_empty }\n  end\n  other_zones.each do |other|\n    describe \"Interfaces in the #{other} zone\" do\n      subject { command(\"firewall-cmd --zone=#{other} --list-interfaces\").stdout.split }\n      it { should be_empty }\n    end\n    describe \"Sources in the #{other} zone that are not podman network subnets\" do\n      subject { command(\"firewall-cmd --zone=#{other} --list-sources\").stdout.split - podman_subnets }\n      it { should be_empty }\n    end\n  end\nend\n",
+     "desc": "ADR-0001 Quality Standards: the firewall allows SSH and the proxy ports only. Every interface is in the drop zone, which is the default zone and allows exactly the firewall_services input and the HTTPS ports of the landing page and each application the image ships, with no other port, protocol, source port, forward port or rich rule, at runtime and permanently. On a hardened image the zone's target is DROP. The DNS and NTP services the Lockdown role allows by default are left out: they admit inbound queries to servers SAFBox does not run, while the box's own DNS and NTP client traffic returns as related to its outbound connections. Other zones hold no interface, and the only sources they hold are podman's container network subnets.",
+     "descriptions": [
+      {
+       "data": "ADR-0001 Quality Standards: the firewall allows SSH and the proxy ports only. Every interface is in the drop zone, which is the default zone and allows exactly the firewall_services input and the HTTPS ports of the landing page and each application the image ships, with no other port, protocol, source port, forward port or rich rule, at runtime and permanently. On a hardened image the zone's target is DROP. The DNS and NTP services the Lockdown role allows by default are left out: they admit inbound queries to servers SAFBox does not run, while the box's own DNS and NTP client traffic returns as related to its outbound connections. Other zones hold no interface, and the only sources they hold are podman's container network subnets.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-firewall-1",
+     "impact": 1.0,
+     "refs": [],
+     "results": [
+      {
+       "code_desc": "Command: `firewall-cmd --get-default-zone` stdout.strip is expected to eq \"drop\"",
+       "resource_class": "command",
+       "resource_id": "Command: `firewall-cmd --get-default-zone`",
+       "resource_params": "[\"firewall-cmd --get-default-zone\"]",
+       "run_time": 0.560377,
+       "start_time": "2026-10-14T10:28:23-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Services the drop zone allows (runtime) is expected to eq [\"ssh\"]",
+       "resource_class": "Object",
+       "resource_id": "Services the drop zone allows (runtime)",
+       "resource_params": "[]",
+       "run_time": 0.760524,
+       "start_time": "2026-10-14T10:28:23-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Ports the drop zone allows (runtime) is expected to eq [\"443/tcp\", \"8443/tcp\", \"9443/tcp\"]",
+       "resource_class": "Object",
+       "resource_id": "Ports the drop zone allows (runtime)",
+       "resource_params": "[]",
+       "run_time": 0.697622,
+       "start_time": "2026-10-14T10:28:24-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Protocols the drop zone allows (runtime) is expected to eq []",
+       "resource_class": "Object",
+       "resource_id": "Protocols the drop zone allows (runtime)",
+       "resource_params": "[]",
+       "run_time": 0.734748,
+       "start_time": "2026-10-14T10:28:25-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Source-ports the drop zone allows (runtime) is expected to eq []",
+       "resource_class": "Object",
+       "resource_id": "Source-ports the drop zone allows (runtime)",
+       "resource_params": "[]",
+       "run_time": 0.746943,
+       "start_time": "2026-10-14T10:28:25-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Forward-ports the drop zone allows (runtime) is expected to eq []",
+       "resource_class": "Object",
+       "resource_id": "Forward-ports the drop zone allows (runtime)",
+       "resource_params": "[]",
+       "run_time": 0.752936,
+       "start_time": "2026-10-14T10:28:26-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Rich rules in the drop zone (runtime) is expected to be empty",
+       "resource_class": "Object",
+       "resource_id": "Rich rules in the drop zone (runtime)",
+       "resource_params": "[]",
+       "run_time": 0.749559,
+       "start_time": "2026-10-14T10:28:27-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Services the drop zone allows (permanent) is expected to eq [\"ssh\"]",
+       "resource_class": "Object",
+       "resource_id": "Services the drop zone allows (permanent)",
+       "resource_params": "[]",
+       "run_time": 0.690121,
+       "start_time": "2026-10-14T10:28:28-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Ports the drop zone allows (permanent) is expected to eq [\"443/tcp\", \"8443/tcp\", \"9443/tcp\"]",
+       "resource_class": "Object",
+       "resource_id": "Ports the drop zone allows (permanent)",
+       "resource_params": "[]",
+       "run_time": 0.602241,
+       "start_time": "2026-10-14T10:28:28-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Protocols the drop zone allows (permanent) is expected to eq []",
+       "resource_class": "Object",
+       "resource_id": "Protocols the drop zone allows (permanent)",
+       "resource_params": "[]",
+       "run_time": 0.625349,
+       "start_time": "2026-10-14T10:28:29-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Source-ports the drop zone allows (permanent) is expected to eq []",
+       "resource_class": "Object",
+       "resource_id": "Source-ports the drop zone allows (permanent)",
+       "resource_params": "[]",
+       "run_time": 0.604119,
+       "start_time": "2026-10-14T10:28:30-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Forward-ports the drop zone allows (permanent) is expected to eq []",
+       "resource_class": "Object",
+       "resource_id": "Forward-ports the drop zone allows (permanent)",
+       "resource_params": "[]",
+       "run_time": 0.618923,
+       "start_time": "2026-10-14T10:28:30-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Rich rules in the drop zone (permanent) is expected to be empty",
+       "resource_class": "Object",
+       "resource_id": "Rich rules in the drop zone (permanent)",
+       "resource_params": "[]",
+       "run_time": 0.614829,
+       "start_time": "2026-10-14T10:28:31-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Target of the drop zone is expected to eq \"DROP\"",
+       "resource_class": "Object",
+       "resource_id": "Target of the drop zone",
+       "resource_params": "[]",
+       "run_time": 0.618973,
+       "start_time": "2026-10-14T10:28:31-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Zones other than the default zone is expected not to be empty",
+       "resource_class": "Object",
+       "resource_id": "Zones other than the default zone",
+       "resource_params": "[]",
+       "run_time": 0.001735,
+       "start_time": "2026-10-14T10:28:32-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Interfaces in the block zone is expected to be empty",
+       "resource_class": "Object",
+       "resource_id": "Interfaces in the block zone",
+       "resource_params": "[]",
+       "run_time": 0.648217,
+       "start_time": "2026-10-14T10:28:32-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Sources in the block zone that are not podman network subnets is expected to be empty",
+       "resource_class": "Object",
+       "resource_id": "Sources in the block zone that are not podman network subnets",
+       "resource_params": "[]",
+       "run_time": 0.725533,
+       "start_time": "2026-10-14T10:28:33-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Interfaces in the dmz zone is expected to be empty",
+       "resource_class": "Object",
+       "resource_id": "Interfaces in the dmz zone",
+       "resource_params": "[]",
+       "run_time": 0.884235,
+       "start_time": "2026-10-14T10:28:33-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Sources in the dmz zone that are not podman network subnets is expected to be empty",
+       "resource_class": "Object",
+       "resource_id": "Sources in the dmz zone that are not podman network subnets",
+       "resource_params": "[]",
+       "run_time": 0.884304,
+       "start_time": "2026-10-14T10:28:34-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Interfaces in the external zone is expected to be empty",
+       "resource_class": "Object",
+       "resource_id": "Interfaces in the external zone",
+       "resource_params": "[]",
+       "run_time": 0.800486,
+       "start_time": "2026-10-14T10:28:35-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Sources in the external zone that are not podman network subnets is expected to be empty",
+       "resource_class": "Object",
+       "resource_id": "Sources in the external zone that are not podman network subnets",
+       "resource_params": "[]",
+       "run_time": 0.681114,
+       "start_time": "2026-10-14T10:28:36-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Interfaces in the home zone is expected to be empty",
+       "resource_class": "Object",
+       "resource_id": "Interfaces in the home zone",
+       "resource_params": "[]",
+       "run_time": 0.621792,
+       "start_time": "2026-10-14T10:28:37-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Sources in the home zone that are not podman network subnets is expected to be empty",
+       "resource_class": "Object",
+       "resource_id": "Sources in the home zone that are not podman network subnets",
+       "resource_params": "[]",
+       "run_time": 0.602363,
+       "start_time": "2026-10-14T10:28:37-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Interfaces in the internal zone is expected to be empty",
+       "resource_class": "Object",
+       "resource_id": "Interfaces in the internal zone",
+       "resource_params": "[]",
+       "run_time": 0.613875,
+       "start_time": "2026-10-14T10:28:38-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Sources in the internal zone that are not podman network subnets is expected to be empty",
+       "resource_class": "Object",
+       "resource_id": "Sources in the internal zone that are not podman network subnets",
+       "resource_params": "[]",
+       "run_time": 0.617015,
+       "start_time": "2026-10-14T10:28:38-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Interfaces in the nm-shared zone is expected to be empty",
+       "resource_class": "Object",
+       "resource_id": "Interfaces in the nm-shared zone",
+       "resource_params": "[]",
+       "run_time": 0.596164,
+       "start_time": "2026-10-14T10:28:39-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Sources in the nm-shared zone that are not podman network subnets is expected to be empty",
+       "resource_class": "Object",
+       "resource_id": "Sources in the nm-shared zone that are not podman network subnets",
+       "resource_params": "[]",
+       "run_time": 0.630558,
+       "start_time": "2026-10-14T10:28:40-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Interfaces in the public zone is expected to be empty",
+       "resource_class": "Object",
+       "resource_id": "Interfaces in the public zone",
+       "resource_params": "[]",
+       "run_time": 0.614776,
+       "start_time": "2026-10-14T10:28:40-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Sources in the public zone that are not podman network subnets is expected to be empty",
+       "resource_class": "Object",
+       "resource_id": "Sources in the public zone that are not podman network subnets",
+       "resource_params": "[]",
+       "run_time": 0.69568,
+       "start_time": "2026-10-14T10:28:41-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Interfaces in the trusted zone is expected to be empty",
+       "resource_class": "Object",
+       "resource_id": "Interfaces in the trusted zone",
+       "resource_params": "[]",
+       "run_time": 0.554257,
+       "start_time": "2026-10-14T10:28:42-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Sources in the trusted zone that are not podman network subnets is expected to be empty",
+       "resource_class": "Object",
+       "resource_id": "Sources in the trusted zone that are not podman network subnets",
+       "resource_params": "[]",
+       "run_time": 0.867708,
+       "start_time": "2026-10-14T10:28:42-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Interfaces in the work zone is expected to be empty",
+       "resource_class": "Object",
+       "resource_id": "Interfaces in the work zone",
+       "resource_params": "[]",
+       "run_time": 0.843133,
+       "start_time": "2026-10-14T10:28:43-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Sources in the work zone that are not podman network subnets is expected to be empty",
+       "resource_class": "Object",
+       "resource_id": "Sources in the work zone that are not podman network subnets",
+       "resource_params": "[]",
+       "run_time": 0.789967,
+       "start_time": "2026-10-14T10:28:44-04:00",
+       "status": "passed"
+      }
+     ],
+     "source_location": {
+      "line": 24
+     },
+     "tags": {},
+     "title": "The firewall allows SSH and the proxy ports only",
      "waiver_data": {}
     },
     {
@@ -1624,8 +2175,8 @@
        "resource_class": "file",
        "resource_id": "/etc/systemd/system/safbox-firstboot.service",
        "resource_params": "[\"/etc/systemd/system/safbox-firstboot.service\"]",
-       "run_time": 0.119271,
-       "start_time": "2026-10-14T03:00:55-04:00",
+       "run_time": 0.201907,
+       "start_time": "2026-10-14T10:28:45-04:00",
        "status": "passed"
       },
       {
@@ -1633,8 +2184,8 @@
        "resource_class": "file",
        "resource_id": "/etc/systemd/system/safbox-firstboot.service",
        "resource_params": "[\"/etc/systemd/system/safbox-firstboot.service\"]",
-       "run_time": 0.12045,
-       "start_time": "2026-10-14T03:00:55-04:00",
+       "run_time": 0.210692,
+       "start_time": "2026-10-14T10:28:45-04:00",
        "status": "passed"
       },
       {
@@ -1642,8 +2193,8 @@
        "resource_class": "file",
        "resource_id": "/etc/systemd/system/safbox-firstboot.service",
        "resource_params": "[\"/etc/systemd/system/safbox-firstboot.service\"]",
-       "run_time": 6.9e-05,
-       "start_time": "2026-10-14T03:00:55-04:00",
+       "run_time": 5.9e-05,
+       "start_time": "2026-10-14T10:28:45-04:00",
        "status": "passed"
       },
       {
@@ -1651,8 +2202,8 @@
        "resource_class": "file",
        "resource_id": "/etc/systemd/system/safbox-firstboot.service",
        "resource_params": "[\"/etc/systemd/system/safbox-firstboot.service\"]",
-       "run_time": 3.2e-05,
-       "start_time": "2026-10-14T03:00:55-04:00",
+       "run_time": 3.1e-05,
+       "start_time": "2026-10-14T10:28:45-04:00",
        "status": "passed"
       },
       {
@@ -1660,8 +2211,8 @@
        "resource_class": "service",
        "resource_id": "safbox-firstboot",
        "resource_params": "[\"safbox-firstboot\"]",
-       "run_time": 0.395794,
-       "start_time": "2026-10-14T03:00:55-04:00",
+       "run_time": 0.719069,
+       "start_time": "2026-10-14T10:28:45-04:00",
        "status": "passed"
       },
       {
@@ -1669,8 +2220,8 @@
        "resource_class": "file",
        "resource_id": "/usr/local/sbin/safbox-firstboot",
        "resource_params": "[\"/usr/local/sbin/safbox-firstboot\"]",
-       "run_time": 0.118264,
-       "start_time": "2026-10-14T03:00:56-04:00",
+       "run_time": 0.20656,
+       "start_time": "2026-10-14T10:28:46-04:00",
        "status": "passed"
       },
       {
@@ -1678,8 +2229,8 @@
        "resource_class": "file",
        "resource_id": "/usr/local/sbin/safbox-firstboot",
        "resource_params": "[\"/usr/local/sbin/safbox-firstboot\"]",
-       "run_time": 0.122354,
-       "start_time": "2026-10-14T03:00:56-04:00",
+       "run_time": 0.213084,
+       "start_time": "2026-10-14T10:28:46-04:00",
        "status": "passed"
       },
       {
@@ -1687,8 +2238,8 @@
        "resource_class": "file",
        "resource_id": "/usr/local/sbin/safbox-firstboot",
        "resource_params": "[\"/usr/local/sbin/safbox-firstboot\"]",
-       "run_time": 7.9e-05,
-       "start_time": "2026-10-14T03:00:56-04:00",
+       "run_time": 8.1e-05,
+       "start_time": "2026-10-14T10:28:46-04:00",
        "status": "passed"
       },
       {
@@ -1696,8 +2247,8 @@
        "resource_class": "file",
        "resource_id": "/usr/local/lib/safbox/secrets.sh",
        "resource_params": "[\"/usr/local/lib/safbox/secrets.sh\"]",
-       "run_time": 0.121036,
-       "start_time": "2026-10-14T03:00:56-04:00",
+       "run_time": 0.09473,
+       "start_time": "2026-10-14T10:28:46-04:00",
        "status": "passed"
       },
       {
@@ -1705,8 +2256,8 @@
        "resource_class": "file",
        "resource_id": "/usr/local/lib/safbox/secrets.sh",
        "resource_params": "[\"/usr/local/lib/safbox/secrets.sh\"]",
-       "run_time": 0.129877,
-       "start_time": "2026-10-14T03:00:56-04:00",
+       "run_time": 0.193823,
+       "start_time": "2026-10-14T10:28:46-04:00",
        "status": "passed"
       },
       {
@@ -1714,8 +2265,8 @@
        "resource_class": "directory",
        "resource_id": "/etc/safbox",
        "resource_params": "[\"/etc/safbox\"]",
-       "run_time": 0.24991,
-       "start_time": "2026-10-14T03:00:56-04:00",
+       "run_time": 0.410755,
+       "start_time": "2026-10-14T10:28:46-04:00",
        "status": "passed"
       },
       {
@@ -1723,8 +2274,8 @@
        "resource_class": "directory",
        "resource_id": "/etc/safbox",
        "resource_params": "[\"/etc/safbox\"]",
-       "run_time": 8.3e-05,
-       "start_time": "2026-10-14T03:00:57-04:00",
+       "run_time": 7.8e-05,
+       "start_time": "2026-10-14T10:28:47-04:00",
        "status": "passed"
       },
       {
@@ -1732,8 +2283,8 @@
        "resource_class": "directory",
        "resource_id": "/etc/safbox",
        "resource_params": "[\"/etc/safbox\"]",
-       "run_time": 0.000231,
-       "start_time": "2026-10-14T03:00:57-04:00",
+       "run_time": 8.8e-05,
+       "start_time": "2026-10-14T10:28:47-04:00",
        "status": "passed"
       },
       {
@@ -1741,8 +2292,8 @@
        "resource_class": "directory",
        "resource_id": "/etc/safbox/firstboot.d",
        "resource_params": "[\"/etc/safbox/firstboot.d\"]",
-       "run_time": 0.244525,
-       "start_time": "2026-10-14T03:00:57-04:00",
+       "run_time": 0.409003,
+       "start_time": "2026-10-14T10:28:47-04:00",
        "status": "passed"
       },
       {
@@ -1750,8 +2301,8 @@
        "resource_class": "directory",
        "resource_id": "/etc/safbox/firstboot.d",
        "resource_params": "[\"/etc/safbox/firstboot.d\"]",
-       "run_time": 8.1e-05,
-       "start_time": "2026-10-14T03:00:57-04:00",
+       "run_time": 7.8e-05,
+       "start_time": "2026-10-14T10:28:47-04:00",
        "status": "passed"
       }
      ],
@@ -1776,12 +2327,21 @@
      "refs": [],
      "results": [
       {
+       "code_desc": "safbox-firstboot.service ordered after sysinit.target, which is expected not to include \"multi-user.target\"",
+       "resource_class": "Object",
+       "resource_id": "safbox-firstboot.service ordered after sysinit.target, which",
+       "resource_params": "[]",
+       "run_time": 0.225672,
+       "start_time": "2026-10-14T10:28:47-04:00",
+       "status": "passed"
+      },
+      {
        "code_desc": "safbox-firstboot.service ordered after system.slice, which is expected not to include \"multi-user.target\"",
        "resource_class": "Object",
        "resource_id": "safbox-firstboot.service ordered after system.slice, which",
        "resource_params": "[]",
-       "run_time": 0.138811,
-       "start_time": "2026-10-14T03:00:57-04:00",
+       "run_time": 0.294661,
+       "start_time": "2026-10-14T10:28:48-04:00",
        "status": "passed"
       },
       {
@@ -1789,17 +2349,8 @@
        "resource_class": "Object",
        "resource_id": "safbox-firstboot.service ordered after network-online.target, which",
        "resource_params": "[]",
-       "run_time": 0.143055,
-       "start_time": "2026-10-14T03:00:57-04:00",
-       "status": "passed"
-      },
-      {
-       "code_desc": "safbox-firstboot.service ordered after systemd-journald.socket, which is expected not to include \"multi-user.target\"",
-       "resource_class": "Object",
-       "resource_id": "safbox-firstboot.service ordered after systemd-journald.socket, which",
-       "resource_params": "[]",
-       "run_time": 0.144637,
-       "start_time": "2026-10-14T03:00:57-04:00",
+       "run_time": 0.206202,
+       "start_time": "2026-10-14T10:28:48-04:00",
        "status": "passed"
       },
       {
@@ -1807,8 +2358,17 @@
        "resource_class": "Object",
        "resource_id": "safbox-firstboot.service ordered after basic.target, which",
        "resource_params": "[]",
-       "run_time": 0.139418,
-       "start_time": "2026-10-14T03:00:57-04:00",
+       "run_time": 0.152898,
+       "start_time": "2026-10-14T10:28:48-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "safbox-firstboot.service ordered after systemd-journald.socket, which is expected not to include \"multi-user.target\"",
+       "resource_class": "Object",
+       "resource_id": "safbox-firstboot.service ordered after systemd-journald.socket, which",
+       "resource_params": "[]",
+       "run_time": 0.165075,
+       "start_time": "2026-10-14T10:28:48-04:00",
        "status": "passed"
       },
       {
@@ -1816,17 +2376,8 @@
        "resource_class": "Object",
        "resource_id": "safbox-firstboot.service ordered after cloud-config.service, which",
        "resource_params": "[]",
-       "run_time": 0.143383,
-       "start_time": "2026-10-14T03:00:57-04:00",
-       "status": "passed"
-      },
-      {
-       "code_desc": "safbox-firstboot.service ordered after sysinit.target, which is expected not to include \"multi-user.target\"",
-       "resource_class": "Object",
-       "resource_id": "safbox-firstboot.service ordered after sysinit.target, which",
-       "resource_params": "[]",
-       "run_time": 0.140995,
-       "start_time": "2026-10-14T03:00:58-04:00",
+       "run_time": 0.154744,
+       "start_time": "2026-10-14T10:28:48-04:00",
        "status": "passed"
       },
       {
@@ -1834,8 +2385,8 @@
        "resource_class": "command",
        "resource_id": "Command: `journalctl -b --no-pager -o cat -u safbox-firstboot.service`",
        "resource_params": "[\"journalctl -b --no-pager -o cat -u safbox-firstboot.service\"]",
-       "run_time": 0.128569,
-       "start_time": "2026-10-14T03:00:58-04:00",
+       "run_time": 0.138282,
+       "start_time": "2026-10-14T10:28:48-04:00",
        "status": "passed"
       }
      ],
@@ -1867,7 +2418,7 @@
        "resource_params": "[]",
        "run_time": 3e-06,
        "skip_message": "Skipped control due to only_if condition: not a deployed clone",
-       "start_time": "2026-10-14T03:00:58-04:00",
+       "start_time": "2026-10-14T10:28:49-04:00",
        "status": "skipped"
       }
      ],
@@ -1896,8 +2447,8 @@
        "resource_class": "Object",
        "resource_id": "qemu-guest-agent main process",
        "resource_params": "[]",
-       "run_time": 4.5e-05,
-       "start_time": "2026-10-14T03:00:58-04:00",
+       "run_time": 4.8e-05,
+       "start_time": "2026-10-14T10:28:49-04:00",
        "status": "passed"
       },
       {
@@ -1905,8 +2456,8 @@
        "resource_class": "Object",
        "resource_id": "guest agent RPC filter mode",
        "resource_params": "[]",
-       "run_time": 7.6e-05,
-       "start_time": "2026-10-14T03:00:58-04:00",
+       "run_time": 7.7e-05,
+       "start_time": "2026-10-14T10:28:49-04:00",
        "status": "passed"
       },
       {
@@ -1914,8 +2465,8 @@
        "resource_class": "Object",
        "resource_id": "RPCs the guest agent allows",
        "resource_params": "[]",
-       "run_time": 5.6e-05,
-       "start_time": "2026-10-14T03:00:58-04:00",
+       "run_time": 8.9e-05,
+       "start_time": "2026-10-14T10:28:49-04:00",
        "status": "passed"
       },
       {
@@ -1924,7 +2475,7 @@
        "resource_id": "RPCs the guest agent allows",
        "resource_params": "[]",
        "run_time": 4e-05,
-       "start_time": "2026-10-14T03:00:58-04:00",
+       "start_time": "2026-10-14T10:28:49-04:00",
        "status": "passed"
       },
       {
@@ -1933,7 +2484,7 @@
        "resource_id": "RPCs the guest agent allows",
        "resource_params": "[]",
        "run_time": 3.8e-05,
-       "start_time": "2026-10-14T03:00:58-04:00",
+       "start_time": "2026-10-14T10:28:49-04:00",
        "status": "passed"
       },
       {
@@ -1941,8 +2492,8 @@
        "resource_class": "Object",
        "resource_id": "RPCs the guest agent allows",
        "resource_params": "[]",
-       "run_time": 3.9e-05,
-       "start_time": "2026-10-14T03:00:58-04:00",
+       "run_time": 3.7e-05,
+       "start_time": "2026-10-14T10:28:49-04:00",
        "status": "passed"
       },
       {
@@ -1951,7 +2502,7 @@
        "resource_id": "RPCs the guest agent allows",
        "resource_params": "[]",
        "run_time": 3.6e-05,
-       "start_time": "2026-10-14T03:00:58-04:00",
+       "start_time": "2026-10-14T10:28:49-04:00",
        "status": "passed"
       },
       {
@@ -1959,8 +2510,8 @@
        "resource_class": "Object",
        "resource_id": "RPCs the guest agent allows",
        "resource_params": "[]",
-       "run_time": 3.7e-05,
-       "start_time": "2026-10-14T03:00:58-04:00",
+       "run_time": 3.6e-05,
+       "start_time": "2026-10-14T10:28:49-04:00",
        "status": "passed"
       },
       {
@@ -1968,8 +2519,8 @@
        "resource_class": "Object",
        "resource_id": "RPCs the guest agent allows",
        "resource_params": "[]",
-       "run_time": 3.6e-05,
-       "start_time": "2026-10-14T03:00:58-04:00",
+       "run_time": 3.8e-05,
+       "start_time": "2026-10-14T10:28:49-04:00",
        "status": "passed"
       },
       {
@@ -1977,8 +2528,8 @@
        "resource_class": "Object",
        "resource_id": "RPCs the guest agent allows",
        "resource_params": "[]",
-       "run_time": 4.4e-05,
-       "start_time": "2026-10-14T03:00:58-04:00",
+       "run_time": 3.6e-05,
+       "start_time": "2026-10-14T10:28:49-04:00",
        "status": "passed"
       },
       {
@@ -1986,8 +2537,8 @@
        "resource_class": "command",
        "resource_id": "Command: `systemctl show -p DropInPaths --value qemu-guest-agent.service`",
        "resource_params": "[\"systemctl show -p DropInPaths --value qemu-guest-agent.service\"]",
-       "run_time": 0.136334,
-       "start_time": "2026-10-14T03:00:58-04:00",
+       "run_time": 0.152034,
+       "start_time": "2026-10-14T10:28:49-04:00",
        "status": "passed"
       },
       {
@@ -1995,8 +2546,8 @@
        "resource_class": "command",
        "resource_id": "Command: `rpm -V --nomtime qemu-guest-agent`",
        "resource_params": "[\"rpm -V --nomtime qemu-guest-agent\"]",
-       "run_time": 0.228984,
-       "start_time": "2026-10-14T03:00:58-04:00",
+       "run_time": 0.287032,
+       "start_time": "2026-10-14T10:28:49-04:00",
        "status": "passed"
       }
      ],
@@ -2025,8 +2576,8 @@
        "resource_class": "file",
        "resource_id": "/usr/local/share/safbox/hardening",
        "resource_params": "[\"/usr/local/share/safbox/hardening\"]",
-       "run_time": 0.121449,
-       "start_time": "2026-10-14T03:00:58-04:00",
+       "run_time": 0.136229,
+       "start_time": "2026-10-14T10:28:49-04:00",
        "status": "passed"
       },
       {
@@ -2034,8 +2585,8 @@
        "resource_class": "file",
        "resource_id": "/usr/local/share/safbox/hardening",
        "resource_params": "[\"/usr/local/share/safbox/hardening\"]",
-       "run_time": 0.128335,
-       "start_time": "2026-10-14T03:00:58-04:00",
+       "run_time": 0.136036,
+       "start_time": "2026-10-14T10:28:49-04:00",
        "status": "passed"
       },
       {
@@ -2043,8 +2594,8 @@
        "resource_class": "file",
        "resource_id": "/usr/local/share/safbox/hardening",
        "resource_params": "[\"/usr/local/share/safbox/hardening\"]",
-       "run_time": 0.122168,
-       "start_time": "2026-10-14T03:00:58-04:00",
+       "run_time": 0.141659,
+       "start_time": "2026-10-14T10:28:49-04:00",
        "status": "passed"
       },
       {
@@ -2052,8 +2603,8 @@
        "resource_class": "file",
        "resource_id": "/usr/local/share/safbox/hardening",
        "resource_params": "[\"/usr/local/share/safbox/hardening\"]",
-       "run_time": 9.8e-05,
-       "start_time": "2026-10-14T03:00:59-04:00",
+       "run_time": 9.7e-05,
+       "start_time": "2026-10-14T10:28:49-04:00",
        "status": "passed"
       }
      ],
@@ -2082,8 +2633,8 @@
        "resource_class": "Object",
        "resource_id": "The account the scan logged in as",
        "resource_params": "[]",
-       "run_time": 0.001422,
-       "start_time": "2026-10-14T03:00:59-04:00",
+       "run_time": 0.001544,
+       "start_time": "2026-10-14T10:28:49-04:00",
        "status": "passed"
       },
       {
@@ -2091,8 +2642,8 @@
        "resource_class": "service",
        "resource_id": "sshd",
        "resource_params": "[\"sshd\"]",
-       "run_time": 0.00089,
-       "start_time": "2026-10-14T03:00:59-04:00",
+       "run_time": 0.000788,
+       "start_time": "2026-10-14T10:28:49-04:00",
        "status": "passed"
       },
       {
@@ -2100,8 +2651,8 @@
        "resource_class": "service",
        "resource_id": "sshd",
        "resource_params": "[\"sshd\"]",
-       "run_time": 4.3e-05,
-       "start_time": "2026-10-14T03:00:59-04:00",
+       "run_time": 4.1e-05,
+       "start_time": "2026-10-14T10:28:49-04:00",
        "status": "passed"
       },
       {
@@ -2109,8 +2660,8 @@
        "resource_class": "Object",
        "resource_id": "sshd's effective configuration for packer",
        "resource_params": "[]",
-       "run_time": 3.1e-05,
-       "start_time": "2026-10-14T03:00:59-04:00",
+       "run_time": 3.2e-05,
+       "start_time": "2026-10-14T10:28:49-04:00",
        "status": "passed"
       },
       {
@@ -2119,7 +2670,7 @@
        "resource_id": "sshd's effective configuration for packer",
        "resource_params": "[]",
        "run_time": 2.4e-05,
-       "start_time": "2026-10-14T03:00:59-04:00",
+       "start_time": "2026-10-14T10:28:49-04:00",
        "status": "passed"
       },
       {
@@ -2127,8 +2678,8 @@
        "resource_class": "Object",
        "resource_id": "sshd's effective configuration for packer",
        "resource_params": "[]",
-       "run_time": 3.3e-05,
-       "start_time": "2026-10-14T03:00:59-04:00",
+       "run_time": 3.4e-05,
+       "start_time": "2026-10-14T10:28:49-04:00",
        "status": "passed"
       },
       {
@@ -2136,8 +2687,8 @@
        "resource_class": "Object",
        "resource_id": "sshd's effective configuration for packer",
        "resource_params": "[]",
-       "run_time": 3e-05,
-       "start_time": "2026-10-14T03:00:59-04:00",
+       "run_time": 6.6e-05,
+       "start_time": "2026-10-14T10:28:49-04:00",
        "status": "passed"
       },
       {
@@ -2145,8 +2696,8 @@
        "resource_class": "command",
        "resource_id": "Command: `sudo -l -U packer`",
        "resource_params": "[\"sudo -l -U packer\"]",
-       "run_time": 0.137123,
-       "start_time": "2026-10-14T03:00:59-04:00",
+       "run_time": 0.145983,
+       "start_time": "2026-10-14T10:28:49-04:00",
        "status": "passed"
       },
       {
@@ -2154,8 +2705,8 @@
        "resource_class": "command",
        "resource_id": "Command: `sudo -l -U packer`",
        "resource_params": "[\"sudo -l -U packer\"]",
-       "run_time": 7e-05,
-       "start_time": "2026-10-14T03:00:59-04:00",
+       "run_time": 6e-05,
+       "start_time": "2026-10-14T10:28:50-04:00",
        "status": "passed"
       }
      ],
@@ -2184,8 +2735,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/heimdall.network",
        "resource_params": "[\"/etc/containers/systemd/heimdall.network\"]",
-       "run_time": 0.121087,
-       "start_time": "2026-10-14T03:00:59-04:00",
+       "run_time": 0.130109,
+       "start_time": "2026-10-14T10:28:50-04:00",
        "status": "passed"
       },
       {
@@ -2193,8 +2744,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/heimdall.network",
        "resource_params": "[\"/etc/containers/systemd/heimdall.network\"]",
-       "run_time": 0.123629,
-       "start_time": "2026-10-14T03:00:59-04:00",
+       "run_time": 0.132209,
+       "start_time": "2026-10-14T10:28:50-04:00",
        "status": "passed"
       },
       {
@@ -2202,8 +2753,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/heimdall.network",
        "resource_params": "[\"/etc/containers/systemd/heimdall.network\"]",
-       "run_time": 0.000104,
-       "start_time": "2026-10-14T03:00:59-04:00",
+       "run_time": 0.000127,
+       "start_time": "2026-10-14T10:28:50-04:00",
        "status": "passed"
       },
       {
@@ -2211,8 +2762,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/heimdall.pod",
        "resource_params": "[\"/etc/containers/systemd/heimdall.pod\"]",
-       "run_time": 0.119179,
-       "start_time": "2026-10-14T03:00:59-04:00",
+       "run_time": 0.128159,
+       "start_time": "2026-10-14T10:28:50-04:00",
        "status": "passed"
       },
       {
@@ -2220,8 +2771,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/heimdall.pod",
        "resource_params": "[\"/etc/containers/systemd/heimdall.pod\"]",
-       "run_time": 0.123128,
-       "start_time": "2026-10-14T03:00:59-04:00",
+       "run_time": 0.137116,
+       "start_time": "2026-10-14T10:28:50-04:00",
        "status": "passed"
       },
       {
@@ -2229,8 +2780,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/heimdall.pod",
        "resource_params": "[\"/etc/containers/systemd/heimdall.pod\"]",
-       "run_time": 9.4e-05,
-       "start_time": "2026-10-14T03:00:59-04:00",
+       "run_time": 0.000103,
+       "start_time": "2026-10-14T10:28:50-04:00",
        "status": "passed"
       },
       {
@@ -2238,8 +2789,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/heimdall-db.volume",
        "resource_params": "[\"/etc/containers/systemd/heimdall-db.volume\"]",
-       "run_time": 0.11836,
-       "start_time": "2026-10-14T03:00:59-04:00",
+       "run_time": 0.132703,
+       "start_time": "2026-10-14T10:28:50-04:00",
        "status": "passed"
       },
       {
@@ -2247,8 +2798,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/heimdall-db.volume",
        "resource_params": "[\"/etc/containers/systemd/heimdall-db.volume\"]",
-       "run_time": 0.121751,
-       "start_time": "2026-10-14T03:00:59-04:00",
+       "run_time": 0.143456,
+       "start_time": "2026-10-14T10:28:50-04:00",
        "status": "passed"
       },
       {
@@ -2256,8 +2807,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/heimdall-db.volume",
        "resource_params": "[\"/etc/containers/systemd/heimdall-db.volume\"]",
-       "run_time": 7.7e-05,
-       "start_time": "2026-10-14T03:00:59-04:00",
+       "run_time": 8.8e-05,
+       "start_time": "2026-10-14T10:28:50-04:00",
        "status": "passed"
       },
       {
@@ -2265,8 +2816,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/heimdall-db.container",
        "resource_params": "[\"/etc/containers/systemd/heimdall-db.container\"]",
-       "run_time": 0.121987,
-       "start_time": "2026-10-14T03:00:59-04:00",
+       "run_time": 0.131234,
+       "start_time": "2026-10-14T10:28:50-04:00",
        "status": "passed"
       },
       {
@@ -2274,8 +2825,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/heimdall-db.container",
        "resource_params": "[\"/etc/containers/systemd/heimdall-db.container\"]",
-       "run_time": 0.122129,
-       "start_time": "2026-10-14T03:01:00-04:00",
+       "run_time": 0.133634,
+       "start_time": "2026-10-14T10:28:51-04:00",
        "status": "passed"
       },
       {
@@ -2283,8 +2834,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/heimdall-db.container",
        "resource_params": "[\"/etc/containers/systemd/heimdall-db.container\"]",
-       "run_time": 9.5e-05,
-       "start_time": "2026-10-14T03:01:00-04:00",
+       "run_time": 0.0001,
+       "start_time": "2026-10-14T10:28:51-04:00",
        "status": "passed"
       },
       {
@@ -2292,8 +2843,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/heimdall.container",
        "resource_params": "[\"/etc/containers/systemd/heimdall.container\"]",
-       "run_time": 0.119686,
-       "start_time": "2026-10-14T03:01:00-04:00",
+       "run_time": 0.132778,
+       "start_time": "2026-10-14T10:28:51-04:00",
        "status": "passed"
       },
       {
@@ -2301,8 +2852,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/heimdall.container",
        "resource_params": "[\"/etc/containers/systemd/heimdall.container\"]",
-       "run_time": 0.122267,
-       "start_time": "2026-10-14T03:01:00-04:00",
+       "run_time": 0.13029,
+       "start_time": "2026-10-14T10:28:51-04:00",
        "status": "passed"
       },
       {
@@ -2310,8 +2861,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/heimdall.container",
        "resource_params": "[\"/etc/containers/systemd/heimdall.container\"]",
-       "run_time": 0.0001,
-       "start_time": "2026-10-14T03:01:00-04:00",
+       "run_time": 8.7e-05,
+       "start_time": "2026-10-14T10:28:51-04:00",
        "status": "passed"
       },
       {
@@ -2319,8 +2870,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/heimdall.container",
        "resource_params": "[\"/etc/containers/systemd/heimdall.container\"]",
-       "run_time": 0.121648,
-       "start_time": "2026-10-14T03:01:00-04:00",
+       "run_time": 0.130451,
+       "start_time": "2026-10-14T10:28:51-04:00",
        "status": "passed"
       },
       {
@@ -2328,8 +2879,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/heimdall.container",
        "resource_params": "[\"/etc/containers/systemd/heimdall.container\"]",
-       "run_time": 5.8e-05,
-       "start_time": "2026-10-14T03:01:00-04:00",
+       "run_time": 3.6e-05,
+       "start_time": "2026-10-14T10:28:51-04:00",
        "status": "passed"
       },
       {
@@ -2337,8 +2888,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/heimdall.container",
        "resource_params": "[\"/etc/containers/systemd/heimdall.container\"]",
-       "run_time": 3.2e-05,
-       "start_time": "2026-10-14T03:01:00-04:00",
+       "run_time": 3.1e-05,
+       "start_time": "2026-10-14T10:28:51-04:00",
        "status": "passed"
       },
       {
@@ -2346,8 +2897,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/heimdall.container",
        "resource_params": "[\"/etc/containers/systemd/heimdall.container\"]",
-       "run_time": 3.1e-05,
-       "start_time": "2026-10-14T03:01:00-04:00",
+       "run_time": 3e-05,
+       "start_time": "2026-10-14T10:28:51-04:00",
        "status": "passed"
       },
       {
@@ -2355,8 +2906,8 @@
        "resource_class": "command",
        "resource_id": "Command: `podman image exists docker.io/mitre/heimdall2@sha256:06f6e72d416a71e8939da341f78681891aa531765a9d4c62dcc224d3044d0347`",
        "resource_params": "[\"podman image exists docker.io/mitre/heimdall2@sha256:06f6e72d416a71e8939da341f78681891aa531765a9d4c62dcc224d3044d0347\"]",
-       "run_time": 0.330233,
-       "start_time": "2026-10-14T03:01:00-04:00",
+       "run_time": 0.306331,
+       "start_time": "2026-10-14T10:28:51-04:00",
        "status": "passed"
       },
       {
@@ -2364,8 +2915,8 @@
        "resource_class": "command",
        "resource_id": "Command: `systemctl show -p Restart --value heimdall.service`",
        "resource_params": "[\"systemctl show -p Restart --value heimdall.service\"]",
-       "run_time": 0.138057,
-       "start_time": "2026-10-14T03:01:00-04:00",
+       "run_time": 0.152215,
+       "start_time": "2026-10-14T10:28:51-04:00",
        "status": "passed"
       },
       {
@@ -2373,8 +2924,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/heimdall-db.container",
        "resource_params": "[\"/etc/containers/systemd/heimdall-db.container\"]",
-       "run_time": 0.121976,
-       "start_time": "2026-10-14T03:01:01-04:00",
+       "run_time": 0.146621,
+       "start_time": "2026-10-14T10:28:52-04:00",
        "status": "passed"
       },
       {
@@ -2382,8 +2933,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/heimdall-db.container",
        "resource_params": "[\"/etc/containers/systemd/heimdall-db.container\"]",
-       "run_time": 6.3e-05,
-       "start_time": "2026-10-14T03:01:01-04:00",
+       "run_time": 5.7e-05,
+       "start_time": "2026-10-14T10:28:52-04:00",
        "status": "passed"
       },
       {
@@ -2391,8 +2942,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/heimdall-db.container",
        "resource_params": "[\"/etc/containers/systemd/heimdall-db.container\"]",
-       "run_time": 3.4e-05,
-       "start_time": "2026-10-14T03:01:01-04:00",
+       "run_time": 3.1e-05,
+       "start_time": "2026-10-14T10:28:52-04:00",
        "status": "passed"
       },
       {
@@ -2400,8 +2951,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/heimdall-db.container",
        "resource_params": "[\"/etc/containers/systemd/heimdall-db.container\"]",
-       "run_time": 3e-05,
-       "start_time": "2026-10-14T03:01:01-04:00",
+       "run_time": 2.8e-05,
+       "start_time": "2026-10-14T10:28:52-04:00",
        "status": "passed"
       },
       {
@@ -2409,8 +2960,8 @@
        "resource_class": "command",
        "resource_id": "Command: `podman image exists docker.io/library/postgres@sha256:2d2b8998d31037bf721cfdf764d76ba74171b4fab3431b7f72c27c56ddbdf9e3`",
        "resource_params": "[\"podman image exists docker.io/library/postgres@sha256:2d2b8998d31037bf721cfdf764d76ba74171b4fab3431b7f72c27c56ddbdf9e3\"]",
-       "run_time": 0.26683,
-       "start_time": "2026-10-14T03:01:01-04:00",
+       "run_time": 0.337997,
+       "start_time": "2026-10-14T10:28:52-04:00",
        "status": "passed"
       },
       {
@@ -2418,8 +2969,8 @@
        "resource_class": "command",
        "resource_id": "Command: `systemctl show -p Restart --value heimdall-db.service`",
        "resource_params": "[\"systemctl show -p Restart --value heimdall-db.service\"]",
-       "run_time": 0.142683,
-       "start_time": "2026-10-14T03:01:01-04:00",
+       "run_time": 0.147458,
+       "start_time": "2026-10-14T10:28:52-04:00",
        "status": "passed"
       },
       {
@@ -2427,8 +2978,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/heimdall.pod",
        "resource_params": "[\"/etc/containers/systemd/heimdall.pod\"]",
-       "run_time": 0.121293,
-       "start_time": "2026-10-14T03:01:01-04:00",
+       "run_time": 0.142229,
+       "start_time": "2026-10-14T10:28:52-04:00",
        "status": "passed"
       },
       {
@@ -2436,8 +2987,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/heimdall.pod",
        "resource_params": "[\"/etc/containers/systemd/heimdall.pod\"]",
-       "run_time": 3.6e-05,
-       "start_time": "2026-10-14T03:01:01-04:00",
+       "run_time": 6e-05,
+       "start_time": "2026-10-14T10:28:52-04:00",
        "status": "passed"
       },
       {
@@ -2445,8 +2996,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/heimdall.pod",
        "resource_params": "[\"/etc/containers/systemd/heimdall.pod\"]",
-       "run_time": 8.9e-05,
-       "start_time": "2026-10-14T03:01:01-04:00",
+       "run_time": 4.8e-05,
+       "start_time": "2026-10-14T10:28:52-04:00",
        "status": "passed"
       },
       {
@@ -2454,8 +3005,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/heimdall-db.container",
        "resource_params": "[\"/etc/containers/systemd/heimdall-db.container\"]",
-       "run_time": 2.8e-05,
-       "start_time": "2026-10-14T03:01:01-04:00",
+       "run_time": 2.9e-05,
+       "start_time": "2026-10-14T10:28:52-04:00",
        "status": "passed"
       },
       {
@@ -2463,8 +3014,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/heimdall-db.container",
        "resource_params": "[\"/etc/containers/systemd/heimdall-db.container\"]",
-       "run_time": 3.1e-05,
-       "start_time": "2026-10-14T03:01:01-04:00",
+       "run_time": 3.2e-05,
+       "start_time": "2026-10-14T10:28:52-04:00",
        "status": "passed"
       },
       {
@@ -2472,8 +3023,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/heimdall.container",
        "resource_params": "[\"/etc/containers/systemd/heimdall.container\"]",
-       "run_time": 3.6e-05,
-       "start_time": "2026-10-14T03:01:01-04:00",
+       "run_time": 8.6e-05,
+       "start_time": "2026-10-14T10:28:52-04:00",
        "status": "passed"
       },
       {
@@ -2481,8 +3032,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/heimdall.container",
        "resource_params": "[\"/etc/containers/systemd/heimdall.container\"]",
-       "run_time": 2.7e-05,
-       "start_time": "2026-10-14T03:01:01-04:00",
+       "run_time": 2.9e-05,
+       "start_time": "2026-10-14T10:28:52-04:00",
        "status": "passed"
       },
       {
@@ -2490,8 +3041,8 @@
        "resource_class": "command",
        "resource_id": "Command: `systemctl show -p WantedBy --value heimdall-pod.service`",
        "resource_params": "[\"systemctl show -p WantedBy --value heimdall-pod.service\"]",
-       "run_time": 0.140697,
-       "start_time": "2026-10-14T03:01:01-04:00",
+       "run_time": 0.145795,
+       "start_time": "2026-10-14T10:28:52-04:00",
        "status": "passed"
       },
       {
@@ -2499,8 +3050,8 @@
        "resource_class": "command",
        "resource_id": "Command: `systemctl show -p WantedBy --value heimdall-db.service`",
        "resource_params": "[\"systemctl show -p WantedBy --value heimdall-db.service\"]",
-       "run_time": 0.141383,
-       "start_time": "2026-10-14T03:01:01-04:00",
+       "run_time": 0.147961,
+       "start_time": "2026-10-14T10:28:52-04:00",
        "status": "passed"
       },
       {
@@ -2508,8 +3059,8 @@
        "resource_class": "command",
        "resource_id": "Command: `systemctl show -p WantedBy --value heimdall.service`",
        "resource_params": "[\"systemctl show -p WantedBy --value heimdall.service\"]",
-       "run_time": 0.139023,
-       "start_time": "2026-10-14T03:01:01-04:00",
+       "run_time": 0.15499,
+       "start_time": "2026-10-14T10:28:53-04:00",
        "status": "passed"
       },
       {
@@ -2517,8 +3068,8 @@
        "resource_class": "file",
        "resource_id": "/etc/safbox/firstboot.d/20-heimdall.sh",
        "resource_params": "[\"/etc/safbox/firstboot.d/20-heimdall.sh\"]",
-       "run_time": 0.121878,
-       "start_time": "2026-10-14T03:01:02-04:00",
+       "run_time": 0.130808,
+       "start_time": "2026-10-14T10:28:53-04:00",
        "status": "passed"
       },
       {
@@ -2526,8 +3077,8 @@
        "resource_class": "file",
        "resource_id": "/etc/safbox/firstboot.d/20-heimdall.sh",
        "resource_params": "[\"/etc/safbox/firstboot.d/20-heimdall.sh\"]",
-       "run_time": 0.12078,
-       "start_time": "2026-10-14T03:01:02-04:00",
+       "run_time": 0.132974,
+       "start_time": "2026-10-14T10:28:53-04:00",
        "status": "passed"
       },
       {
@@ -2535,8 +3086,8 @@
        "resource_class": "file",
        "resource_id": "/etc/safbox/firstboot.d/20-heimdall.sh",
        "resource_params": "[\"/etc/safbox/firstboot.d/20-heimdall.sh\"]",
-       "run_time": 7.9e-05,
-       "start_time": "2026-10-14T03:01:02-04:00",
+       "run_time": 6.7e-05,
+       "start_time": "2026-10-14T10:28:53-04:00",
        "status": "passed"
       }
      ],
@@ -2565,8 +3116,8 @@
        "resource_class": "file",
        "resource_id": "/etc/safbox/heimdall.env",
        "resource_params": "[\"/etc/safbox/heimdall.env\"]",
-       "run_time": 0.130951,
-       "start_time": "2026-10-14T03:01:02-04:00",
+       "run_time": 0.128202,
+       "start_time": "2026-10-14T10:28:53-04:00",
        "status": "passed"
       },
       {
@@ -2574,8 +3125,8 @@
        "resource_class": "file",
        "resource_id": "/etc/safbox/heimdall-db.env",
        "resource_params": "[\"/etc/safbox/heimdall-db.env\"]",
-       "run_time": 0.122982,
-       "start_time": "2026-10-14T03:01:02-04:00",
+       "run_time": 0.13328,
+       "start_time": "2026-10-14T10:28:53-04:00",
        "status": "passed"
       }
      ],
@@ -2605,9 +3156,9 @@
        "resource_class": "noop",
        "resource_id": "No-op",
        "resource_params": "[]",
-       "run_time": 4e-06,
+       "run_time": 3e-06,
        "skip_message": "Skipped control due to only_if condition: Heimdall is not in expected_services, or this is not a deployed clone",
-       "start_time": "2026-10-14T03:01:02-04:00",
+       "start_time": "2026-10-14T10:28:53-04:00",
        "status": "skipped"
       }
      ],
@@ -2639,7 +3190,7 @@
        "resource_params": "[]",
        "run_time": 1e-06,
        "skip_message": "Skipped control due to only_if condition: Heimdall is not in expected_services, or this is not a deployed clone",
-       "start_time": "2026-10-14T03:01:02-04:00",
+       "start_time": "2026-10-14T10:28:53-04:00",
        "status": "skipped"
       }
      ],
@@ -2673,7 +3224,7 @@
        "resource_params": "[]",
        "run_time": 1e-06,
        "skip_message": "Skipped control due to only_if condition: Heimdall is not in expected_services, or this is not a deployed clone",
-       "start_time": "2026-10-14T03:01:02-04:00",
+       "start_time": "2026-10-14T10:28:53-04:00",
        "status": "skipped"
       }
      ],
@@ -2704,8 +3255,8 @@
        "resource_class": "Object",
        "resource_id": "redhat",
        "resource_params": "[]",
-       "run_time": 7.8e-05,
-       "start_time": "2026-10-14T03:01:02-04:00",
+       "run_time": 9e-05,
+       "start_time": "2026-10-14T10:28:53-04:00",
        "status": "passed"
       },
       {
@@ -2713,8 +3264,8 @@
        "resource_class": "Object",
        "resource_id": "PLATFORM_ID in /etc/os-release",
        "resource_params": "[]",
-       "run_time": 8.8e-05,
-       "start_time": "2026-10-14T03:01:02-04:00",
+       "run_time": 8.3e-05,
+       "start_time": "2026-10-14T10:28:53-04:00",
        "status": "passed"
       },
       {
@@ -2723,7 +3274,7 @@
        "resource_id": "10.2",
        "resource_params": "[]",
        "run_time": 4.2e-05,
-       "start_time": "2026-10-14T03:01:02-04:00",
+       "start_time": "2026-10-14T10:28:53-04:00",
        "status": "passed"
       }
      ],
@@ -2752,8 +3303,8 @@
        "resource_class": "Object",
        "resource_id": "distribution AlmaLinux 10.2 (Lavender Lion) (x86_64)",
        "resource_params": "[]",
-       "run_time": 6.6e-05,
-       "start_time": "2026-10-14T03:01:02-04:00",
+       "run_time": 6.7e-05,
+       "start_time": "2026-10-14T10:28:53-04:00",
        "status": "passed"
       },
       {
@@ -2761,8 +3312,8 @@
        "resource_class": "Object",
        "resource_id": "image package architecture x86_64_v2",
        "resource_params": "[]",
-       "run_time": 2.7e-05,
-       "start_time": "2026-10-14T03:01:02-04:00",
+       "run_time": 2.8e-05,
+       "start_time": "2026-10-14T10:28:53-04:00",
        "status": "passed"
       },
       {
@@ -2770,8 +3321,8 @@
        "resource_class": "Object",
        "resource_id": "highest microarchitecture level this CPU supports x86-64-v2",
        "resource_params": "[]",
-       "run_time": 2.5e-05,
-       "start_time": "2026-10-14T03:01:02-04:00",
+       "run_time": 3.1e-05,
+       "start_time": "2026-10-14T10:28:53-04:00",
        "status": "passed"
       }
      ],
@@ -2800,8 +3351,8 @@
        "resource_class": "package",
        "resource_id": "podman",
        "resource_params": "[\"podman\"]",
-       "run_time": 0.173348,
-       "start_time": "2026-10-14T03:01:02-04:00",
+       "run_time": 0.189512,
+       "start_time": "2026-10-14T10:28:53-04:00",
        "status": "passed"
       },
       {
@@ -2809,8 +3360,8 @@
        "resource_class": "command",
        "resource_id": "Command: `podman --version`",
        "resource_params": "[\"podman --version\"]",
-       "run_time": 0.212252,
-       "start_time": "2026-10-14T03:01:02-04:00",
+       "run_time": 0.230411,
+       "start_time": "2026-10-14T10:28:53-04:00",
        "status": "passed"
       },
       {
@@ -2818,8 +3369,8 @@
        "resource_class": "command",
        "resource_id": "Command: `podman --version`",
        "resource_params": "[\"podman --version\"]",
-       "run_time": 7e-05,
-       "start_time": "2026-10-14T03:01:02-04:00",
+       "run_time": 6.6e-05,
+       "start_time": "2026-10-14T10:28:54-04:00",
        "status": "passed"
       },
       {
@@ -2827,8 +3378,8 @@
        "resource_class": "directory",
        "resource_id": "/etc/containers/systemd",
        "resource_params": "[\"/etc/containers/systemd\"]",
-       "run_time": 0.25952,
-       "start_time": "2026-10-14T03:01:02-04:00",
+       "run_time": 0.276718,
+       "start_time": "2026-10-14T10:28:54-04:00",
        "status": "passed"
       },
       {
@@ -2836,8 +3387,8 @@
        "resource_class": "directory",
        "resource_id": "/etc/containers/systemd",
        "resource_params": "[\"/etc/containers/systemd\"]",
-       "run_time": 8.7e-05,
-       "start_time": "2026-10-14T03:01:03-04:00",
+       "run_time": 8e-05,
+       "start_time": "2026-10-14T10:28:54-04:00",
        "status": "passed"
       },
       {
@@ -2845,8 +3396,8 @@
        "resource_class": "directory",
        "resource_id": "/etc/containers/systemd",
        "resource_params": "[\"/etc/containers/systemd\"]",
-       "run_time": 8.4e-05,
-       "start_time": "2026-10-14T03:01:03-04:00",
+       "run_time": 7.9e-05,
+       "start_time": "2026-10-14T10:28:54-04:00",
        "status": "passed"
       },
       {
@@ -2854,8 +3405,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/registries.conf.d/50-safbox.conf",
        "resource_params": "[\"/etc/containers/registries.conf.d/50-safbox.conf\"]",
-       "run_time": 0.122822,
-       "start_time": "2026-10-14T03:01:03-04:00",
+       "run_time": 0.130387,
+       "start_time": "2026-10-14T10:28:54-04:00",
        "status": "passed"
       },
       {
@@ -2863,8 +3414,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/registries.conf.d/50-safbox.conf",
        "resource_params": "[\"/etc/containers/registries.conf.d/50-safbox.conf\"]",
-       "run_time": 0.122572,
-       "start_time": "2026-10-14T03:01:03-04:00",
+       "run_time": 0.158559,
+       "start_time": "2026-10-14T10:28:54-04:00",
        "status": "passed"
       }
      ],
@@ -2896,7 +3447,7 @@
        "resource_params": "[]",
        "run_time": 3e-06,
        "skip_message": "Skipped control due to only_if condition: smoke test unit not installed in this build",
-       "start_time": "2026-10-14T03:01:03-04:00",
+       "start_time": "2026-10-14T10:28:54-04:00",
        "status": "skipped"
       }
      ],
@@ -2908,11 +3459,11 @@
      "waiver_data": {}
     },
     {
-     "code": "control 'safbox-proxy-1' do\n  impact 1.0\n  title 'The TLS proxy Quadlet unit and configuration are installed and enabled'\n  desc \"An nginx container from a pinned upstream image (Red Hat UBI 9, whose OpenSSL runs its FIPS provider under the host's FIPS enforcement) on the host network, terminating TLS for each application on its own HTTPS port. Cipher selection defers to the system crypto policy (PROFILE=SYSTEM), which podman maps into the container from the FIPS host. The unit waits for the certificate first boot generates.\"\n  only_if('the proxy is not in expected_services (safbox_proxy_1 switched off)') do\n    service_expected.call('proxy')\n  end\n\n  describe file('/etc/containers/systemd/safbox-proxy.container') do\n    it { should exist }\n    its('owner') { should eq 'root' }\n    its('mode') { should cmp '0644' }\n    its('content') { should match(/^Image=#{Regexp.escape(image)}$/) }\n    its('content') { should match(/^Network=host$/) }\n    its('content') { should match(/^ReadOnly=true$/) }\n    its('content') { should match(/^NoNewPrivileges=true$/) }\n    its('content') { should match(/^DropCapability=all$/) }\n    its('content') { should match(/^Memory=\\d+[kmg]?$/i) }\n    its('content') { should match(%r{^ConditionPathExists=#{Regexp.escape(key)}$}) }\n  end\n\n  describe command(\"podman image exists #{image}\") do\n    its('exit_status') { should eq 0 }\n  end\n\n  describe command('systemctl show -p Restart --value safbox-proxy.service') do\n    its('stdout.strip') { should eq 'always' }\n  end\n\n  describe command('systemctl show -p WantedBy --value safbox-proxy.service') do\n    its('stdout.split') { should include 'multi-user.target' }\n  end\n\n  describe file(nginx_conf) do\n    it { should exist }\n    its('owner') { should eq 'root' }\n    its('content') { should match(/^\\s*ssl_ciphers PROFILE=SYSTEM;$/) }\n    its('content') { should match(/^\\s*ssl_protocols TLSv1\\.2 TLSv1\\.3;$/) }\n    its('content') { should_not match(/^\\s*listen\\s+(\\S+:)?(80|443)[\\s;]/) }\n  end\n\n  apps.each do |app|\n    describe \"#{nginx_conf} listener for #{app}\" do\n      subject { file(nginx_conf).content }\n      it { should match(/^\\s*listen #{proxy_ports[app]} ssl;$/) }\n    end\n  end\n\n  describe file('/etc/safbox/firstboot.d/40-proxy.sh') do\n    it { should exist }\n    it { should be_executable }\n    its('owner') { should eq 'root' }\n  end\nend\n",
-     "desc": "An nginx container from a pinned upstream image (Red Hat UBI 9, whose OpenSSL runs its FIPS provider under the host's FIPS enforcement) on the host network, terminating TLS for each application on its own HTTPS port. Cipher selection defers to the system crypto policy (PROFILE=SYSTEM), which podman maps into the container from the FIPS host. The unit waits for the certificate first boot generates.",
+     "code": "control 'safbox-proxy-1' do\n  impact 1.0\n  title 'The TLS proxy Quadlet unit, its configuration and the landing page are installed and enabled'\n  desc \"An nginx container from a pinned upstream image (Red Hat UBI 9, whose OpenSSL runs its FIPS provider under the host's FIPS enforcement) on the host network, terminating TLS for each application on its own HTTPS port and serving the landing page on #{landing_port}, with nothing on port 80. Cipher selection defers to the system crypto policy (PROFILE=SYSTEM), which podman maps into the container from the FIPS host. The unit waits for the certificate first boot generates. The landing page's status files are written by a sandboxed oneshot service without capabilities, run by an enabled timer.\"\n  only_if('the proxy is not in expected_services (safbox_proxy_1 switched off)') do\n    service_expected.call('proxy')\n  end\n\n  describe file('/etc/containers/systemd/safbox-proxy.container') do\n    it { should exist }\n    its('owner') { should eq 'root' }\n    its('mode') { should cmp '0644' }\n    its('content') { should match(/^Image=#{Regexp.escape(image)}$/) }\n    its('content') { should match(/^Network=host$/) }\n    its('content') { should match(/^ReadOnly=true$/) }\n    its('content') { should match(/^NoNewPrivileges=true$/) }\n    its('content') { should match(/^DropCapability=all$/) }\n    # The workers' user switch, and binding the landing page's port below 1024.\n    its('content') { should match(/^AddCapability=CAP_CHOWN CAP_NET_BIND_SERVICE CAP_SETGID CAP_SETUID$/) }\n    its('content') { should match(/^Memory=\\d+[kmg]?$/i) }\n    its('content') { should match(%r{^ConditionPathExists=#{Regexp.escape(key)}$}) }\n    its('content') { should match(%r{^Volume=#{Regexp.escape(status_dir)}:/etc/nginx/safbox-landing-status:ro,z$}) }\n  end\n\n  describe command(\"podman image exists #{image}\") do\n    its('exit_status') { should eq 0 }\n  end\n\n  describe command('systemctl show -p Restart --value safbox-proxy.service') do\n    its('stdout.strip') { should eq 'always' }\n  end\n\n  describe command('systemctl show -p WantedBy --value safbox-proxy.service') do\n    its('stdout.split') { should include 'multi-user.target' }\n  end\n\n  describe file(nginx_conf) do\n    it { should exist }\n    its('owner') { should eq 'root' }\n    its('content') { should match(/^\\s*ssl_ciphers PROFILE=SYSTEM;$/) }\n    its('content') { should match(/^\\s*ssl_protocols TLSv1\\.2 TLSv1\\.3;$/) }\n    its('content') { should_not match(/^\\s*listen\\s+(\\S+:)?80[\\s;]/) }\n    its('content') { should match(/^\\s*listen #{landing_port} ssl;$/) }\n    its('content') { should match(/^\\s*ssi on;$/) }\n  end\n\n  # The landing page: the static files the proxy role renders, the generator\n  # of the status files the page includes, and the timer that runs it.\n  %w[index.html safbox.css].each do |name|\n    describe file(\"#{landing_dir}/#{name}\") do\n      it { should exist }\n      its('owner') { should eq 'root' }\n      its('mode') { should cmp '0644' }\n    end\n  end\n\n  describe file(\"/usr/local/sbin/#{status_unit}\") do\n    it { should exist }\n    it { should be_executable }\n    its('owner') { should eq 'root' }\n  end\n\n  describe file('/etc/tmpfiles.d/safbox-landing.conf') do\n    its('content') { should match(%r{^d #{Regexp.escape(status_dir)} 0755 root root -$}) }\n  end\n\n  describe file(\"/etc/systemd/system/#{status_unit}.service\") do\n    its('content') { should match(%r{^ExecStart=/usr/local/sbin/#{status_unit}$}) }\n    its('content') { should match(/^CapabilityBoundingSet=$/) }\n    its('content') { should match(/^NoNewPrivileges=yes$/) }\n    its('content') { should match(/^ProtectSystem=strict$/) }\n    its('content') { should match(%r{^ReadWritePaths=#{Regexp.escape(status_dir)}$}) }\n  end\n\n  describe command(\"systemctl show -p WantedBy --value #{status_unit}.timer\") do\n    its('stdout.split') { should include 'timers.target' }\n  end\n\n  apps.each do |app|\n    describe \"#{nginx_conf} listener for #{app}\" do\n      subject { file(nginx_conf).content }\n      it { should match(/^\\s*listen #{proxy_ports[app]} ssl;$/) }\n    end\n  end\n\n  describe file('/etc/safbox/firstboot.d/40-proxy.sh') do\n    it { should exist }\n    it { should be_executable }\n    its('owner') { should eq 'root' }\n  end\nend\n",
+     "desc": "An nginx container from a pinned upstream image (Red Hat UBI 9, whose OpenSSL runs its FIPS provider under the host's FIPS enforcement) on the host network, terminating TLS for each application on its own HTTPS port and serving the landing page on 443, with nothing on port 80. Cipher selection defers to the system crypto policy (PROFILE=SYSTEM), which podman maps into the container from the FIPS host. The unit waits for the certificate first boot generates. The landing page's status files are written by a sandboxed oneshot service without capabilities, run by an enabled timer.",
      "descriptions": [
       {
-       "data": "An nginx container from a pinned upstream image (Red Hat UBI 9, whose OpenSSL runs its FIPS provider under the host's FIPS enforcement) on the host network, terminating TLS for each application on its own HTTPS port. Cipher selection defers to the system crypto policy (PROFILE=SYSTEM), which podman maps into the container from the FIPS host. The unit waits for the certificate first boot generates.",
+       "data": "An nginx container from a pinned upstream image (Red Hat UBI 9, whose OpenSSL runs its FIPS provider under the host's FIPS enforcement) on the host network, terminating TLS for each application on its own HTTPS port and serving the landing page on 443, with nothing on port 80. Cipher selection defers to the system crypto policy (PROFILE=SYSTEM), which podman maps into the container from the FIPS host. The unit waits for the certificate first boot generates. The landing page's status files are written by a sandboxed oneshot service without capabilities, run by an enabled timer.",
        "label": "default"
       }
      ],
@@ -2925,8 +3476,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/safbox-proxy.container",
        "resource_params": "[\"/etc/containers/systemd/safbox-proxy.container\"]",
-       "run_time": 0.121633,
-       "start_time": "2026-10-14T03:01:03-04:00",
+       "run_time": 0.129808,
+       "start_time": "2026-10-14T10:28:54-04:00",
        "status": "passed"
       },
       {
@@ -2934,8 +3485,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/safbox-proxy.container",
        "resource_params": "[\"/etc/containers/systemd/safbox-proxy.container\"]",
-       "run_time": 0.121271,
-       "start_time": "2026-10-14T03:01:03-04:00",
+       "run_time": 0.138553,
+       "start_time": "2026-10-14T10:28:54-04:00",
        "status": "passed"
       },
       {
@@ -2943,8 +3494,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/safbox-proxy.container",
        "resource_params": "[\"/etc/containers/systemd/safbox-proxy.container\"]",
-       "run_time": 0.000104,
-       "start_time": "2026-10-14T03:01:03-04:00",
+       "run_time": 9.8e-05,
+       "start_time": "2026-10-14T10:28:55-04:00",
        "status": "passed"
       },
       {
@@ -2952,8 +3503,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/safbox-proxy.container",
        "resource_params": "[\"/etc/containers/systemd/safbox-proxy.container\"]",
-       "run_time": 0.124555,
-       "start_time": "2026-10-14T03:01:03-04:00",
+       "run_time": 0.135338,
+       "start_time": "2026-10-14T10:28:55-04:00",
        "status": "passed"
       },
       {
@@ -2961,8 +3512,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/safbox-proxy.container",
        "resource_params": "[\"/etc/containers/systemd/safbox-proxy.container\"]",
-       "run_time": 6.4e-05,
-       "start_time": "2026-10-14T03:01:03-04:00",
+       "run_time": 6.2e-05,
+       "start_time": "2026-10-14T10:28:55-04:00",
        "status": "passed"
       },
       {
@@ -2970,8 +3521,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/safbox-proxy.container",
        "resource_params": "[\"/etc/containers/systemd/safbox-proxy.container\"]",
-       "run_time": 4e-05,
-       "start_time": "2026-10-14T03:01:03-04:00",
+       "run_time": 3.5e-05,
+       "start_time": "2026-10-14T10:28:55-04:00",
        "status": "passed"
       },
       {
@@ -2979,8 +3530,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/safbox-proxy.container",
        "resource_params": "[\"/etc/containers/systemd/safbox-proxy.container\"]",
-       "run_time": 3.7e-05,
-       "start_time": "2026-10-14T03:01:03-04:00",
+       "run_time": 3.1e-05,
+       "start_time": "2026-10-14T10:28:55-04:00",
        "status": "passed"
       },
       {
@@ -2988,8 +3539,17 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/safbox-proxy.container",
        "resource_params": "[\"/etc/containers/systemd/safbox-proxy.container\"]",
+       "run_time": 3.4e-05,
+       "start_time": "2026-10-14T10:28:55-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "File /etc/containers/systemd/safbox-proxy.container content is expected to match /^AddCapability=CAP_CHOWN CAP_NET_BIND_SERVICE CAP_SETGID CAP_SETUID$/",
+       "resource_class": "file",
+       "resource_id": "/etc/containers/systemd/safbox-proxy.container",
+       "resource_params": "[\"/etc/containers/systemd/safbox-proxy.container\"]",
        "run_time": 3.3e-05,
-       "start_time": "2026-10-14T03:01:03-04:00",
+       "start_time": "2026-10-14T10:28:55-04:00",
        "status": "passed"
       },
       {
@@ -2997,8 +3557,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/safbox-proxy.container",
        "resource_params": "[\"/etc/containers/systemd/safbox-proxy.container\"]",
-       "run_time": 0.000377,
-       "start_time": "2026-10-14T03:01:03-04:00",
+       "run_time": 0.000654,
+       "start_time": "2026-10-14T10:28:55-04:00",
        "status": "passed"
       },
       {
@@ -3006,8 +3566,17 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/safbox-proxy.container",
        "resource_params": "[\"/etc/containers/systemd/safbox-proxy.container\"]",
-       "run_time": 5.4e-05,
-       "start_time": "2026-10-14T03:01:03-04:00",
+       "run_time": 5.5e-05,
+       "start_time": "2026-10-14T10:28:55-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "File /etc/containers/systemd/safbox-proxy.container content is expected to match /^Volume=\\/run\\/safbox\\-landing:\\/etc\\/nginx\\/safbox-landing-status:ro,z$/",
+       "resource_class": "file",
+       "resource_id": "/etc/containers/systemd/safbox-proxy.container",
+       "resource_params": "[\"/etc/containers/systemd/safbox-proxy.container\"]",
+       "run_time": 8.7e-05,
+       "start_time": "2026-10-14T10:28:55-04:00",
        "status": "passed"
       },
       {
@@ -3015,8 +3584,8 @@
        "resource_class": "command",
        "resource_id": "Command: `podman image exists registry.access.redhat.com/ubi9/nginx-126@sha256:ede0e7a8623c1d6a7db313b4b8e7a4bfcc86cbdd47f2d62798d50aba86066cdc`",
        "resource_params": "[\"podman image exists registry.access.redhat.com/ubi9/nginx-126@sha256:ede0e7a8623c1d6a7db313b4b8e7a4bfcc86cbdd47f2d62798d50aba86066cdc\"]",
-       "run_time": 0.260106,
-       "start_time": "2026-10-14T03:01:03-04:00",
+       "run_time": 0.31137,
+       "start_time": "2026-10-14T10:28:55-04:00",
        "status": "passed"
       },
       {
@@ -3024,8 +3593,8 @@
        "resource_class": "command",
        "resource_id": "Command: `systemctl show -p Restart --value safbox-proxy.service`",
        "resource_params": "[\"systemctl show -p Restart --value safbox-proxy.service\"]",
-       "run_time": 0.1387,
-       "start_time": "2026-10-14T03:01:04-04:00",
+       "run_time": 0.154809,
+       "start_time": "2026-10-14T10:28:55-04:00",
        "status": "passed"
       },
       {
@@ -3033,8 +3602,8 @@
        "resource_class": "command",
        "resource_id": "Command: `systemctl show -p WantedBy --value safbox-proxy.service`",
        "resource_params": "[\"systemctl show -p WantedBy --value safbox-proxy.service\"]",
-       "run_time": 0.136363,
-       "start_time": "2026-10-14T03:01:04-04:00",
+       "run_time": 0.151481,
+       "start_time": "2026-10-14T10:28:55-04:00",
        "status": "passed"
       },
       {
@@ -3042,8 +3611,8 @@
        "resource_class": "file",
        "resource_id": "/etc/safbox-proxy/nginx.conf",
        "resource_params": "[\"/etc/safbox-proxy/nginx.conf\"]",
-       "run_time": 0.117751,
-       "start_time": "2026-10-14T03:01:04-04:00",
+       "run_time": 0.145658,
+       "start_time": "2026-10-14T10:28:55-04:00",
        "status": "passed"
       },
       {
@@ -3051,8 +3620,8 @@
        "resource_class": "file",
        "resource_id": "/etc/safbox-proxy/nginx.conf",
        "resource_params": "[\"/etc/safbox-proxy/nginx.conf\"]",
-       "run_time": 0.121156,
-       "start_time": "2026-10-14T03:01:04-04:00",
+       "run_time": 0.145864,
+       "start_time": "2026-10-14T10:28:55-04:00",
        "status": "passed"
       },
       {
@@ -3060,8 +3629,8 @@
        "resource_class": "file",
        "resource_id": "/etc/safbox-proxy/nginx.conf",
        "resource_params": "[\"/etc/safbox-proxy/nginx.conf\"]",
-       "run_time": 0.121533,
-       "start_time": "2026-10-14T03:01:04-04:00",
+       "run_time": 0.13482,
+       "start_time": "2026-10-14T10:28:56-04:00",
        "status": "passed"
       },
       {
@@ -3069,17 +3638,179 @@
        "resource_class": "file",
        "resource_id": "/etc/safbox-proxy/nginx.conf",
        "resource_params": "[\"/etc/safbox-proxy/nginx.conf\"]",
-       "run_time": 0.000105,
-       "start_time": "2026-10-14T03:01:04-04:00",
+       "run_time": 6.9e-05,
+       "start_time": "2026-10-14T10:28:56-04:00",
        "status": "passed"
       },
       {
-       "code_desc": "File /etc/safbox-proxy/nginx.conf content is expected not to match /^\\s*listen\\s+(\\S+:)?(80|443)[\\s;]/",
+       "code_desc": "File /etc/safbox-proxy/nginx.conf content is expected not to match /^\\s*listen\\s+(\\S+:)?80[\\s;]/",
        "resource_class": "file",
        "resource_id": "/etc/safbox-proxy/nginx.conf",
        "resource_params": "[\"/etc/safbox-proxy/nginx.conf\"]",
-       "run_time": 0.000185,
-       "start_time": "2026-10-14T03:01:04-04:00",
+       "run_time": 0.000131,
+       "start_time": "2026-10-14T10:28:56-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "File /etc/safbox-proxy/nginx.conf content is expected to match /^\\s*listen 443 ssl;$/",
+       "resource_class": "file",
+       "resource_id": "/etc/safbox-proxy/nginx.conf",
+       "resource_params": "[\"/etc/safbox-proxy/nginx.conf\"]",
+       "run_time": 6e-05,
+       "start_time": "2026-10-14T10:28:56-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "File /etc/safbox-proxy/nginx.conf content is expected to match /^\\s*ssi on;$/",
+       "resource_class": "file",
+       "resource_id": "/etc/safbox-proxy/nginx.conf",
+       "resource_params": "[\"/etc/safbox-proxy/nginx.conf\"]",
+       "run_time": 4.9e-05,
+       "start_time": "2026-10-14T10:28:56-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "File /etc/safbox-proxy/landing/index.html is expected to exist",
+       "resource_class": "file",
+       "resource_id": "/etc/safbox-proxy/landing/index.html",
+       "resource_params": "[\"/etc/safbox-proxy/landing/index.html\"]",
+       "run_time": 0.12765,
+       "start_time": "2026-10-14T10:28:56-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "File /etc/safbox-proxy/landing/index.html owner is expected to eq \"root\"",
+       "resource_class": "file",
+       "resource_id": "/etc/safbox-proxy/landing/index.html",
+       "resource_params": "[\"/etc/safbox-proxy/landing/index.html\"]",
+       "run_time": 0.134635,
+       "start_time": "2026-10-14T10:28:56-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "File /etc/safbox-proxy/landing/index.html mode is expected to cmp == \"0644\"",
+       "resource_class": "file",
+       "resource_id": "/etc/safbox-proxy/landing/index.html",
+       "resource_params": "[\"/etc/safbox-proxy/landing/index.html\"]",
+       "run_time": 9.2e-05,
+       "start_time": "2026-10-14T10:28:56-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "File /etc/safbox-proxy/landing/safbox.css is expected to exist",
+       "resource_class": "file",
+       "resource_id": "/etc/safbox-proxy/landing/safbox.css",
+       "resource_params": "[\"/etc/safbox-proxy/landing/safbox.css\"]",
+       "run_time": 0.131274,
+       "start_time": "2026-10-14T10:28:56-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "File /etc/safbox-proxy/landing/safbox.css owner is expected to eq \"root\"",
+       "resource_class": "file",
+       "resource_id": "/etc/safbox-proxy/landing/safbox.css",
+       "resource_params": "[\"/etc/safbox-proxy/landing/safbox.css\"]",
+       "run_time": 0.138524,
+       "start_time": "2026-10-14T10:28:56-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "File /etc/safbox-proxy/landing/safbox.css mode is expected to cmp == \"0644\"",
+       "resource_class": "file",
+       "resource_id": "/etc/safbox-proxy/landing/safbox.css",
+       "resource_params": "[\"/etc/safbox-proxy/landing/safbox.css\"]",
+       "run_time": 9e-05,
+       "start_time": "2026-10-14T10:28:56-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "File /usr/local/sbin/safbox-landing-status is expected to exist",
+       "resource_class": "file",
+       "resource_id": "/usr/local/sbin/safbox-landing-status",
+       "resource_params": "[\"/usr/local/sbin/safbox-landing-status\"]",
+       "run_time": 0.131318,
+       "start_time": "2026-10-14T10:28:56-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "File /usr/local/sbin/safbox-landing-status is expected to be executable",
+       "resource_class": "file",
+       "resource_id": "/usr/local/sbin/safbox-landing-status",
+       "resource_params": "[\"/usr/local/sbin/safbox-landing-status\"]",
+       "run_time": 0.131027,
+       "start_time": "2026-10-14T10:28:56-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "File /usr/local/sbin/safbox-landing-status owner is expected to eq \"root\"",
+       "resource_class": "file",
+       "resource_id": "/usr/local/sbin/safbox-landing-status",
+       "resource_params": "[\"/usr/local/sbin/safbox-landing-status\"]",
+       "run_time": 6.8e-05,
+       "start_time": "2026-10-14T10:28:57-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "File /etc/tmpfiles.d/safbox-landing.conf content is expected to match /^d \\/run\\/safbox\\-landing 0755 root root -$/",
+       "resource_class": "file",
+       "resource_id": "/etc/tmpfiles.d/safbox-landing.conf",
+       "resource_params": "[\"/etc/tmpfiles.d/safbox-landing.conf\"]",
+       "run_time": 0.128886,
+       "start_time": "2026-10-14T10:28:57-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "File /etc/systemd/system/safbox-landing-status.service content is expected to match /^ExecStart=\\/usr\\/local\\/sbin\\/safbox-landing-status$/",
+       "resource_class": "file",
+       "resource_id": "/etc/systemd/system/safbox-landing-status.service",
+       "resource_params": "[\"/etc/systemd/system/safbox-landing-status.service\"]",
+       "run_time": 0.137965,
+       "start_time": "2026-10-14T10:28:57-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "File /etc/systemd/system/safbox-landing-status.service content is expected to match /^CapabilityBoundingSet=$/",
+       "resource_class": "file",
+       "resource_id": "/etc/systemd/system/safbox-landing-status.service",
+       "resource_params": "[\"/etc/systemd/system/safbox-landing-status.service\"]",
+       "run_time": 5.7e-05,
+       "start_time": "2026-10-14T10:28:57-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "File /etc/systemd/system/safbox-landing-status.service content is expected to match /^NoNewPrivileges=yes$/",
+       "resource_class": "file",
+       "resource_id": "/etc/systemd/system/safbox-landing-status.service",
+       "resource_params": "[\"/etc/systemd/system/safbox-landing-status.service\"]",
+       "run_time": 3.8e-05,
+       "start_time": "2026-10-14T10:28:57-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "File /etc/systemd/system/safbox-landing-status.service content is expected to match /^ProtectSystem=strict$/",
+       "resource_class": "file",
+       "resource_id": "/etc/systemd/system/safbox-landing-status.service",
+       "resource_params": "[\"/etc/systemd/system/safbox-landing-status.service\"]",
+       "run_time": 2.7e-05,
+       "start_time": "2026-10-14T10:28:57-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "File /etc/systemd/system/safbox-landing-status.service content is expected to match /^ReadWritePaths=\\/run\\/safbox\\-landing$/",
+       "resource_class": "file",
+       "resource_id": "/etc/systemd/system/safbox-landing-status.service",
+       "resource_params": "[\"/etc/systemd/system/safbox-landing-status.service\"]",
+       "run_time": 3.8e-05,
+       "start_time": "2026-10-14T10:28:57-04:00",
+       "status": "passed"
+      },
+      {
+       "code_desc": "Command: `systemctl show -p WantedBy --value safbox-landing-status.timer` stdout.split is expected to include \"timers.target\"",
+       "resource_class": "command",
+       "resource_id": "Command: `systemctl show -p WantedBy --value safbox-landing-status.timer`",
+       "resource_params": "[\"systemctl show -p WantedBy --value safbox-landing-status.timer\"]",
+       "run_time": 0.15531,
+       "start_time": "2026-10-14T10:28:57-04:00",
        "status": "passed"
       },
       {
@@ -3087,8 +3818,8 @@
        "resource_class": "Object",
        "resource_id": "/etc/safbox-proxy/nginx.conf listener for heimdall",
        "resource_params": "[]",
-       "run_time": 0.00013,
-       "start_time": "2026-10-14T03:01:04-04:00",
+       "run_time": 0.000167,
+       "start_time": "2026-10-14T10:28:57-04:00",
        "status": "passed"
       },
       {
@@ -3096,8 +3827,8 @@
        "resource_class": "Object",
        "resource_id": "/etc/safbox-proxy/nginx.conf listener for vulcan",
        "resource_params": "[]",
-       "run_time": 8.3e-05,
-       "start_time": "2026-10-14T03:01:04-04:00",
+       "run_time": 9.6e-05,
+       "start_time": "2026-10-14T10:28:57-04:00",
        "status": "passed"
       },
       {
@@ -3105,8 +3836,8 @@
        "resource_class": "file",
        "resource_id": "/etc/safbox/firstboot.d/40-proxy.sh",
        "resource_params": "[\"/etc/safbox/firstboot.d/40-proxy.sh\"]",
-       "run_time": 0.117569,
-       "start_time": "2026-10-14T03:01:04-04:00",
+       "run_time": 0.129942,
+       "start_time": "2026-10-14T10:28:57-04:00",
        "status": "passed"
       },
       {
@@ -3114,8 +3845,8 @@
        "resource_class": "file",
        "resource_id": "/etc/safbox/firstboot.d/40-proxy.sh",
        "resource_params": "[\"/etc/safbox/firstboot.d/40-proxy.sh\"]",
-       "run_time": 0.121694,
-       "start_time": "2026-10-14T03:01:04-04:00",
+       "run_time": 0.152094,
+       "start_time": "2026-10-14T10:28:57-04:00",
        "status": "passed"
       },
       {
@@ -3123,16 +3854,16 @@
        "resource_class": "file",
        "resource_id": "/etc/safbox/firstboot.d/40-proxy.sh",
        "resource_params": "[\"/etc/safbox/firstboot.d/40-proxy.sh\"]",
-       "run_time": 7.8e-05,
-       "start_time": "2026-10-14T03:01:05-04:00",
+       "run_time": 9.5e-05,
+       "start_time": "2026-10-14T10:28:57-04:00",
        "status": "passed"
       }
      ],
      "source_location": {
-      "line": 42
+      "line": 53
      },
      "tags": {},
-     "title": "The TLS proxy Quadlet unit and configuration are installed and enabled",
+     "title": "The TLS proxy Quadlet unit, its configuration and the landing page are installed and enabled",
      "waiver_data": {}
     },
     {
@@ -3156,12 +3887,12 @@
        "resource_params": "[]",
        "run_time": 3e-06,
        "skip_message": "Skipped control due to only_if condition: the proxy or Heimdall is not in expected_services, or this is not a deployed clone",
-       "start_time": "2026-10-14T03:01:05-04:00",
+       "start_time": "2026-10-14T10:28:57-04:00",
        "status": "skipped"
       }
      ],
      "source_location": {
-      "line": 97
+      "line": 145
      },
      "tags": {},
      "title": "The proxy serves TLS on the Heimdall port",
@@ -3188,12 +3919,12 @@
        "resource_params": "[]",
        "run_time": 1e-06,
        "skip_message": "Skipped control due to only_if condition: the proxy or Vulcan is not in expected_services, or this is not a deployed clone",
-       "start_time": "2026-10-14T03:01:05-04:00",
+       "start_time": "2026-10-14T10:28:57-04:00",
        "status": "skipped"
       }
      ],
      "source_location": {
-      "line": 108
+      "line": 156
      },
      "tags": {},
      "title": "The proxy serves TLS on the Vulcan port",
@@ -3217,8 +3948,8 @@
        "resource_class": "file",
        "resource_id": "/etc/safbox/tls/safbox.key",
        "resource_params": "[\"/etc/safbox/tls/safbox.key\"]",
-       "run_time": 0.11927,
-       "start_time": "2026-10-14T03:01:05-04:00",
+       "run_time": 0.128067,
+       "start_time": "2026-10-14T10:28:57-04:00",
        "status": "passed"
       },
       {
@@ -3226,55 +3957,16 @@
        "resource_class": "file",
        "resource_id": "/etc/safbox/tls/safbox.crt",
        "resource_params": "[\"/etc/safbox/tls/safbox.crt\"]",
-       "run_time": 0.120481,
-       "start_time": "2026-10-14T03:01:05-04:00",
+       "run_time": 0.132332,
+       "start_time": "2026-10-14T10:28:57-04:00",
        "status": "passed"
       }
      ],
      "source_location": {
-      "line": 119
+      "line": 167
      },
      "tags": {},
      "title": "The proxy's certificate is generated on first boot, never at build",
-     "waiver_data": {}
-    },
-    {
-     "code": "control 'safbox-proxy-5' do\n  impact 1.0\n  title 'The firewall opens exactly the proxy ports'\n  desc 'ADR-0001 Quality Standards: the firewall opens no port beyond the proxy ports. Every open port in the default zone, at runtime and permanently, is a proxy port of an application this image ships. The applications themselves listen on the loopback address only.'\n  only_if('the proxy is not in expected_services (safbox_proxy_1 switched off)') do\n    service_expected.call('proxy')\n  end\n\n  want = apps.map { |app| \"#{proxy_ports[app]}/tcp\" }.sort\n  { 'runtime' => 'firewall-cmd --list-ports', 'permanent' => 'firewall-cmd --permanent --list-ports' }.each do |label, cmd|\n    describe \"Open ports in the default zone (#{label})\" do\n      subject { command(cmd).stdout.split.sort }\n      it { should eq want }\n    end\n  end\nend\n",
-     "desc": "ADR-0001 Quality Standards: the firewall opens no port beyond the proxy ports. Every open port in the default zone, at runtime and permanently, is a proxy port of an application this image ships. The applications themselves listen on the loopback address only.",
-     "descriptions": [
-      {
-       "data": "ADR-0001 Quality Standards: the firewall opens no port beyond the proxy ports. Every open port in the default zone, at runtime and permanently, is a proxy port of an application this image ships. The applications themselves listen on the loopback address only.",
-       "label": "default"
-      }
-     ],
-     "id": "safbox-proxy-5",
-     "impact": 1.0,
-     "refs": [],
-     "results": [
-      {
-       "code_desc": "Open ports in the default zone (runtime) is expected to eq [\"8443/tcp\", \"9443/tcp\"]",
-       "resource_class": "Object",
-       "resource_id": "Open ports in the default zone (runtime)",
-       "resource_params": "[]",
-       "run_time": 0.559801,
-       "start_time": "2026-10-14T03:01:05-04:00",
-       "status": "passed"
-      },
-      {
-       "code_desc": "Open ports in the default zone (permanent) is expected to eq [\"8443/tcp\", \"9443/tcp\"]",
-       "resource_class": "Object",
-       "resource_id": "Open ports in the default zone (permanent)",
-       "resource_params": "[]",
-       "run_time": 0.585814,
-       "start_time": "2026-10-14T03:01:05-04:00",
-       "status": "passed"
-      }
-     ],
-     "source_location": {
-      "line": 160
-     },
-     "tags": {},
-     "title": "The firewall opens exactly the proxy ports",
      "waiver_data": {}
     },
     {
@@ -3298,15 +3990,47 @@
        "resource_params": "[]",
        "run_time": 3e-06,
        "skip_message": "Skipped control due to only_if condition: the proxy is not in expected_services, or this is not a deployed clone",
-       "start_time": "2026-10-14T03:01:06-04:00",
+       "start_time": "2026-10-14T10:28:58-04:00",
        "status": "skipped"
       }
      ],
      "source_location": {
-      "line": 177
+      "line": 208
      },
      "tags": {},
      "title": "The proxy's TLS stack runs the OpenSSL FIPS provider under the FIPS crypto policy",
+     "waiver_data": {}
+    },
+    {
+     "code": "control 'safbox-proxy-7' do\n  impact 1.0\n  title 'The landing page on port 443 shows the status of each service and links to the applications, and no secret'\n  desc \"ADR-0001 Phase 8: an HTTPS landing page on #{landing_port} shows service status and links. nginx assembles it with server-side includes from a page the proxy role renders and one status file per service, which the #{status_unit} timer regenerates every 30 seconds from safbox services; each link names the host the browser asked for. The page carries a Content-Security-Policy that allows only its own stylesheet, the status files are reachable only through the page, and the page holds nothing secret: no first-boot secret value appears in it.\"\n  only_if('the proxy is not in expected_services, or this is not a deployed clone') do\n    service_expected.call('proxy') && input('firstboot_completed_expected')\n  end\n\n  instance_exec(landing_port, '/', &tls_port)\n\n  page = command(\"curl -sS -k https://127.0.0.1:#{landing_port}/\").stdout\n  apps.each do |app|\n    describe \"Landing page link to #{labels[app]}\" do\n      subject { page }\n      it { should include %(href=\"https://127.0.0.1:#{proxy_ports[app]}/\") }\n    end\n  end\n  (apps + ['proxy']).each do |service|\n    describe \"Landing page status of #{labels[service]}\" do\n      subject { page[%r{<tr id=\"service-#{service}\">.*?</tr>}m].to_s }\n      it { should include %(<th scope=\"row\">#{labels[service]}</th>) }\n      it { should include '<span class=\"state state-running\">Running</span>' }\n    end\n  end\n\n  describe \"Age in seconds of the landing page's status (#{status_dir}/updated)\" do\n    subject { command(%(sh -c 'echo $(( $(date +%s) - $(stat -c %Y #{status_dir}/updated) ))')).stdout.strip.to_i }\n    it { should be <= status_max_age }\n  end\n\n  describe command(\"systemctl is-active #{status_unit}.timer\") do\n    its('stdout.strip') { should eq 'active' }\n  end\n\n  headers = command(\"curl -sS -k -D - -o /dev/null https://127.0.0.1:#{landing_port}/\").stdout.downcase\n  describe 'Landing page response headers' do\n    subject { headers }\n    it { should match(/^content-security-policy: default-src 'none'; style-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'\\r?$/) }\n    it { should match(/^x-content-type-options: nosniff\\r?$/) }\n    it { should match(/^x-frame-options: deny\\r?$/) }\n    it { should match(/^referrer-policy: no-referrer\\r?$/) }\n    it { should match(/^cache-control: no-store\\r?$/) }\n    it { should match(/^server: nginx\\r?$/) }\n  end\n\n  # The status files and the configuration are not served on their own; a\n  # path above the page's root is refused outright.\n  { '/status/proxy' => '404', '/status/updated' => '404', '/nginx.conf' => '404', '/../nginx.conf' => '400' }.each do |path, code|\n    describe command(\"curl -sS -k --path-as-is -o /dev/null -w '%{http_code}' https://127.0.0.1:#{landing_port}#{path}\") do\n      its('stdout') { should eq code }\n    end\n  end\n\n  # The host a link names comes from the request, so markup in it must\n  # arrive escaped.\n  describe command(%(curl -sS -k -H 'Host: safbox\"><b>x' https://127.0.0.1:#{landing_port}/)) do\n    its('stdout') { should include 'https://safbox&quot;&gt;&lt;b&gt;x:' }\n    its('stdout') { should_not include '\"><b>x' }\n  end\n\n  describe command(\"curl -sS -k -X POST -o /dev/null -w '%{http_code}' https://127.0.0.1:#{landing_port}/\") do\n    its('stdout') { should eq '405' }\n  end\n\n  # Names (never values) of the first-boot secrets whose value appears in the\n  # page. The page is fetched and compared on the box, so no secret value\n  # reaches the results.\n  leak_check = %{sh -c 'page=$(curl -sS -k https://127.0.0.1:#{landing_port}/); for f in /etc/safbox/*.env; do while IFS== read -r k v; do if [ -n \"$v\" ]; then case \"$page\" in *\"$v\"*) echo \"$f:$k\" ;; esac; fi; done < \"$f\"; done; case \"$page\" in *\"PRIVATE KEY\"*) echo private-key ;; esac'}\n  describe 'First-boot secrets that appear in the landing page' do\n    subject { command(leak_check).stdout.split }\n    it { should be_empty }\n  end\nend\n",
+     "desc": "ADR-0001 Phase 8: an HTTPS landing page on 443 shows service status and links. nginx assembles it with server-side includes from a page the proxy role renders and one status file per service, which the safbox-landing-status timer regenerates every 30 seconds from safbox services; each link names the host the browser asked for. The page carries a Content-Security-Policy that allows only its own stylesheet, the status files are reachable only through the page, and the page holds nothing secret: no first-boot secret value appears in it.",
+     "descriptions": [
+      {
+       "data": "ADR-0001 Phase 8: an HTTPS landing page on 443 shows service status and links. nginx assembles it with server-side includes from a page the proxy role renders and one status file per service, which the safbox-landing-status timer regenerates every 30 seconds from safbox services; each link names the host the browser asked for. The page carries a Content-Security-Policy that allows only its own stylesheet, the status files are reachable only through the page, and the page holds nothing secret: no first-boot secret value appears in it.",
+       "label": "default"
+      }
+     ],
+     "id": "safbox-proxy-7",
+     "impact": 1.0,
+     "refs": [],
+     "results": [
+      {
+       "code_desc": "No-op",
+       "resource": "No-op",
+       "resource_class": "noop",
+       "resource_id": "No-op",
+       "resource_params": "[]",
+       "run_time": 2e-06,
+       "skip_message": "Skipped control due to only_if condition: the proxy is not in expected_services, or this is not a deployed clone",
+       "start_time": "2026-10-14T10:28:58-04:00",
+       "status": "skipped"
+      }
+     ],
+     "source_location": {
+      "line": 229
+     },
+     "tags": {},
+     "title": "The landing page on port 443 shows the status of each service and links to the applications, and no secret",
      "waiver_data": {}
     },
     {
@@ -3328,9 +4052,9 @@
        "resource_class": "noop",
        "resource_id": "No-op",
        "resource_params": "[]",
-       "run_time": 2e-06,
+       "run_time": 1e-06,
        "skip_message": "Skipped control due to only_if condition: the seal step has not run yet",
-       "start_time": "2026-10-14T03:01:06-04:00",
+       "start_time": "2026-10-14T10:28:58-04:00",
        "status": "skipped"
       }
      ],
@@ -3362,7 +4086,7 @@
        "resource_params": "[]",
        "run_time": 1e-06,
        "skip_message": "Skipped control due to only_if condition: the seal step has not run yet",
-       "start_time": "2026-10-14T03:01:06-04:00",
+       "start_time": "2026-10-14T10:28:58-04:00",
        "status": "skipped"
       }
      ],
@@ -3391,8 +4115,8 @@
        "resource_class": "service",
        "resource_id": "qemu-guest-agent",
        "resource_params": "[\"qemu-guest-agent\"]",
-       "run_time": 0.397195,
-       "start_time": "2026-10-14T03:01:06-04:00",
+       "run_time": 0.434887,
+       "start_time": "2026-10-14T10:28:58-04:00",
        "status": "passed"
       },
       {
@@ -3400,8 +4124,8 @@
        "resource_class": "service",
        "resource_id": "qemu-guest-agent",
        "resource_params": "[\"qemu-guest-agent\"]",
-       "run_time": 7.9e-05,
-       "start_time": "2026-10-14T03:01:06-04:00",
+       "run_time": 7.7e-05,
+       "start_time": "2026-10-14T10:28:58-04:00",
        "status": "passed"
       },
       {
@@ -3409,8 +4133,8 @@
        "resource_class": "service",
        "resource_id": "cloud-init",
        "resource_params": "[\"cloud-init\"]",
-       "run_time": 0.410014,
-       "start_time": "2026-10-14T03:01:06-04:00",
+       "run_time": 0.455795,
+       "start_time": "2026-10-14T10:28:58-04:00",
        "status": "passed"
       },
       {
@@ -3418,8 +4142,8 @@
        "resource_class": "service",
        "resource_id": "cloud-init",
        "resource_params": "[\"cloud-init\"]",
-       "run_time": 7.9e-05,
-       "start_time": "2026-10-14T03:01:07-04:00",
+       "run_time": 7.5e-05,
+       "start_time": "2026-10-14T10:28:58-04:00",
        "status": "passed"
       },
       {
@@ -3427,8 +4151,8 @@
        "resource_class": "service",
        "resource_id": "sshd",
        "resource_params": "[\"sshd\"]",
-       "run_time": 0.000786,
-       "start_time": "2026-10-14T03:01:07-04:00",
+       "run_time": 0.000774,
+       "start_time": "2026-10-14T10:28:58-04:00",
        "status": "passed"
       },
       {
@@ -3436,8 +4160,8 @@
        "resource_class": "service",
        "resource_id": "sshd",
        "resource_params": "[\"sshd\"]",
-       "run_time": 3.7e-05,
-       "start_time": "2026-10-14T03:01:07-04:00",
+       "run_time": 3.6e-05,
+       "start_time": "2026-10-14T10:28:58-04:00",
        "status": "passed"
       },
       {
@@ -3445,8 +4169,8 @@
        "resource_class": "service",
        "resource_id": "sshd",
        "resource_params": "[\"sshd\"]",
-       "run_time": 0.000599,
-       "start_time": "2026-10-14T03:01:07-04:00",
+       "run_time": 0.000555,
+       "start_time": "2026-10-14T10:28:58-04:00",
        "status": "passed"
       }
      ],
@@ -3475,8 +4199,8 @@
        "resource_class": "service",
        "resource_id": "chronyd",
        "resource_params": "[\"chronyd\"]",
-       "run_time": 0.400211,
-       "start_time": "2026-10-14T03:01:07-04:00",
+       "run_time": 0.43862,
+       "start_time": "2026-10-14T10:28:58-04:00",
        "status": "passed"
       },
       {
@@ -3484,8 +4208,8 @@
        "resource_class": "service",
        "resource_id": "chronyd",
        "resource_params": "[\"chronyd\"]",
-       "run_time": 7.8e-05,
-       "start_time": "2026-10-14T03:01:07-04:00",
+       "run_time": 8.8e-05,
+       "start_time": "2026-10-14T10:28:59-04:00",
        "status": "passed"
       },
       {
@@ -3493,8 +4217,8 @@
        "resource_class": "service",
        "resource_id": "firewalld",
        "resource_params": "[\"firewalld\"]",
-       "run_time": 0.404098,
-       "start_time": "2026-10-14T03:01:07-04:00",
+       "run_time": 0.443855,
+       "start_time": "2026-10-14T10:28:59-04:00",
        "status": "passed"
       },
       {
@@ -3502,8 +4226,8 @@
        "resource_class": "service",
        "resource_id": "firewalld",
        "resource_params": "[\"firewalld\"]",
-       "run_time": 8.1e-05,
-       "start_time": "2026-10-14T03:01:08-04:00",
+       "run_time": 8.5e-05,
+       "start_time": "2026-10-14T10:28:59-04:00",
        "status": "passed"
       },
       {
@@ -3511,8 +4235,8 @@
        "resource_class": "command",
        "resource_id": "Command: `firewall-cmd --list-services`",
        "resource_params": "[\"firewall-cmd --list-services\"]",
-       "run_time": 1.361451,
-       "start_time": "2026-10-14T03:01:08-04:00",
+       "run_time": 0.59964,
+       "start_time": "2026-10-14T10:28:59-04:00",
        "status": "passed"
       }
      ],
@@ -3541,8 +4265,8 @@
        "resource_class": "command",
        "resource_id": "Command: `systemd-analyze cat-config systemd/journald.conf`",
        "resource_params": "[\"systemd-analyze cat-config systemd/journald.conf\"]",
-       "run_time": 0.15549,
-       "start_time": "2026-10-14T03:01:09-04:00",
+       "run_time": 0.146154,
+       "start_time": "2026-10-14T10:29:00-04:00",
        "status": "passed"
       },
       {
@@ -3550,8 +4274,8 @@
        "resource_class": "file",
        "resource_id": "/var/log/journal",
        "resource_params": "[\"/var/log/journal\"]",
-       "run_time": 0.133338,
-       "start_time": "2026-10-14T03:01:09-04:00",
+       "run_time": 0.13628,
+       "start_time": "2026-10-14T10:29:00-04:00",
        "status": "passed"
       }
      ],
@@ -3580,8 +4304,8 @@
        "resource_class": "command",
        "resource_id": "Command: `cinc-auditor version`",
        "resource_params": "[\"cinc-auditor version\"]",
-       "run_time": 9.728863,
-       "start_time": "2026-10-14T03:01:09-04:00",
+       "run_time": 10.797946,
+       "start_time": "2026-10-14T10:29:00-04:00",
        "status": "passed"
       },
       {
@@ -3589,8 +4313,8 @@
        "resource_class": "command",
        "resource_id": "Command: `cinc-auditor version`",
        "resource_params": "[\"cinc-auditor version\"]",
-       "run_time": 8.1e-05,
-       "start_time": "2026-10-14T03:01:19-04:00",
+       "run_time": 9.1e-05,
+       "start_time": "2026-10-14T10:29:11-04:00",
        "status": "passed"
       },
       {
@@ -3598,8 +4322,8 @@
        "resource_class": "command",
        "resource_id": "Command: `runuser -u nobody -- /usr/local/bin/safbox status`",
        "resource_params": "[\"runuser -u nobody -- /usr/local/bin/safbox status\"]",
-       "run_time": 0.967447,
-       "start_time": "2026-10-14T03:01:19-04:00",
+       "run_time": 1.192254,
+       "start_time": "2026-10-14T10:29:11-04:00",
        "status": "passed"
       }
      ],
@@ -3628,8 +4352,8 @@
        "resource_class": "command",
        "resource_id": "Command: `sh -c 'd=$(mktemp -d) && cd \"$d\" && /usr/local/bin/saf --version; rc=$?; cd / && rm -rf \"$d\"; exit $rc'`",
        "resource_params": "[\"sh -c 'd=$(mktemp -d) && cd \\\"$d\\\" && /usr/local/bin/saf --version; rc=$?; cd / && rm -rf \\\"$d\\\"; exit $rc'\"]",
-       "run_time": 7.237484,
-       "start_time": "2026-10-14T03:01:20-04:00",
+       "run_time": 8.072455,
+       "start_time": "2026-10-14T10:29:12-04:00",
        "status": "passed"
       },
       {
@@ -3637,8 +4361,8 @@
        "resource_class": "command",
        "resource_id": "Command: `sh -c 'd=$(mktemp -d) && cd \"$d\" && /usr/local/bin/saf --version; rc=$?; cd / && rm -rf \"$d\"; exit $rc'`",
        "resource_params": "[\"sh -c 'd=$(mktemp -d) && cd \\\"$d\\\" && /usr/local/bin/saf --version; rc=$?; cd / && rm -rf \\\"$d\\\"; exit $rc'\"]",
-       "run_time": 7.9e-05,
-       "start_time": "2026-10-14T03:01:27-04:00",
+       "run_time": 9e-05,
+       "start_time": "2026-10-14T10:29:20-04:00",
        "status": "passed"
       },
       {
@@ -3646,8 +4370,8 @@
        "resource_class": "command",
        "resource_id": "Command: `runuser -u nobody -- /usr/local/bin/safbox status`",
        "resource_params": "[\"runuser -u nobody -- /usr/local/bin/safbox status\"]",
-       "run_time": 8.9e-05,
-       "start_time": "2026-10-14T03:01:27-04:00",
+       "run_time": 5e-05,
+       "start_time": "2026-10-14T10:29:20-04:00",
        "status": "passed"
       },
       {
@@ -3655,8 +4379,8 @@
        "resource_class": "file",
        "resource_id": "/home/packer/saf-cli.log",
        "resource_params": "[\"/home/packer/saf-cli.log\"]",
-       "run_time": 0.140874,
-       "start_time": "2026-10-14T03:01:27-04:00",
+       "run_time": 0.249148,
+       "start_time": "2026-10-14T10:29:20-04:00",
        "status": "passed"
       },
       {
@@ -3664,8 +4388,8 @@
        "resource_class": "file",
        "resource_id": "/saf-cli.log",
        "resource_params": "[\"/saf-cli.log\"]",
-       "run_time": 0.14228,
-       "start_time": "2026-10-14T03:01:27-04:00",
+       "run_time": 0.315789,
+       "start_time": "2026-10-14T10:29:20-04:00",
        "status": "passed"
       },
       {
@@ -3673,8 +4397,8 @@
        "resource_class": "command",
        "resource_id": "Command: `node -p \"require('crypto').getFips()\"`",
        "resource_params": "[\"node -p \\\"require('crypto').getFips()\\\"\"]",
-       "run_time": 0.673571,
-       "start_time": "2026-10-14T03:01:27-04:00",
+       "run_time": 0.643222,
+       "start_time": "2026-10-14T10:29:21-04:00",
        "status": "passed"
       },
       {
@@ -3682,8 +4406,8 @@
        "resource_class": "command",
        "resource_id": "Command: `node -p \"require('crypto').getFips()\"`",
        "resource_params": "[\"node -p \\\"require('crypto').getFips()\\\"\"]",
-       "run_time": 9.9e-05,
-       "start_time": "2026-10-14T03:01:28-04:00",
+       "run_time": 0.000105,
+       "start_time": "2026-10-14T10:29:21-04:00",
        "status": "passed"
       }
      ],
@@ -3712,8 +4436,8 @@
        "resource_class": "command",
        "resource_id": "Command: `ansible --version`",
        "resource_params": "[\"ansible --version\"]",
-       "run_time": 0.913369,
-       "start_time": "2026-10-14T03:01:28-04:00",
+       "run_time": 1.080197,
+       "start_time": "2026-10-14T10:29:21-04:00",
        "status": "passed"
       },
       {
@@ -3721,8 +4445,8 @@
        "resource_class": "command",
        "resource_id": "Command: `ansible --version`",
        "resource_params": "[\"ansible --version\"]",
-       "run_time": 9e-05,
-       "start_time": "2026-10-14T03:01:29-04:00",
+       "run_time": 8e-05,
+       "start_time": "2026-10-14T10:29:23-04:00",
        "status": "passed"
       },
       {
@@ -3730,8 +4454,8 @@
        "resource_class": "command",
        "resource_id": "Command: `runuser -u nobody -- /usr/local/bin/safbox status`",
        "resource_params": "[\"runuser -u nobody -- /usr/local/bin/safbox status\"]",
-       "run_time": 5.6e-05,
-       "start_time": "2026-10-14T03:01:29-04:00",
+       "run_time": 5e-05,
+       "start_time": "2026-10-14T10:29:23-04:00",
        "status": "passed"
       },
       {
@@ -3739,8 +4463,8 @@
        "resource_class": "Object",
        "resource_id": "collection ansible.posix in /usr/share/ansible/collections",
        "resource_params": "[]",
-       "run_time": 6.8e-05,
-       "start_time": "2026-10-14T03:01:29-04:00",
+       "run_time": 7.9e-05,
+       "start_time": "2026-10-14T10:29:23-04:00",
        "status": "passed"
       },
       {
@@ -3748,8 +4472,8 @@
        "resource_class": "Object",
        "resource_id": "collection community.crypto in /usr/share/ansible/collections",
        "resource_params": "[]",
-       "run_time": 4e-05,
-       "start_time": "2026-10-14T03:01:29-04:00",
+       "run_time": 4.3e-05,
+       "start_time": "2026-10-14T10:29:23-04:00",
        "status": "passed"
       },
       {
@@ -3757,8 +4481,8 @@
        "resource_class": "Object",
        "resource_id": "collection community.general in /usr/share/ansible/collections",
        "resource_params": "[]",
-       "run_time": 3.6e-05,
-       "start_time": "2026-10-14T03:01:29-04:00",
+       "run_time": 3.8e-05,
+       "start_time": "2026-10-14T10:29:23-04:00",
        "status": "passed"
       }
      ],
@@ -3787,8 +4511,8 @@
        "resource_class": "command",
        "resource_id": "Command: `CHECKPOINT_DISABLE=1 /usr/local/bin/packer version`",
        "resource_params": "[\"CHECKPOINT_DISABLE=1 /usr/local/bin/packer version\"]",
-       "run_time": 0.42059,
-       "start_time": "2026-10-14T03:01:29-04:00",
+       "run_time": 0.524051,
+       "start_time": "2026-10-14T10:29:23-04:00",
        "status": "passed"
       },
       {
@@ -3796,8 +4520,8 @@
        "resource_class": "command",
        "resource_id": "Command: `CHECKPOINT_DISABLE=1 /usr/local/bin/packer version`",
        "resource_params": "[\"CHECKPOINT_DISABLE=1 /usr/local/bin/packer version\"]",
-       "run_time": 0.000101,
-       "start_time": "2026-10-14T03:01:29-04:00",
+       "run_time": 7.6e-05,
+       "start_time": "2026-10-14T10:29:23-04:00",
        "status": "passed"
       },
       {
@@ -3805,8 +4529,8 @@
        "resource_class": "command",
        "resource_id": "Command: `runuser -u nobody -- /usr/local/bin/safbox status`",
        "resource_params": "[\"runuser -u nobody -- /usr/local/bin/safbox status\"]",
-       "run_time": 5.2e-05,
-       "start_time": "2026-10-14T03:01:29-04:00",
+       "run_time": 5e-05,
+       "start_time": "2026-10-14T10:29:23-04:00",
        "status": "passed"
       },
       {
@@ -3814,8 +4538,8 @@
        "resource_class": "file",
        "resource_id": "/usr/local/share/licenses/packer/LICENSE.txt",
        "resource_params": "[\"/usr/local/share/licenses/packer/LICENSE.txt\"]",
-       "run_time": 0.350339,
-       "start_time": "2026-10-14T03:01:29-04:00",
+       "run_time": 0.367013,
+       "start_time": "2026-10-14T10:29:23-04:00",
        "status": "passed"
       },
       {
@@ -3823,8 +4547,8 @@
        "resource_class": "file",
        "resource_id": "/usr/local/share/licenses/packer/LICENSE.txt",
        "resource_params": "[\"/usr/local/share/licenses/packer/LICENSE.txt\"]",
-       "run_time": 0.292727,
-       "start_time": "2026-10-14T03:01:30-04:00",
+       "run_time": 0.258895,
+       "start_time": "2026-10-14T10:29:23-04:00",
        "status": "passed"
       }
      ],
@@ -3853,8 +4577,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/vulcan.network",
        "resource_params": "[\"/etc/containers/systemd/vulcan.network\"]",
-       "run_time": 0.354054,
-       "start_time": "2026-10-14T03:01:30-04:00",
+       "run_time": 0.250958,
+       "start_time": "2026-10-14T10:29:24-04:00",
        "status": "passed"
       },
       {
@@ -3862,8 +4586,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/vulcan.network",
        "resource_params": "[\"/etc/containers/systemd/vulcan.network\"]",
-       "run_time": 0.53552,
-       "start_time": "2026-10-14T03:01:30-04:00",
+       "run_time": 0.20961,
+       "start_time": "2026-10-14T10:29:24-04:00",
        "status": "passed"
       },
       {
@@ -3871,8 +4595,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/vulcan.network",
        "resource_params": "[\"/etc/containers/systemd/vulcan.network\"]",
-       "run_time": 0.000106,
-       "start_time": "2026-10-14T03:01:31-04:00",
+       "run_time": 0.000119,
+       "start_time": "2026-10-14T10:29:24-04:00",
        "status": "passed"
       },
       {
@@ -3880,8 +4604,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/vulcan.pod",
        "resource_params": "[\"/etc/containers/systemd/vulcan.pod\"]",
-       "run_time": 0.356991,
-       "start_time": "2026-10-14T03:01:31-04:00",
+       "run_time": 0.216688,
+       "start_time": "2026-10-14T10:29:24-04:00",
        "status": "passed"
       },
       {
@@ -3889,8 +4613,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/vulcan.pod",
        "resource_params": "[\"/etc/containers/systemd/vulcan.pod\"]",
-       "run_time": 0.359077,
-       "start_time": "2026-10-14T03:01:31-04:00",
+       "run_time": 0.135015,
+       "start_time": "2026-10-14T10:29:24-04:00",
        "status": "passed"
       },
       {
@@ -3898,8 +4622,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/vulcan.pod",
        "resource_params": "[\"/etc/containers/systemd/vulcan.pod\"]",
-       "run_time": 0.0001,
-       "start_time": "2026-10-14T03:01:32-04:00",
+       "run_time": 0.000106,
+       "start_time": "2026-10-14T10:29:24-04:00",
        "status": "passed"
       },
       {
@@ -3907,8 +4631,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/vulcan-db.volume",
        "resource_params": "[\"/etc/containers/systemd/vulcan-db.volume\"]",
-       "run_time": 0.353404,
-       "start_time": "2026-10-14T03:01:32-04:00",
+       "run_time": 0.135356,
+       "start_time": "2026-10-14T10:29:24-04:00",
        "status": "passed"
       },
       {
@@ -3916,8 +4640,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/vulcan-db.volume",
        "resource_params": "[\"/etc/containers/systemd/vulcan-db.volume\"]",
-       "run_time": 0.23329,
-       "start_time": "2026-10-14T03:01:32-04:00",
+       "run_time": 0.134524,
+       "start_time": "2026-10-14T10:29:25-04:00",
        "status": "passed"
       },
       {
@@ -3925,8 +4649,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/vulcan-db.volume",
        "resource_params": "[\"/etc/containers/systemd/vulcan-db.volume\"]",
-       "run_time": 0.000105,
-       "start_time": "2026-10-14T03:01:32-04:00",
+       "run_time": 0.000106,
+       "start_time": "2026-10-14T10:29:25-04:00",
        "status": "passed"
       },
       {
@@ -3934,8 +4658,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/vulcan-db.container",
        "resource_params": "[\"/etc/containers/systemd/vulcan-db.container\"]",
-       "run_time": 0.341494,
-       "start_time": "2026-10-14T03:01:32-04:00",
+       "run_time": 0.127136,
+       "start_time": "2026-10-14T10:29:25-04:00",
        "status": "passed"
       },
       {
@@ -3943,8 +4667,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/vulcan-db.container",
        "resource_params": "[\"/etc/containers/systemd/vulcan-db.container\"]",
-       "run_time": 0.251263,
-       "start_time": "2026-10-14T03:01:33-04:00",
+       "run_time": 0.138823,
+       "start_time": "2026-10-14T10:29:25-04:00",
        "status": "passed"
       },
       {
@@ -3952,8 +4676,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/vulcan-db.container",
        "resource_params": "[\"/etc/containers/systemd/vulcan-db.container\"]",
-       "run_time": 0.000148,
-       "start_time": "2026-10-14T03:01:33-04:00",
+       "run_time": 9.5e-05,
+       "start_time": "2026-10-14T10:29:25-04:00",
        "status": "passed"
       },
       {
@@ -3961,8 +4685,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/vulcan.container",
        "resource_params": "[\"/etc/containers/systemd/vulcan.container\"]",
-       "run_time": 0.123078,
-       "start_time": "2026-10-14T03:01:33-04:00",
+       "run_time": 0.132673,
+       "start_time": "2026-10-14T10:29:25-04:00",
        "status": "passed"
       },
       {
@@ -3970,8 +4694,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/vulcan.container",
        "resource_params": "[\"/etc/containers/systemd/vulcan.container\"]",
-       "run_time": 0.217107,
-       "start_time": "2026-10-14T03:01:33-04:00",
+       "run_time": 0.146172,
+       "start_time": "2026-10-14T10:29:25-04:00",
        "status": "passed"
       },
       {
@@ -3979,8 +4703,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/vulcan.container",
        "resource_params": "[\"/etc/containers/systemd/vulcan.container\"]",
-       "run_time": 9.6e-05,
-       "start_time": "2026-10-14T03:01:33-04:00",
+       "run_time": 9.8e-05,
+       "start_time": "2026-10-14T10:29:25-04:00",
        "status": "passed"
       },
       {
@@ -3988,8 +4712,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/vulcan.container",
        "resource_params": "[\"/etc/containers/systemd/vulcan.container\"]",
-       "run_time": 0.208686,
-       "start_time": "2026-10-14T03:01:33-04:00",
+       "run_time": 0.137333,
+       "start_time": "2026-10-14T10:29:25-04:00",
        "status": "passed"
       },
       {
@@ -3997,8 +4721,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/vulcan.container",
        "resource_params": "[\"/etc/containers/systemd/vulcan.container\"]",
-       "run_time": 5.8e-05,
-       "start_time": "2026-10-14T03:01:33-04:00",
+       "run_time": 4.4e-05,
+       "start_time": "2026-10-14T10:29:25-04:00",
        "status": "passed"
       },
       {
@@ -4006,8 +4730,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/vulcan.container",
        "resource_params": "[\"/etc/containers/systemd/vulcan.container\"]",
-       "run_time": 3.1e-05,
-       "start_time": "2026-10-14T03:01:33-04:00",
+       "run_time": 4e-05,
+       "start_time": "2026-10-14T10:29:25-04:00",
        "status": "passed"
       },
       {
@@ -4015,8 +4739,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/vulcan.container",
        "resource_params": "[\"/etc/containers/systemd/vulcan.container\"]",
-       "run_time": 2.8e-05,
-       "start_time": "2026-10-14T03:01:33-04:00",
+       "run_time": 3.5e-05,
+       "start_time": "2026-10-14T10:29:25-04:00",
        "status": "passed"
       },
       {
@@ -4024,8 +4748,8 @@
        "resource_class": "command",
        "resource_id": "Command: `podman image exists docker.io/mitre/vulcan@sha256:f2087e590a48c921542bf403aba7238ba0a4d1e0b81f16d844fab4c70eac135e`",
        "resource_params": "[\"podman image exists docker.io/mitre/vulcan@sha256:f2087e590a48c921542bf403aba7238ba0a4d1e0b81f16d844fab4c70eac135e\"]",
-       "run_time": 0.286151,
-       "start_time": "2026-10-14T03:01:33-04:00",
+       "run_time": 0.28486,
+       "start_time": "2026-10-14T10:29:25-04:00",
        "status": "passed"
       },
       {
@@ -4033,8 +4757,8 @@
        "resource_class": "command",
        "resource_id": "Command: `systemctl show -p Restart --value vulcan.service`",
        "resource_params": "[\"systemctl show -p Restart --value vulcan.service\"]",
-       "run_time": 0.138893,
-       "start_time": "2026-10-14T03:01:34-04:00",
+       "run_time": 0.154648,
+       "start_time": "2026-10-14T10:29:26-04:00",
        "status": "passed"
       },
       {
@@ -4042,8 +4766,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/vulcan-db.container",
        "resource_params": "[\"/etc/containers/systemd/vulcan-db.container\"]",
-       "run_time": 0.412702,
-       "start_time": "2026-10-14T03:01:34-04:00",
+       "run_time": 0.142714,
+       "start_time": "2026-10-14T10:29:26-04:00",
        "status": "passed"
       },
       {
@@ -4051,8 +4775,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/vulcan-db.container",
        "resource_params": "[\"/etc/containers/systemd/vulcan-db.container\"]",
-       "run_time": 6e-05,
-       "start_time": "2026-10-14T03:01:34-04:00",
+       "run_time": 4.7e-05,
+       "start_time": "2026-10-14T10:29:26-04:00",
        "status": "passed"
       },
       {
@@ -4061,7 +4785,7 @@
        "resource_id": "/etc/containers/systemd/vulcan-db.container",
        "resource_params": "[\"/etc/containers/systemd/vulcan-db.container\"]",
        "run_time": 3.1e-05,
-       "start_time": "2026-10-14T03:01:34-04:00",
+       "start_time": "2026-10-14T10:29:26-04:00",
        "status": "passed"
       },
       {
@@ -4069,8 +4793,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/vulcan-db.container",
        "resource_params": "[\"/etc/containers/systemd/vulcan-db.container\"]",
-       "run_time": 2.7e-05,
-       "start_time": "2026-10-14T03:01:34-04:00",
+       "run_time": 3e-05,
+       "start_time": "2026-10-14T10:29:26-04:00",
        "status": "passed"
       },
       {
@@ -4078,8 +4802,8 @@
        "resource_class": "command",
        "resource_id": "Command: `podman image exists docker.io/library/postgres@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873`",
        "resource_params": "[\"podman image exists docker.io/library/postgres@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873\"]",
-       "run_time": 0.423159,
-       "start_time": "2026-10-14T03:01:34-04:00",
+       "run_time": 0.331157,
+       "start_time": "2026-10-14T10:29:26-04:00",
        "status": "passed"
       },
       {
@@ -4087,8 +4811,8 @@
        "resource_class": "command",
        "resource_id": "Command: `systemctl show -p Restart --value vulcan-db.service`",
        "resource_params": "[\"systemctl show -p Restart --value vulcan-db.service\"]",
-       "run_time": 0.333578,
-       "start_time": "2026-10-14T03:01:35-04:00",
+       "run_time": 0.155224,
+       "start_time": "2026-10-14T10:29:26-04:00",
        "status": "passed"
       },
       {
@@ -4096,8 +4820,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/vulcan.pod",
        "resource_params": "[\"/etc/containers/systemd/vulcan.pod\"]",
-       "run_time": 0.298528,
-       "start_time": "2026-10-14T03:01:35-04:00",
+       "run_time": 0.138698,
+       "start_time": "2026-10-14T10:29:27-04:00",
        "status": "passed"
       },
       {
@@ -4106,7 +4830,7 @@
        "resource_id": "/etc/containers/systemd/vulcan.pod",
        "resource_params": "[\"/etc/containers/systemd/vulcan.pod\"]",
        "run_time": 5.7e-05,
-       "start_time": "2026-10-14T03:01:35-04:00",
+       "start_time": "2026-10-14T10:29:27-04:00",
        "status": "passed"
       },
       {
@@ -4114,8 +4838,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/vulcan.pod",
        "resource_params": "[\"/etc/containers/systemd/vulcan.pod\"]",
-       "run_time": 4.3e-05,
-       "start_time": "2026-10-14T03:01:35-04:00",
+       "run_time": 4.2e-05,
+       "start_time": "2026-10-14T10:29:27-04:00",
        "status": "passed"
       },
       {
@@ -4123,8 +4847,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/vulcan-db.container",
        "resource_params": "[\"/etc/containers/systemd/vulcan-db.container\"]",
-       "run_time": 2.9e-05,
-       "start_time": "2026-10-14T03:01:35-04:00",
+       "run_time": 2.7e-05,
+       "start_time": "2026-10-14T10:29:27-04:00",
        "status": "passed"
       },
       {
@@ -4133,7 +4857,7 @@
        "resource_id": "/etc/containers/systemd/vulcan-db.container",
        "resource_params": "[\"/etc/containers/systemd/vulcan-db.container\"]",
        "run_time": 3.1e-05,
-       "start_time": "2026-10-14T03:01:35-04:00",
+       "start_time": "2026-10-14T10:29:27-04:00",
        "status": "passed"
       },
       {
@@ -4141,8 +4865,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/vulcan.container",
        "resource_params": "[\"/etc/containers/systemd/vulcan.container\"]",
-       "run_time": 3.5e-05,
-       "start_time": "2026-10-14T03:01:35-04:00",
+       "run_time": 3.6e-05,
+       "start_time": "2026-10-14T10:29:27-04:00",
        "status": "passed"
       },
       {
@@ -4150,8 +4874,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/vulcan.container",
        "resource_params": "[\"/etc/containers/systemd/vulcan.container\"]",
-       "run_time": 2.7e-05,
-       "start_time": "2026-10-14T03:01:35-04:00",
+       "run_time": 3e-05,
+       "start_time": "2026-10-14T10:29:27-04:00",
        "status": "passed"
       },
       {
@@ -4159,8 +4883,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/vulcan.container",
        "resource_params": "[\"/etc/containers/systemd/vulcan.container\"]",
-       "run_time": 3.1e-05,
-       "start_time": "2026-10-14T03:01:35-04:00",
+       "run_time": 3.3e-05,
+       "start_time": "2026-10-14T10:29:27-04:00",
        "status": "passed"
       },
       {
@@ -4168,8 +4892,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/vulcan.container",
        "resource_params": "[\"/etc/containers/systemd/vulcan.container\"]",
-       "run_time": 3.2e-05,
-       "start_time": "2026-10-14T03:01:35-04:00",
+       "run_time": 3.1e-05,
+       "start_time": "2026-10-14T10:29:27-04:00",
        "status": "passed"
       },
       {
@@ -4177,8 +4901,8 @@
        "resource_class": "file",
        "resource_id": "/etc/containers/systemd/vulcan.container",
        "resource_params": "[\"/etc/containers/systemd/vulcan.container\"]",
-       "run_time": 2.8e-05,
-       "start_time": "2026-10-14T03:01:35-04:00",
+       "run_time": 2.9e-05,
+       "start_time": "2026-10-14T10:29:27-04:00",
        "status": "passed"
       },
       {
@@ -4187,7 +4911,7 @@
        "resource_id": "/etc/containers/systemd/vulcan.container",
        "resource_params": "[\"/etc/containers/systemd/vulcan.container\"]",
        "run_time": 2.7e-05,
-       "start_time": "2026-10-14T03:01:35-04:00",
+       "start_time": "2026-10-14T10:29:27-04:00",
        "status": "passed"
       },
       {
@@ -4195,8 +4919,8 @@
        "resource_class": "command",
        "resource_id": "Command: `systemctl show -p WantedBy --value vulcan-pod.service`",
        "resource_params": "[\"systemctl show -p WantedBy --value vulcan-pod.service\"]",
-       "run_time": 0.404656,
-       "start_time": "2026-10-14T03:01:35-04:00",
+       "run_time": 0.160631,
+       "start_time": "2026-10-14T10:29:27-04:00",
        "status": "passed"
       },
       {
@@ -4204,8 +4928,8 @@
        "resource_class": "command",
        "resource_id": "Command: `systemctl show -p WantedBy --value vulcan-db.service`",
        "resource_params": "[\"systemctl show -p WantedBy --value vulcan-db.service\"]",
-       "run_time": 0.341263,
-       "start_time": "2026-10-14T03:01:36-04:00",
+       "run_time": 0.152922,
+       "start_time": "2026-10-14T10:29:27-04:00",
        "status": "passed"
       },
       {
@@ -4213,8 +4937,8 @@
        "resource_class": "command",
        "resource_id": "Command: `systemctl show -p WantedBy --value vulcan.service`",
        "resource_params": "[\"systemctl show -p WantedBy --value vulcan.service\"]",
-       "run_time": 0.359175,
-       "start_time": "2026-10-14T03:01:36-04:00",
+       "run_time": 0.153771,
+       "start_time": "2026-10-14T10:29:27-04:00",
        "status": "passed"
       },
       {
@@ -4222,8 +4946,8 @@
        "resource_class": "file",
        "resource_id": "/etc/safbox/firstboot.d/30-vulcan.sh",
        "resource_params": "[\"/etc/safbox/firstboot.d/30-vulcan.sh\"]",
-       "run_time": 0.341204,
-       "start_time": "2026-10-14T03:01:36-04:00",
+       "run_time": 0.129794,
+       "start_time": "2026-10-14T10:29:27-04:00",
        "status": "passed"
       },
       {
@@ -4231,8 +4955,8 @@
        "resource_class": "file",
        "resource_id": "/etc/safbox/firstboot.d/30-vulcan.sh",
        "resource_params": "[\"/etc/safbox/firstboot.d/30-vulcan.sh\"]",
-       "run_time": 0.522435,
-       "start_time": "2026-10-14T03:01:37-04:00",
+       "run_time": 0.131315,
+       "start_time": "2026-10-14T10:29:27-04:00",
        "status": "passed"
       },
       {
@@ -4240,8 +4964,8 @@
        "resource_class": "file",
        "resource_id": "/etc/safbox/firstboot.d/30-vulcan.sh",
        "resource_params": "[\"/etc/safbox/firstboot.d/30-vulcan.sh\"]",
-       "run_time": 9.8e-05,
-       "start_time": "2026-10-14T03:01:37-04:00",
+       "run_time": 7.7e-05,
+       "start_time": "2026-10-14T10:29:27-04:00",
        "status": "passed"
       }
      ],
@@ -4270,8 +4994,8 @@
        "resource_class": "file",
        "resource_id": "/etc/safbox/vulcan.env",
        "resource_params": "[\"/etc/safbox/vulcan.env\"]",
-       "run_time": 0.209611,
-       "start_time": "2026-10-14T03:01:37-04:00",
+       "run_time": 0.132705,
+       "start_time": "2026-10-14T10:29:27-04:00",
        "status": "passed"
       },
       {
@@ -4279,8 +5003,8 @@
        "resource_class": "file",
        "resource_id": "/etc/safbox/vulcan-db.env",
        "resource_params": "[\"/etc/safbox/vulcan-db.env\"]",
-       "run_time": 0.204227,
-       "start_time": "2026-10-14T03:01:37-04:00",
+       "run_time": 0.139174,
+       "start_time": "2026-10-14T10:29:28-04:00",
        "status": "passed"
       }
      ],
@@ -4312,7 +5036,7 @@
        "resource_params": "[]",
        "run_time": 3e-06,
        "skip_message": "Skipped control due to only_if condition: Vulcan is not in expected_services, or this is not a deployed clone",
-       "start_time": "2026-10-14T03:01:38-04:00",
+       "start_time": "2026-10-14T10:29:28-04:00",
        "status": "skipped"
       }
      ],
@@ -4344,7 +5068,7 @@
        "resource_params": "[]",
        "run_time": 2e-06,
        "skip_message": "Skipped control due to only_if condition: Vulcan is not in expected_services, or this is not a deployed clone",
-       "start_time": "2026-10-14T03:01:38-04:00",
+       "start_time": "2026-10-14T10:29:28-04:00",
        "status": "skipped"
       }
      ],
@@ -4365,7 +5089,7 @@
    "maintainer": "MITRE SAF",
    "name": "el10-infrastructure",
    "parent_profile": "inspec-safbox",
-   "sha256": "9aa7bfe1d4a989d750ff5135d049c08d26b5d62bdc448e83e3b7011e63cf2f8d",
+   "sha256": "5f9d10a4c95e7f94ae219d029249ce2d83ab38f35ab0873aad50d6c19274e39d",
    "status": "loaded",
    "status_message": "",
    "summary": "Asserts that a SAFBox image or clone on the RHEL 10 family carries the appliance foundation (ADR-0001 Phases 2 and 3): FIPS mode, Secure Boot, the expected OS, enabled units, the guest agent's RPC filter, podman and Quadlet, the safbox CLI, the first-boot framework, the pinned tools (CINC Auditor, SAF CLI, Ansible and the Lockdown collections, Packer), no distribution default user and, once sealed, the build record and the absence of build residue; and the services (Phases 5 and 6, and the TLS proxy): Heimdall and Vulcan as Quadlet pods on the loopback address with secrets from first boot, behind an nginx TLS proxy with a first-boot certificate. Every control is impact 1.0, so the thresholds in verify/thresholds/ can name each one in the critical bucket, which no STIG control uses, except documented findings: known weaknesses kept visible as low-impact controls that fail, tagged finding. Runs alone or through the verify/inspec-safbox wrapper, from the build runner over SSH; the sealed template's own invariants are asserted by the seal step itself.",
@@ -4376,7 +5100,7 @@
     }
    ],
    "title": "SAFBox infrastructure validation for the RHEL 10 family",
-   "version": "0.6.0"
+   "version": "0.7.0"
   },
   {
    "attributes": [],
@@ -4462,7 +5186,7 @@
   }
  ],
  "statistics": {
-  "duration": 74.52335
+  "duration": 98.747425
  },
  "version": "7.0.107"
 }

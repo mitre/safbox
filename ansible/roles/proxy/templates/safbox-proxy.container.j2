@@ -12,15 +12,22 @@
 #                                         host network (nginx.conf); 443 is the
 #                                         landing page's, and there is no plain
 #                                         HTTP
-#   templates and certs volumes        -> nginx.conf from the proxy role and the
-#                                         certificate first boot generates, both
-#                                         read-only
+#   templates and certs volumes        -> nginx.conf and the landing page from
+#                                         the proxy role, the certificate first
+#                                         boot generates, and the landing page's
+#                                         status files, all read-only
 # The host network lets nginx reach the pods' loopback-only ports. It runs as
 # root (master) to read the root-only key, with every capability dropped but
-# the three nginx needs to hand work to its nginx-user workers.
+# the three nginx needs to hand work to its nginx-user workers and the one it
+# needs to listen on the landing page's port, 443, below 1024. The status
+# directory is labelled shared (z), not private: the status service on the
+# host writes into it while the container reads it. The status service is
+# ordered before the proxy but not pulled in by it, so a proxy that fails
+# and restarts never exhausts the status service's start limit; its timer
+# starts it.
 [Unit]
 Description=SAFBox TLS proxy (nginx)
-After=safbox-firstboot.service
+After=safbox-firstboot.service {{ proxy_status_unit }}.service
 ConditionPathExists={{ proxy_key }}
 
 [Container]
@@ -31,10 +38,11 @@ User=root
 Exec=nginx -c /etc/nginx/safbox/nginx.conf
 Volume={{ proxy_conf_dir }}:/etc/nginx/safbox:ro,Z
 Volume={{ proxy_tls_dir }}:/etc/nginx/tls:ro,Z
+Volume={{ proxy_status_dir }}:/etc/nginx/safbox-landing-status:ro,z
 ReadOnly=true
 NoNewPrivileges=true
 DropCapability=all
-AddCapability=CAP_CHOWN CAP_SETGID CAP_SETUID
+AddCapability=CAP_CHOWN CAP_NET_BIND_SERVICE CAP_SETGID CAP_SETUID
 Memory={{ proxy_memory }}
 
 [Service]

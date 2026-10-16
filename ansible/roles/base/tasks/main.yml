@@ -75,6 +75,15 @@
         group: root
         mode: '0755'
 
+    # Service roles register their services here for `safbox services`.
+    - name: Create the service registry directory
+      ansible.builtin.file:
+        path: "{{ base_services_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
     - name: Install the safbox dispatcher
       ansible.builtin.copy:
         src: safbox

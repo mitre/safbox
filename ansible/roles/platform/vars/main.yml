@@ -1,6 +1,0 @@
----
-# Names common to every OS family. A vars/<os_family>.yml file, loaded by
-# the role, overrides a name here only where that family differs.
-
-platform_firewalld_services:
-  - ssh

@@ -1,29 +1,52 @@
 ---
 # proxy role: one nginx container (ADR-0001 §Decision: a single nginx reverse
 # proxy terminates TLS and fronts both applications on distinct ports) that
-# serves each enabled application over HTTPS on its own port, with a
-# self-signed certificate generated on first boot. 443 stays free for the
-# landing page (ADR-0001 Phase 8). Task group safbox-proxy-1, switched off
-# by setting safbox_proxy_1 to false (group_vars).
+# serves each enabled application over HTTPS on its own port and a landing
+# page with each service's status and links on 443 (ADR-0001 Phase 8), with
+# a self-signed certificate generated on first boot. Task group
+# safbox-proxy-1, switched off by setting safbox_proxy_1 to false
+# (group_vars).
 
 proxy_image: "{{ safbox_image_proxy.name }}@{{ safbox_image_proxy.digest }}"
 
 # The applications the proxy fronts. An application whose role is switched
-# off gets no server block, and its port is closed in the firewall. Body and
-# buffer sizes follow each application's upstream proxy configuration (see
-# templates/nginx.conf.j2); 100m is the largest upload either accepts.
+# off gets no server block and no row on the landing page, and its port is
+# closed in the firewall. Body and buffer sizes follow each application's
+# upstream proxy configuration (see templates/nginx.conf.j2); 100m is the
+# largest upload either accepts.
 proxy_apps:
   - name: heimdall
+    label: Heimdall
     enabled: "{{ safbox_heimdall_1 | default(true) | bool }}"
     https_port: "{{ safbox_heimdall_https_port }}"
     loopback_port: "{{ safbox_heimdall_loopback_port }}"
   - name: vulcan
+    label: Vulcan
     enabled: "{{ safbox_vulcan_1 | default(true) | bool }}"
     https_port: "{{ safbox_vulcan_https_port }}"
     loopback_port: "{{ safbox_vulcan_loopback_port }}"
 
-# nginx configuration on the host, mounted read-only into the container.
+# The landing page's port (group_vars) and how the proxy registers itself
+# with `safbox services`.
+proxy_landing_port: "{{ safbox_landing_https_port }}"
+proxy_label: TLS proxy and landing page
+
+# nginx configuration on the host, mounted read-only into the container. The
+# landing page's static files live in its landing/ directory.
 proxy_conf_dir: /etc/safbox-proxy
+proxy_landing_dir: "{{ proxy_conf_dir }}/landing"
+
+# The landing page's status: one small file per service, which nginx
+# includes into the page, written from `safbox services` by a sandboxed
+# oneshot service without capabilities that a timer runs every
+# proxy_status_interval (files/safbox-landing-status). The directory is on
+# /run, created at boot by systemd-tmpfiles, and mounted read-only into the
+# container. A timer rather than a daemon: nothing runs between refreshes,
+# and nginx serves a static page, so no request reaches systemd.
+proxy_status_dir: /run/safbox-landing
+proxy_status_unit: safbox-landing-status
+proxy_status_script: /usr/local/sbin/safbox-landing-status
+proxy_status_interval: 30s
 
 # The certificate and key first boot generates (files/40-proxy.sh). To use
 # your own, replace both files (PEM, the key unencrypted, root-only) and

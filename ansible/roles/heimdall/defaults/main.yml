@@ -9,6 +9,13 @@
 heimdall_image: "{{ safbox_image_heimdall.name }}@{{ safbox_image_heimdall.digest }}"
 heimdall_db_image: "{{ safbox_image_heimdall_db.name }}@{{ safbox_image_heimdall_db.digest }}"
 
+# The units Quadlet generates for the pod that make up the service, in start
+# order; `safbox services` reports their health.
+heimdall_units:
+  - heimdall-pod.service
+  - heimdall-db.service
+  - heimdall.service
+
 # Port the pod publishes on 127.0.0.1 for the TLS proxy (group_vars).
 heimdall_loopback_port: "{{ safbox_heimdall_loopback_port }}"
 

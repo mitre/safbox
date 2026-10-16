@@ -117,6 +117,25 @@ for tasks_file in sorted((root / "ansible/roles").glob("*/tasks/*.yml")):
 for role in ("platform", "proxy"):
     if role not in seen_firewalld:
         errors.append(f"{role}: no ansible.posix.firewalld task found to check")
+# The zone allows SSH and the proxy ports only (ADR-0001 Quality Standards).
+# safbox_firewall_services is the one list of services it allows: the
+# platform role enforces exactly that list, Lockdown's whitelist (which it
+# adds to the zone it creates; its default adds dns and ntp as well) is
+# derived from it, and the validation profile's firewall_services input
+# defaults to it.
+SERVICES = gv.get("safbox_firewall_services")
+if SERVICES != ["ssh"]:
+    errors.append(f"group_vars: safbox_firewall_services must be [ssh] (the firewall allows SSH and the proxy ports only), not {SERVICES!r}")
+WHITELIST = "{{ safbox_firewall_services | map('community.general.dict_kv', 'name') | list }}"
+if gv.get("rhel10stig_white_list_services") != WHITELIST:
+    errors.append(f"group_vars: rhel10stig_white_list_services must be \"{WHITELIST}\"")
+platform_tasks = (root / "ansible/roles/platform/tasks/main.yml").read_text()
+if "safbox_firewall_services" not in platform_tasks:
+    errors.append("platform: the firewall group must enforce safbox_firewall_services")
+infra_inputs = {i["name"]: i.get("value") for i in
+                yaml.safe_load((root / "verify/el10-infrastructure/inspec.yml").read_text()).get("inputs") or []}
+if infra_inputs.get("firewall_services") != SERVICES:
+    errors.append(f"verify: input firewall_services defaults to {infra_inputs.get('firewall_services')!r} but group_vars sets {SERVICES!r}")
 # Hardening is the last role of the appliance play, after every role that
 # installs or configures something and before validation and the seal
 # (ADR-0001 §Decision: hardened with documented deviations).

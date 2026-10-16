@@ -1,7 +1,7 @@
 # {{ ansible_managed }}
 # SAFBox TLS proxy: one HTTPS server per enabled application, each on its
-# own port, proxying to the application's pod on the loopback address. 443
-# stays free for the landing page (ADR-0001 Phase 8); nothing listens on 80.
+# own port, proxying to the application's pod on the loopback address, and
+# the landing page on {{ proxy_landing_port }} (ADR-0001 Phase 8); nothing listens on 80.
 #
 # The master process runs as root only to read the root-only key; workers
 # run as nginx. Writable paths are under /tmp, the tmpfs podman mounts on
@@ -43,6 +43,44 @@ http {
     ssl_session_cache shared:SSL:10m;
     ssl_session_timeout 10m;
     ssl_session_tickets off;
+
+    # The landing page: a static page the proxy role renders, with each
+    # service's status included from the file safbox-landing-status writes
+    # (server-side includes; no script runs in nginx or the browser). The
+    # status files are reachable only as includes (internal). The page allows
+    # nothing but its own stylesheet and cannot be framed. No
+    # Strict-Transport-Security: a browser that has seen it refuses to let
+    # its user past the warning for the self-signed certificate, on every
+    # port of the host. nginx's static handler answers 405 to any method but
+    # GET and HEAD, and SSI drops Last-Modified and ETag from the page.
+    server {
+        listen {{ proxy_landing_port }} ssl;
+        http2 on;
+        server_name _;
+
+        root /etc/nginx/safbox/landing;
+        index index.html;
+        ssi on;
+
+        add_header Content-Security-Policy "default-src 'none'; style-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'" always;
+        add_header X-Content-Type-Options nosniff always;
+        add_header X-Frame-Options DENY always;
+        add_header Referrer-Policy no-referrer always;
+        add_header Cache-Control no-store always;
+
+        location / {
+            try_files $uri =404;
+        }
+
+        location = / {
+        }
+
+        location /status/ {
+            internal;
+            alias /etc/nginx/safbox-landing-status/;
+            default_type text/html;
+        }
+    }
 {% for app in proxy_apps if app.enabled | bool %}
 {% if app.name == 'heimdall' %}
 

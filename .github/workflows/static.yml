@@ -5,7 +5,8 @@
 #
 # Every input is pinned: actions by commit SHA, downloads by version and
 # sha256, Python tools in tests/requirements.txt, Packer plugins by the
-# required_plugins block in packer/build.pkr.hcl (packer init honours it).
+# required_plugins block in packer/build.pkr.hcl (packer init honours it),
+# Terraform providers by each deploy module's versions.tf and lock file.
 name: static
 
 on:
@@ -24,6 +25,12 @@ env:
   GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
   # Packer CLI; satisfies required_version in packer/build.pkr.hcl.
   PACKER_VERSION: 1.16.1
+  # Terraform CLI for the deploy modules; satisfies required_version in
+  # deploy/terraform/*/versions.tf. The checksum is the one in
+  # terraform_<version>_SHA256SUMS, whose signature verifies against
+  # HashiCorp's release key.
+  TERRAFORM_VERSION: 1.16.6
+  TERRAFORM_SHA256: 38034b38d03096399a7a1264a14561a8029b2b496fd1f169452656e53968f1b7
   # Same release as the appliance's own pin (ansible/group_vars/all/main.yml),
   # Ubuntu build for the runner.
   CINC_AUDITOR_URL: https://packages.cinc.sh/files/stable/cinc-auditor/7.2.1/ubuntu/24.04/cinc-auditor_7.2.1-1_amd64.deb
@@ -77,6 +84,14 @@ jobs:
         with:
           version: ${{ env.PACKER_VERSION }}
 
+      - name: Install Terraform
+        run: |
+          curl -fsSLo "$RUNNER_TEMP/terraform.zip" \
+            "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
+          echo "${TERRAFORM_SHA256}  $RUNNER_TEMP/terraform.zip" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/terraform.zip" terraform -d "$RUNNER_TEMP"
+          sudo install -m 0755 "$RUNNER_TEMP/terraform" /usr/local/bin/terraform
+
       - name: Install CINC Auditor
         run: |
           curl -fsSLo "$RUNNER_TEMP/cinc-auditor.deb" "$CINC_AUDITOR_URL"
@@ -104,6 +119,9 @@ jobs:
 
       - name: Ansible and validation profile lint
         run: tests/ansible/lint.sh
+
+      - name: Terraform deploy modules
+        run: tests/terraform/validate.sh
 
       - name: Platform discipline
         run: tests/platform-discipline.sh

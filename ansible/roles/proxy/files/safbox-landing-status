@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# safbox-landing-status: write the status files the SAFBox landing page
+# includes. Run by safbox-landing-status.service, which its timer starts
+# every 30 seconds, sandboxed and without capabilities.
+#
+# For each service `safbox services --tsv` reports, writes
+# <status dir>/<name> holding one HTML fragment,
+#   <span class="state state-<health>">Text</span>
+# and <status dir>/updated with the time of this run. nginx includes them
+# into the landing page with server-side includes (the proxy role's
+# nginx.conf and index.html). Only a fixed vocabulary is ever written: a
+# service name that is not a plain identifier is skipped and a health this
+# script does not know is written as unknown, so nothing a registry file
+# holds reaches the page as markup. Each file is replaced atomically.
+set -euo pipefail
+export LC_ALL=C
+umask 022
+
+readonly STATUS_DIR="${SAFBOX_LANDING_STATUS_DIR:-/run/safbox-landing}"
+readonly SAFBOX_BIN="${SAFBOX_BIN:-/usr/local/bin/safbox}"
+
+[[ -d "$STATUS_DIR" ]] || { echo "safbox-landing-status: ${STATUS_DIR} does not exist" >&2; exit 1; }
+
+text_of() {
+  case "$1" in
+    running) echo "Running" ;;
+    starting) echo "Starting" ;;
+    stopping) echo "Stopping" ;;
+    waiting) echo "Waiting for first boot" ;;
+    stopped) echo "Stopped" ;;
+    failed) echo "Failed" ;;
+    not-installed) echo "Not installed" ;;
+    *) return 1 ;;
+  esac
+}
+
+# write NAME CONTENT: replace STATUS_DIR/NAME atomically.
+write() {
+  local tmp
+  tmp=$(mktemp "${STATUS_DIR}/.$1.XXXXXX")
+  printf '%s' "$2" > "$tmp"
+  chmod 0644 "$tmp"
+  mv -f "$tmp" "${STATUS_DIR}/$1"
+}
+
+# 0: every service runs; 3: one does not. Anything else is an error.
+rc=0
+listing=$("$SAFBOX_BIN" services --tsv) || rc=$?
+if [[ "$rc" -ne 0 && "$rc" -ne 3 ]]; then
+  echo "safbox-landing-status: '${SAFBOX_BIN} services --tsv' exited ${rc}" >&2
+  exit 1
+fi
+
+while IFS=$'\t' read -r name _label health; do
+  [[ "$name" =~ ^[a-z][a-z0-9-]*$ && "$name" != updated ]] || continue
+  if ! text=$(text_of "$health"); then
+    health=unknown
+    text="Unknown"
+  fi
+  write "$name" "<span class=\"state state-${health}\">${text}</span>"
+done <<<"$listing"
+
+write updated "$(date -u '+%Y-%m-%d %H:%M:%S UTC')"

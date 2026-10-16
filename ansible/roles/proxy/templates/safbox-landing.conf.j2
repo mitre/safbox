@@ -1,0 +1,5 @@
+# {{ ansible_managed }}
+# The SAFBox landing page's status files (proxy role): created on every boot,
+# before any service starts, for safbox-landing-status to write and the proxy
+# to mount read-only.
+d {{ proxy_status_dir }} 0755 root root -

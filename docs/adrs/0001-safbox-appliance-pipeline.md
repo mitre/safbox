@@ -854,6 +854,28 @@ cloud-init user data, outputs), `docs/deploy.md`, `docs/rebuild.md`.
 **Verification:** full `packer build`, clone, and a documented manual
 walkthrough of both guides.
 
+**Outcomes (proposed 2026-10-14, for owner review):**
+- *Landing page status from a timer, through SSI.* The landing page is a
+  static page the proxy role renders; nginx includes one status file per
+  service with server-side includes. A sandboxed oneshot service without
+  capabilities writes the files from `safbox services` every 30 seconds,
+  run by a systemd timer. No status daemon and no request path to systemd;
+  the status may be 30 seconds old, and the page says so.
+- *`safbox services` reads a registry.* Each service role registers its
+  service (label and units) in `/usr/local/share/safbox/services.d/`, so
+  the command and the landing page cover whichever services an image ships.
+- *The firewall allows SSH and the proxy ports only, exactly.*
+  `safbox_firewall_services` (`[ssh]`) is the one list of zone services;
+  Lockdown's whitelist derives from it, dropping the `dns` and `ntp` it
+  adds by default (they admit inbound queries to servers SAFBox does not
+  run; the box's own client traffic returns as related), and the roles
+  remove anything else. STIG results are unchanged.
+- *Deployment module.* `deploy/terraform/proxmox/` uses `bpg/proxmox`
+  pinned exactly, with its lock file committed (a downloaded artifact
+  pinned by version and checksum), and sets the template's firmware
+  explicitly because the provider applies its own defaults to a clone. The
+  platform-discipline test allows `deploy/` as the install layer's mirror.
+
 #### Phase 9 and later (not v1)
 - `qemu` source producing qcow2 for distribution, with OVA and cloud image
   conversion. GitHub-hosted Ubuntu runners expose KVM, so this can run in CI

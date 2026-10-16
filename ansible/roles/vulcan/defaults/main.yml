@@ -10,6 +10,13 @@
 vulcan_image: "{{ safbox_image_vulcan.name }}@{{ safbox_image_vulcan.digest }}"
 vulcan_db_image: "{{ safbox_image_vulcan_db.name }}@{{ safbox_image_vulcan_db.digest }}"
 
+# The units Quadlet generates for the pod that make up the service, in start
+# order; `safbox services` reports their health.
+vulcan_units:
+  - vulcan-pod.service
+  - vulcan-db.service
+  - vulcan.service
+
 # Port the pod publishes on 127.0.0.1 for the TLS proxy (group_vars).
 vulcan_loopback_port: "{{ safbox_vulcan_loopback_port }}"
 

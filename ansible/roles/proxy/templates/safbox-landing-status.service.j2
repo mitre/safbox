@@ -1,0 +1,38 @@
+# {{ ansible_managed }}
+# Writes the landing page's status files from `safbox services` (the proxy
+# role's files/safbox-landing-status); {{ proxy_status_unit }}.timer runs it. It
+# reads unit states from systemd and writes only {{ proxy_status_dir }}, so it
+# runs as root with no capabilities, no network and a read-only view of
+# the rest of the system. Only warnings and errors reach the journal, so a
+# run every {{ proxy_status_interval }} does not fill it.
+[Unit]
+Description=Write the SAFBox landing page's service status
+Documentation=file:{{ proxy_status_script }}
+
+[Service]
+Type=oneshot
+ExecStart={{ proxy_status_script }}
+UMask=0022
+LogLevelMax=notice
+CapabilityBoundingSet=
+AmbientCapabilities=
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths={{ proxy_status_dir }}
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateNetwork=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native

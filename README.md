@@ -30,15 +30,21 @@ The design is recorded in [docs/adrs/0001-safbox-appliance-pipeline.md](docs/adr
 
 ## Two ways to use it
 
-- **Deploy the image.** See `docs/deploy.md` (arrives with the release gate).
+- **Deploy the image.** See [docs/deploy.md](docs/deploy.md): Terraform
+  (`deploy/terraform/proxmox/`) or a manual clone, first login, the landing
+  page on port 443 with Heimdall on 8443 and Vulcan on 9443, certificates,
+  accounts, and the FIPS status of each component.
 - **Rebuild the image.** See [docs/rebuild.md](docs/rebuild.md). The build is
   Packer for the OS install and Ansible for everything that makes it a SAFBox,
   so the Ansible layer also works on a machine you already have.
 
 ## Status
 
-Phases 1 and 2 of 8: the install layer builds a FIPS-enabled RHEL 10 family
-template on Proxmox, and the appliance foundation (platform, first-boot
-framework, seal, outside-in validation) turns it into a sealed SAFBox base.
-Every push runs the static suite and secret scan in CI (see
+Phases 1 to 8 of the v1 plan (the content manifest of Phase 4 aside): the
+install layer builds a FIPS-enabled RHEL 10 family template on Proxmox; the
+appliance layer adds the SAF tools, Heimdall and Vulcan behind an nginx TLS
+proxy with a landing page, and hardens the box to the RHEL 10 STIG with
+documented deviations; every build is validated from outside before it is
+sealed, and a deployed clone is the release gate. Every push runs the
+static suite and secret scan in CI (see
 [docs/rebuild.md](docs/rebuild.md#continuous-integration)).

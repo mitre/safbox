@@ -21,7 +21,7 @@ summary: >-
   low-impact controls that fail, tagged finding. Runs alone or through the
   verify/inspec-safbox wrapper, from the build runner over SSH; the sealed
   template's own invariants are asserted by the seal step itself.
-version: 0.6.0
+version: 0.7.0
 inspec_version: ">= 5.0"
 supports:
   - platform-family: redhat
@@ -181,12 +181,21 @@ inputs:
         digest: sha256:ede0e7a8623c1d6a7db313b4b8e7a4bfcc86cbdd47f2d62798d50aba86066cdc
   - name: proxy_ports
     description: >-
-      HTTPS port the proxy serves each application on
-      (safbox_<service>_https_port). 443 stays free for the landing page.
+      HTTPS port the proxy serves the landing page and each application on
+      (safbox_<service>_https_port).
     type: Hash
     value:
+      landing: 443
       heimdall: 8443
       vulcan: 9443
+  - name: firewall_services
+    description: >-
+      firewalld services the box's zone allows besides the proxy ports
+      (safbox_firewall_services). A site that allows another service sets
+      both.
+    type: Array
+    value:
+      - ssh
   - name: loopback_ports
     description: >-
       Port each application's pod publishes on the host loopback address

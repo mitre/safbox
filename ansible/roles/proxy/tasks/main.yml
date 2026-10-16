@@ -2,6 +2,11 @@
 - name: TLS proxy
   when: safbox_proxy_1 | default(true) | bool
   tags: [safbox-proxy-1]
+  vars:
+    proxy_ports_open: >-
+      {{ [proxy_landing_port | string ~ '/tcp']
+         + (proxy_apps | selectattr('enabled') | map(attribute='https_port') | map('string')
+            | map('regex_replace', '$', '/tcp') | list) }}
   block:
     # Pulled at build so a clone starts the proxy offline.
     - name: Pull the nginx image
@@ -24,15 +29,18 @@
         path: "{{ proxy_key }}"
       register: proxy_tls
 
-    - name: Create the proxy configuration directory
+    - name: Create the proxy configuration and landing page directories
       ansible.builtin.file:
-        path: "{{ proxy_conf_dir }}"
+        path: "{{ item }}"
         state: directory
         owner: root
         group: root
         mode: '0755'
+      loop:
+        - "{{ proxy_conf_dir }}"
+        - "{{ proxy_landing_dir }}"
 
-    - name: Configure nginx for the enabled applications
+    - name: Configure nginx for the landing page and the enabled applications
       ansible.builtin.template:
         src: nginx.conf.j2
         dest: "{{ proxy_conf_dir }}/nginx.conf"
@@ -40,6 +48,34 @@
         group: root
         mode: '0644'
       notify: Restart the proxy
+
+    # nginx reads the page on every request, so a change needs no restart.
+    - name: Install the landing page
+      ansible.builtin.template:
+        src: index.html.j2
+        dest: "{{ proxy_landing_dir }}/index.html"
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Install the landing page's stylesheet
+      ansible.builtin.copy:
+        src: safbox.css
+        dest: "{{ proxy_landing_dir }}/safbox.css"
+        owner: root
+        group: root
+        mode: '0644'
+
+    # Created on every boot, before any service starts; the proxy mounts it
+    # whether or not the status service is installed.
+    - name: Have systemd-tmpfiles create the status directory at boot
+      ansible.builtin.template:
+        src: safbox-landing.conf.j2
+        dest: /etc/tmpfiles.d/safbox-landing.conf
+        owner: root
+        group: root
+        mode: '0644'
+      notify: Create the status directory
 
     - name: Install the proxy Quadlet unit
       ansible.builtin.template:
@@ -52,22 +88,85 @@
         - Reload systemd units
         - Restart the proxy
 
+    # The status files come from `safbox services`, so they need the safbox
+    # command (base group 2); without it the page shows every status as
+    # unknown.
+    - name: Landing page status
+      when: safbox_base_2 | default(true) | bool
+      block:
+        - name: Install the status writer
+          ansible.builtin.copy:
+            src: safbox-landing-status
+            dest: "{{ proxy_status_script }}"
+            owner: root
+            group: root
+            mode: '0755'
+
+        - name: Install the status service and its timer
+          ansible.builtin.template:
+            src: "{{ proxy_status_unit }}.{{ item }}.j2"
+            dest: "/etc/systemd/system/{{ proxy_status_unit }}.{{ item }}"
+            owner: root
+            group: root
+            mode: '0644'
+          loop: [service, timer]
+          notify: Reload systemd units
+
+        - name: Register the proxy with safbox services
+          ansible.builtin.copy:
+            dest: "{{ base_services_dir }}/40-proxy"
+            content: |
+              label={{ proxy_label }}
+              units=safbox-proxy.service {{ proxy_status_unit }}.timer
+            owner: root
+            group: root
+            mode: '0644'
+
     - name: Generate the unit from the Quadlet file
       ansible.builtin.meta: flush_handlers
 
-    # Exactly the proxy ports of the enabled applications; a switched-off
-    # application's port is closed. They go in the zone the box ends up in
-    # (safbox_firewall_zone), which hardening makes the default.
+    # Enabled at build so it starts on every boot of a clone; started only on
+    # a deployed box, like the proxy.
+    - name: Enable the status timer
+      when: safbox_base_2 | default(true) | bool
+      ansible.builtin.systemd_service:
+        name: "{{ proxy_status_unit }}.timer"
+        enabled: true
+        state: "{{ 'started' if proxy_tls.stat.exists else omit }}"
+
+    # Exactly the landing page's port and those of the enabled applications:
+    # a switched-off application's port, and any other port, is closed. They
+    # go in the zone the box ends up in (safbox_firewall_zone), which
+    # hardening makes the default.
     - name: Open the firewall for the proxy ports
       ansible.posix.firewalld:
         zone: "{{ safbox_firewall_zone }}"
-        port: "{{ item.https_port }}/tcp"
+        port: "{{ item }}"
         permanent: true
         immediate: true
-        state: "{{ 'enabled' if item.enabled | bool else 'disabled' }}"
-      loop: "{{ proxy_apps }}"
+        state: enabled
+      loop: "{{ proxy_ports_open }}"
+
+    - name: Read the ports the firewall zone opens
+      ansible.builtin.command:
+        cmd: "firewall-cmd {{ item }} --zone={{ safbox_firewall_zone }} --list-ports"
+      loop: ['', '--permanent']
       loop_control:
-        label: "{{ item.name }} {{ item.https_port }}/tcp"
+        label: "{{ item | default('runtime', true) }}"
+      register: proxy_firewall_listed
+      changed_when: false
+      check_mode: false
+
+    - name: Close every other port in the firewall zone
+      ansible.posix.firewalld:
+        zone: "{{ safbox_firewall_zone }}"
+        port: "{{ item }}"
+        permanent: true
+        immediate: true
+        state: disabled
+      loop: >-
+        {{ proxy_firewall_listed.results | map(attribute='stdout') | map('split') | flatten
+           | unique | difference(proxy_ports_open) | sort }}
 
     # Quadlet-generated units are enabled by their [Install] section through
     # the generator; they are started, never enabled, with systemctl. At

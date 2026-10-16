@@ -38,12 +38,14 @@ passed:
       - safbox-accounts-2
       - safbox-build-info-1
       - safbox-cli-1
+      - safbox-cli-2
       - safbox-fips-1
       - safbox-fips-2
       - safbox-fips-3
       - safbox-firstboot-1
       - safbox-firstboot-2
       - safbox-firstboot-3
+      - safbox-firewall-1
       - safbox-guest-agent-1
       - safbox-hardening-1
       - safbox-hardening-2
@@ -57,8 +59,8 @@ passed:
       - safbox-proxy-2
       - safbox-proxy-3
       - safbox-proxy-4
-      - safbox-proxy-5
       - safbox-proxy-6
+      - safbox-proxy-7
       - safbox-seal-1
       - safbox-seal-2
       - safbox-secureboot-1

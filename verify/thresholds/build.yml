@@ -12,7 +12,7 @@
 # or is missing, or an unlisted one that passes, fails the gate. Not listed:
 # safbox-build-info-1, safbox-seal-1, safbox-seal-2, safbox-firstboot-2 and
 # the running-service controls (safbox-heimdall-3, safbox-vulcan-3,
-# safbox-proxy-2, -3 and -6), which need a sealed, deployed clone whose first
+# safbox-proxy-2, -3, -6 and -7), which need a sealed, deployed clone whose first
 # boot wrote the services' secrets and certificate; and safbox-podman-2,
 # which skips unless the build opts in to the smoke-test Quadlet unit. The
 # documented findings (low-impact infrastructure controls) also need a
@@ -39,11 +39,13 @@ passed:
       - safbox-accounts-1
       - safbox-accounts-2
       - safbox-cli-1
+      - safbox-cli-2
       - safbox-fips-1
       - safbox-fips-2
       - safbox-fips-3
       - safbox-firstboot-1
       - safbox-firstboot-3
+      - safbox-firewall-1
       - safbox-guest-agent-1
       - safbox-hardening-1
       - safbox-hardening-2
@@ -54,7 +56,6 @@ passed:
       - safbox-podman-1
       - safbox-proxy-1
       - safbox-proxy-4
-      - safbox-proxy-5
       - safbox-secureboot-1
       - safbox-services-1
       - safbox-services-2

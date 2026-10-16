@@ -1,0 +1,13 @@
+# {{ ansible_managed }}
+# Refreshes the landing page's service status: once when the timer starts at
+# boot, then every {{ proxy_status_interval }} after each run.
+[Unit]
+Description=Refresh the SAFBox landing page's service status every {{ proxy_status_interval }}
+
+[Timer]
+OnActiveSec=0
+OnUnitActiveSec={{ proxy_status_interval }}
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target

@@ -31,7 +31,17 @@ echo "== ansible-playbook --syntax-check"
   playbooks/safbox.yml playbooks/seal.yml)
 
 echo "== shellcheck"
-find ansible/roles -path '*/files/*' -type f -print0 | xargs -0 shellcheck --shell=bash --external-sources
+# Every shell script a role installs: a file under files/ with a sh or bash
+# shebang, or a library declaring its shell to shellcheck. Other files there
+# are data (the landing page's stylesheet).
+role_scripts=()
+while IFS= read -r -d '' f; do
+  if head -n 1 "$f" | grep -qE '^#!.*[/ ](ba)?sh([[:space:]]|$)|^# shellcheck shell='; then
+    role_scripts+=("$f")
+  fi
+done < <(find ansible/roles -path '*/files/*' -type f -print0)
+[ "${#role_scripts[@]}" -gt 0 ] || { echo "FAIL: no shell scripts found under ansible/roles/*/files" >&2; exit 1; }
+shellcheck --shell=bash --external-sources "${role_scripts[@]}"
 shellcheck --external-sources tests/ansible/*.sh tests/verify/*.sh tests/services/*.sh \
   tests/platform-discipline.sh scripts/*.sh
 

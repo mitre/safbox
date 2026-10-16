@@ -48,3 +48,12 @@ last.log
 # Site validation overrides (inputs and thresholds a site names through the
 # Packer variables build_gate_site_* or SAFBOX_SITE_* for the release gate)
 verify/local/
+
+# Terraform: site values, state and the provider cache of the deploy modules.
+# Each module commits its example.tfvars and its .terraform.lock.hcl.
+*.tfvars
+!example.tfvars
+*.tfstate
+*.tfstate.*
+.terraform/
+crash.*.log

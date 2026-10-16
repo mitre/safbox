@@ -6,7 +6,11 @@
 # places a platform may appear. The rest of the install layer (variables,
 # the shared build block, its tests and the runner scripts) necessarily
 # names the builder plugin, and the documentation describes the targets, so
-# those paths are listed as the install-layer allowance below. Everything
+# those paths are listed as the install-layer allowance below. The deploy
+# layer, deploy/terraform/<target>/, is the install layer's mirror: one
+# Terraform module per target, each of which exists to drive that target's
+# API (ADR-0001 §Decision: deployment is Terraform, one module per target,
+# mirroring the install layer), so it is allowed as a whole too. Everything
 # else in the tree, in particular ansible/ and verify/, is scanned.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -14,10 +18,12 @@ cd "$ROOT"
 
 PATTERN='(^|[^[:alnum:]_])(proxmox|vsphere|vmware|aws|azure|gcp|hyper-v|virtualbox|qemu|kvm)([^[:alnum:]_]|$)'
 
-# Install layer and documentation, where naming the target is the point.
-# The secret-scanning rules and their test name the install layer's own
-# credential (the hypervisor API token) so it can never be committed.
-ALLOW_DIRS=(packer tests/packer tests/kickstart tests/secrets scripts docs)
+# Install and deploy layers and documentation (docs/, and tests/docs/, the
+# manual checklist for the guides), where naming the target is
+# the point. The secret-scanning rules and their test name the install
+# layer's own credential (the hypervisor API token) so it can never be
+# committed.
+ALLOW_DIRS=(packer deploy tests/packer tests/kickstart tests/secrets tests/docs scripts docs)
 ALLOW_FILES=(README.md NOTICE tests/platform-discipline.sh .gitleaks.toml)
 # Tool and state directories that are not project content.
 SKIP_DIRS=(.git .beads .build .dolt .claude .codex .agents packer_cache collections)

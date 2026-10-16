@@ -1,0 +1,102 @@
+/* SAFBox landing page. Served from the page's own origin: the page's
+   Content-Security-Policy allows no other stylesheet, script or image. */
+:root {
+  color-scheme: light dark;
+  --bg: #f7f8fa;
+  --fg: #1d2330;
+  --muted: #5b6475;
+  --card: #ffffff;
+  --rule: #d8dce4;
+  --link: #0b5cad;
+  --ok: #1d7a3a;
+  --warn: #8a5a00;
+  --bad: #b3261e;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14171d;
+    --fg: #e6e9ef;
+    --muted: #a3abba;
+    --card: #1c2028;
+    --rule: #333a46;
+    --link: #79b8ff;
+    --ok: #5fd287;
+    --warn: #f2c14e;
+    --bad: #ff8a80;
+  }
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+main {
+  max-width: 48rem;
+  margin: 0 auto;
+  padding: 2rem 1rem;
+}
+
+h1 {
+  margin: 0;
+  font-size: 2rem;
+}
+
+.lede,
+.meta {
+  color: var(--muted);
+}
+
+table {
+  width: 100%;
+  margin: 1.5rem 0;
+  border-collapse: collapse;
+  background: var(--card);
+  border: 1px solid var(--rule);
+}
+
+caption {
+  text-align: left;
+  font-weight: 600;
+  padding-bottom: 0.5rem;
+}
+
+th,
+td {
+  text-align: left;
+  padding: 0.6rem 0.8rem;
+  border-bottom: 1px solid var(--rule);
+  overflow-wrap: anywhere;
+}
+
+a {
+  color: var(--link);
+}
+
+code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.state {
+  font-weight: 600;
+}
+
+.state-running {
+  color: var(--ok);
+}
+
+.state-starting,
+.state-stopping,
+.state-waiting {
+  color: var(--warn);
+}
+
+.state-stopped,
+.state-failed,
+.state-not-installed,
+.state-unknown {
+  color: var(--bad);
+}

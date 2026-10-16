@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<!-- {{ ansible_managed }} -->
+<!--
+  SAFBox landing page (ADR-0001 Phase 8), assembled by nginx with
+  server-side includes: each status cell includes the file
+  safbox-landing-status writes for that service (location /status/, internal
+  only), and each link names the host the browser asked for (the host
+  variable, which SSI echoes HTML-escaped). One row per service the image
+  ships; no secret, version or host detail is shown.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="30">
+<title>SAFBox</title>
+<link rel="stylesheet" href="/safbox.css">
+</head>
+<body>
+<!--# block name="unknown" --><span class="state state-unknown">Unknown</span><!--# endblock -->
+<!--# block name="never" -->not yet<!--# endblock -->
+<main>
+<h1>SAFBox</h1>
+<p class="lede">The MITRE Security Automation Framework in a box.</p>
+<table>
+<caption>Services</caption>
+<thead>
+<tr><th scope="col">Service</th><th scope="col">Status</th><th scope="col">Address</th></tr>
+</thead>
+<tbody>
+{% for app in proxy_apps if app.enabled | bool %}
+<tr id="service-{{ app.name }}"><th scope="row">{{ app.label }}</th><td><!--# include file="/status/{{ app.name }}" stub="unknown" --></td><td><a href="https://<!--# echo var="host" -->:{{ app.https_port }}/">https://<!--# echo var="host" -->:{{ app.https_port }}/</a></td></tr>
+{% endfor %}
+<tr id="service-proxy"><th scope="row">{{ proxy_label }}</th><td><!--# include file="/status/proxy" stub="unknown" --></td><td>this page</td></tr>
+</tbody>
+</table>
+<p class="meta">Status as of <!--# include file="/status/updated" stub="never" -->, refreshed every {{ proxy_status_interval }}; this page reloads itself. On the box, <code>safbox services</code> shows each unit behind a service.</p>
+<p class="meta">The certificate is self-signed for this box unless your administrator replaced it, so your browser warns on first visit. The deployment guide explains first login, certificates and accounts: <a href="https://github.com/mitre/safbox/blob/main/docs/deploy.md">docs/deploy.md</a>.</p>
+</main>
+</body>
+</html>

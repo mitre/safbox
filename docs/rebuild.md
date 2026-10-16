@@ -1,7 +1,9 @@
 # Rebuilding SAFBox
 
 This guide covers producing the SAFBox template yourself. It assumes a
-Proxmox VE 8 or 9 cluster and a workstation with Packer.
+Proxmox VE 8 or 9 cluster and a workstation with Packer. To deploy a
+template once you have one, see [deploy.md](deploy.md); "Release a
+template" below is the order of the whole job.
 
 ## Base image and firmware
 
@@ -61,6 +63,9 @@ file. Other targets get their own guide alongside their Packer source.
 - CINC Auditor and the SAF CLI on the workstation; the build validates the
   VM from here, and the clone test uses them as the release gate. The
   static suite needs the SAF CLI too (`tests/verify/thresholds.sh`)
+- Terraform 1.16 or newer for the deploy module (deploy.md) and its
+  static check (`tests/terraform/validate.sh`; set `TERRAFORM` if the
+  binary is not on your PATH)
 - `pipx install pykickstart` for the kickstart lint. The versions the
   static suite is verified with are pinned in `tests/requirements.txt`
 - `pre-commit install` after cloning (gitleaks, shellcheck, packer fmt,
@@ -241,9 +246,12 @@ being listed fails the gate.
   that need a sealed, deployed clone (`safbox-build-info-1`,
   `safbox-seal-1`, `safbox-seal-2`, `safbox-firstboot-2`, and the
   running-service controls `safbox-heimdall-3`, `safbox-vulcan-3`,
-  `safbox-proxy-2`, `-3` and `-6`). The service units and their absent
-  secrets are checked here (`safbox-heimdall-1` and `-2`, `safbox-vulcan-1`
-  and `-2`, `safbox-proxy-1`, `-4` and `-5`).
+  `safbox-proxy-2`, `-3`, `-6` and `-7`). The service units, the landing
+  page's files and their absent secrets are checked here
+  (`safbox-heimdall-1` and `-2`, `safbox-vulcan-1` and `-2`,
+  `safbox-proxy-1` and `-4`), as are the firewall (`safbox-firewall-1`)
+  and `safbox services` (`safbox-cli-2`, which expects every service
+  stopped before first boot and running after it).
 - **release** (a deployed clone of a full-sealed template): those as well.
 - `safbox-podman-2` (the smoke-test Quadlet unit) is in neither: it skips
   unless the build opts in with `safbox_example_quadlet_enabled=true`.
@@ -367,6 +375,35 @@ set `SAFBOX_SKIP_VALIDATE=1` to stop after the SSH check. The clone is only
 ever destroyed if it carries this run's ID. A template built with
 `seal = false` is unsealed and not distributable; see the Proxmox guide.
 
+## Release a template
+
+The whole job, in order, for a template you will hand to others:
+
+1. Static suite: `pre-commit run --all-files`, `tests/packer/validate.sh`,
+   `tests/kickstart/ks-lint.sh`, `tests/ansible/lint.sh`,
+   `tests/terraform/validate.sh`, `tests/platform-discipline.sh` (all run
+   in CI too).
+2. Build on the reference footprint (4 vCPU, 8 GiB, 60G, an x86-64-v3 CPU,
+   Rocky Linux 10) with `seal = true`, the default: `scripts/build.sh`.
+   The build-time gate and the seal's self-assertions must pass, or no
+   template is made.
+3. Release gate: `scripts/clone-and-ssh.sh <template> <clone> --keep`
+   against the new template; it must meet `verify/thresholds/release.yml`.
+4. Against that clone, from your workstation:
+   `tests/services/landing.sh <clone-address>`, then
+   `tests/services/heimdall-upload.sh` and
+   `tests/services/vulcan-register.sh` (they create accounts and data,
+   so the clone is thrown away afterwards), and the on-box exercise
+   profiles (`verify/el10-fips-exercise`, `verify/el10-firstboot`).
+5. Idempotence: `tests/ansible/idempotence.sh` against a development
+   build VM or clone (it needs a user with sudo; the second run may change
+   only the one tolerated Lockdown task).
+6. Walk through [deploy.md](deploy.md) on a fresh clone as a stranger
+   would, with the checklist in `tests/docs/walkthrough.md`.
+7. Destroy the test clones. If the STIG results moved, relock the
+   thresholds from the scans (`scripts/lock-stig-threshold.sh`) and
+   regenerate `docs/deviations.md` before tagging.
+
 ## Choosing what the appliance layer does
 
 Every task group in the `platform`, `base`, `tools`, `heimdall`, `vulcan`
@@ -404,7 +441,39 @@ each group are listed in `ansible/group_vars/all/main.yml`.
   the services the image ships (default `heimdall`, `vulcan`, `proxy`):
   drop a switched-off service there in a site inputs file, and its
   controls (`safbox-vulcan-*`, and `safbox-proxy-3` for Vulcan's proxy
-  port) from a site threshold, as for a tools group.
+  port) from a site threshold, as for a tools group. The controls that
+  cover every service (`safbox-firewall-1`, `safbox-cli-2`,
+  `safbox-proxy-7`) follow `expected_services` and stay in the threshold.
+
+### A reduced build without Vulcan
+
+For a development node or a small host, the whole recipe:
+
+1. `ansible/local.yml`: `safbox_vulcan_1: false`.
+2. `verify/local/build-inputs.yml` and `verify/local/release-inputs.yml`,
+   both:
+
+   ```
+   ---
+   expected_services: [heimdall, proxy]
+   ```
+
+3. `verify/local/build-threshold.yml`: a copy of
+   `verify/thresholds/build.yml` without `safbox-vulcan-1` and
+   `safbox-vulcan-2` in `passed.critical.controls`.
+   `verify/local/release-threshold.yml`: a copy of
+   `verify/thresholds/release.yml` without `safbox-vulcan-1`, `-2`,
+   `-3` and `safbox-proxy-3` there, and without the finding
+   `safbox-vulcan-4` in `failed.low.controls`. Leave the STIG lists
+   alone unless the scan moves a STIG control; then relock your copies
+   with `scripts/lock-stig-threshold.sh`.
+4. Name the build's files in `packer/local.auto.pkrvars.hcl`
+   (`build_gate_site_inputs_file`, `build_gate_site_threshold_file`) and
+   lower `vm_memory` if you need to (Heimdall's containers' memory
+   limits add up to 2 GiB, plus nginx's 512 MiB and the host's own); run
+   the release gate with `SAFBOX_SITE_INPUTS` and
+   `SAFBOX_SITE_THRESHOLD` set to the release copies; and check the
+   landing page with `tests/services/landing.sh <box> heimdall`.
 
 ## STIG hardening and deviations
 
@@ -504,6 +573,29 @@ set `safbox_firewall_zone` to that zone (usually `public`) in
 interface is not in. `tests/ansible/structure.sh` fails if Lockdown's zone
 or any role's firewalld task stops using `safbox_firewall_zone`.
 
+The zone allows SSH and the proxy's ports and nothing else (ADR-0001
+Quality Standards). `safbox_firewall_services` (`[ssh]`) is the one list
+of services: the platform role adds those and removes every other service
+from the zone (on an unhardened box that includes the distribution's
+`cockpit` and `dhcpv6-client`), and Lockdown's whitelist,
+`rhel10stig_white_list_services`, is derived from it. Lockdown's own
+default whitelist also adds `dns` and `ntp`; SAFBox leaves them out,
+because a zone service admits inbound traffic to a server on the box, and
+SAFBox runs no DNS or NTP server (chronyd is configured not to serve,
+RHEL-10-200542). The box's own DNS and NTP queries are outbound, and
+firewalld lets their replies in as related traffic in any zone. The proxy
+role likewise opens exactly the landing page's port and those of the
+enabled applications, and closes any other port. The STIG results do not
+move: the deny-all rule (SV-280957) checks the zone's target, and the two
+controls that compare the zone's services with the site's list
+(SV-281332, SV-281333) fail on a baseline defect before they read them
+(`known-defects.yml`). A site that needs another inbound service, such as
+`dhcpv6-client` for DHCPv6 addressing, adds it to
+`safbox_firewall_services` in `ansible/local.yml` and to the validation
+input `firewall_services` in its site inputs file; `safbox-firewall-1`
+checks the zone against that input and the proxy ports, at runtime and
+permanently.
+
 ## Tools on the box
 
 The `tools` role installs each tool at the version pinned in
@@ -550,21 +642,45 @@ The `heimdall` and `vulcan` roles run each application and its PostgreSQL
 as a podman pod of Quadlet units, in the service shape of the
 application's upstream `docker-compose.yml` (each unit file cites the
 compose service it reproduces). The `proxy` role runs one nginx container
-that terminates TLS for both. Images are pinned by digest in
-`ansible/group_vars/all/main.yml` and pulled at build, so a clone starts
-offline.
+that terminates TLS for both and serves the landing page. Images are
+pinned by digest in `ansible/group_vars/all/main.yml` and pulled at build,
+so a clone starts offline.
 
 | Service | Pod publishes (loopback only) | Browser URL |
 |---|---|---|
+| Landing page | (served by nginx) | `https://<box>/` |
 | Heimdall | `127.0.0.1:3000` | `https://<box>:8443/` |
 | Vulcan | `127.0.0.1:3001` | `https://<box>:9443/` |
 
-The ports are `safbox_<service>_loopback_port` and
-`safbox_<service>_https_port` in group_vars. Port 443 is reserved for the
-landing page, nothing listens on 80, and the firewall opens exactly the
-HTTPS ports of the services the image ships. Each pod has its own podman
-network, so neither database is reachable from the other pod or from the
-network.
+The ports are `safbox_landing_https_port`, `safbox_<service>_loopback_port`
+and `safbox_<service>_https_port` in group_vars. Nothing listens on 80, and
+the firewall opens exactly the landing page's port and the HTTPS ports of
+the services the image ships. Each pod has its own podman network, so
+neither database is reachable from the other pod or from the network.
+
+**The landing page** lists each service the image ships with its status
+and a link to it, on the host name or address the browser used. nginx
+assembles it with server-side includes: the page itself is a static file
+the proxy role renders (`/etc/safbox-proxy/landing/index.html`, with its
+stylesheet), and each status cell includes a small file from
+`/run/safbox-landing/`, which `safbox-landing-status.service` writes from
+`safbox services --tsv`. Its timer runs it every 30 seconds
+(`proxy_status_interval`); the service runs as root without capabilities,
+network or write access beyond that directory, and logs only warnings, so
+the journal does not fill. A timer rather than a status daemon, so nothing
+runs between refreshes and no request ever reaches systemd; the price is a
+status up to 30 seconds old, which the page states. The page allows only
+its own stylesheet (Content-Security-Policy), cannot be framed, and sends
+no Strict-Transport-Security, which would lock browsers out of the
+self-signed certificate on every port of the host. The proxy keeps
+`CAP_NET_BIND_SERVICE` to listen on 443.
+
+**`safbox services`** reports each service's health from systemd (running,
+starting, stopping, waiting, stopped, failed or not installed) with the
+units behind it, and exits 0 only when every service runs. Each service
+role registers its service in `/usr/local/share/safbox/services.d/`
+(`label=` and `units=` lines in a file named after its first-boot hook),
+so the command covers whichever services the image ships.
 
 **First boot.** The units are installed and enabled at build but start only
 once their secrets exist (`ConditionPathExists`, ordered after
@@ -599,7 +715,8 @@ random password on its first start, and prints that password in its log
 register. In Vulcan, local login and registration are on and the first
 registered user becomes administrator: register before handing the
 appliance out. OIDC, LDAP and SMTP are site settings
-(`vulcan_settings` in the vulcan role's defaults).
+(`vulcan_settings` in the vulcan role's defaults). The operator's side of
+both is in [deploy.md](deploy.md).
 
 **Footprint.** Measured on a 2 vCPU, 4 GiB development clone with both
 applications idle after the service tests: about 750 MB in the containers
@@ -620,14 +737,15 @@ sudo systemctl start heimdall.service vulcan.service safbox-proxy.service
 ```
 
 **Testing.** The release gate's controls check the units, secrets,
-loopback-only ports, TLS on each port and the firewall from a shell on the
-box. Two tests act as a browser would, from your workstation over HTTPS
-only: they check the proxy's TLS (TLS 1.3 negotiated; TLS 1.0, 1.1 and
-ChaCha20 refused), load each application's page with its scripts and
-stylesheets, and drive the API. Both create accounts and data, so run them
-against a clone:
+loopback-only ports, TLS on each port, the landing page and the firewall
+from a shell on the box. Three tests act as a browser would, from your
+workstation over HTTPS only: they check the proxy's TLS (TLS 1.3
+negotiated; TLS 1.0, 1.1 and ChaCha20 refused), load each page with its
+scripts and stylesheets, and drive the API. The two application tests
+create accounts and data, so run them against a clone:
 
 ```
+tests/services/landing.sh <box>            # landing page: status, links, headers; each app reachable
 tests/services/heimdall-upload.sh <box>    # register, log in, upload an HDF file
 tests/services/vulcan-register.sh <box>    # first user is admin, create a project
 ```
@@ -663,12 +781,15 @@ GitHub-hosted runners. It needs no hypervisor and no credentials.
 - **static checks:** `pre-commit run --all-files`, `tests/packer/validate.sh`,
   `tests/kickstart/ks-lint.sh`, `tests/ansible/lint.sh` (including the
   validation profile checks, which need CINC Auditor, and the threshold
-  checks, which need the SAF CLI) and
+  checks, which need the SAF CLI), `tests/terraform/validate.sh` (the
+  deploy modules: format, pins, lock file, validate) and
   `tests/platform-discipline.sh`.
 
-Every input is pinned: actions by commit SHA, gitleaks and CINC Auditor by
-version and sha256, the SAF CLI by version (the appliance's own pin), the Packer CLI by version (its plugins by
-`packer/build.pkr.hcl`), the Python tools in `tests/requirements.txt`, and
+Every input is pinned: actions by commit SHA, gitleaks, Terraform and CINC
+Auditor by version and sha256, the SAF CLI by version (the appliance's own
+pin), the Packer CLI by version (its plugins by `packer/build.pkr.hcl`),
+the Terraform providers by `versions.tf` and each module's lock file, the
+Python tools in `tests/requirements.txt`, and
 the pre-commit hooks by commit SHA. To run the same suite locally, install
 `tests/requirements.txt` into a virtual environment, or run the workflow
 under [act](https://github.com/nektos/act).

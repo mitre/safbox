@@ -47,7 +47,10 @@
   when: safbox_platform_3 | default(true) | bool
   tags: [safbox-platform-3]
   block:
-    # In the zone the box ends up in (safbox_firewall_zone in group_vars).
+    # In the zone the box ends up in (safbox_firewall_zone in group_vars),
+    # exactly the services in safbox_firewall_services: any other service,
+    # in the runtime or the permanent configuration, is removed. The proxy
+    # role does the same for ports.
     - name: Allow the base services through the firewall
       ansible.posix.firewalld:
         zone: "{{ safbox_firewall_zone }}"
@@ -55,7 +58,28 @@
         permanent: true
         immediate: true
         state: enabled
-      loop: "{{ platform_firewalld_services }}"
+      loop: "{{ safbox_firewall_services }}"
+
+    - name: Read the services the firewall zone allows
+      ansible.builtin.command:
+        cmd: "firewall-cmd {{ item }} --zone={{ safbox_firewall_zone }} --list-services"
+      loop: ['', '--permanent']
+      loop_control:
+        label: "{{ item | default('runtime', true) }}"
+      register: platform_firewall_listed
+      changed_when: false
+      check_mode: false
+
+    - name: Remove every other service from the firewall zone
+      ansible.posix.firewalld:
+        zone: "{{ safbox_firewall_zone }}"
+        service: "{{ item }}"
+        permanent: true
+        immediate: true
+        state: disabled
+      loop: >-
+        {{ platform_firewall_listed.results | map(attribute='stdout') | map('split') | flatten
+           | unique | difference(safbox_firewall_services) | sort }}
 
 - name: Container runtime
   when: safbox_platform_4 | default(true) | bool

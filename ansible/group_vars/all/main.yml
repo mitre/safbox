@@ -80,21 +80,38 @@ safbox_hardening_1: true  # apply the RHEL 10 STIG with the pinned Ansible Lockd
 # Each application's pod publishes its port on the host's loopback address
 # only; the TLS proxy (nginx on the host network) serves it to the network
 # on the application's HTTPS port, and the firewall opens exactly those
-# ports. 443 is reserved for the landing page (ADR-0001 Phase 8). Both
-# applications listen on 3000 inside their pods (upstream); Vulcan's
-# loopback port is 3001, the port its compose file documents for running
-# beside another service on 3000. The validation profile's proxy_ports and
-# loopback_ports inputs default to these values (tests/ansible/pins.sh).
+# ports and the landing page's. The proxy serves the landing page, which
+# shows each service's status and links to the applications, on 443
+# (ADR-0001 Phase 8). Both applications listen on 3000 inside their pods
+# (upstream); Vulcan's loopback port is 3001, the port its compose file
+# documents for running beside another service on 3000. The validation
+# profile's proxy_ports and loopback_ports inputs default to these values
+# (tests/ansible/pins.sh).
+safbox_landing_https_port: 443
 safbox_heimdall_loopback_port: 3000
 safbox_heimdall_https_port: 8443
 safbox_vulcan_loopback_port: 3001
 safbox_vulcan_https_port: 9443
 
 # The firewalld zone the box ends up in. Hardening moves the interface into
-# Lockdown's zone and makes it the default (drop: only ssh, dns and ntp are
-# allowed), so the proxy opens its ports in that same zone; without
-# hardening the distribution default (public) stays.
+# Lockdown's zone and makes it the default (drop), so every role opens its
+# ports in that same zone; without hardening the distribution default
+# (public) stays.
 safbox_firewall_zone: "{{ 'drop' if safbox_hardening_1 | bool else 'public' }}"
+
+# The services the zone allows besides the proxy's ports, and nothing else
+# (ADR-0001 Quality Standards: the firewall allows SSH and the proxy ports
+# only). The platform role removes any other service from the zone, which
+# on an unhardened box includes the distribution's cockpit and
+# dhcpv6-client. Lockdown's default whitelist also adds dns and ntp, which
+# admit inbound queries to servers SAFBox does not run; the box's own DNS
+# and NTP client traffic is outbound and its replies return as related
+# traffic in any zone, so the whitelist is this list. A site that needs
+# another inbound service (dhcpv6-client for DHCPv6 addressing) adds it here
+# in ansible/local.yml and to the validation input firewall_services in its
+# site inputs file. tests/ansible/structure.sh checks the three agree.
+safbox_firewall_services:
+  - ssh
 
 # ---------------------------------------------------------------------------
 # Ansible Lockdown RHEL10-STIG role variables
@@ -108,8 +125,11 @@ safbox_firewall_zone: "{{ 'drop' if safbox_hardening_1 | bool else 'public' }}"
 # own record of what was applied instead (/usr/local/share/safbox/hardening).
 create_benchmark_facts: false
 
-# Lockdown's firewalld zone is the box's zone (safbox_firewall_zone above).
+# Lockdown's firewalld zone is the box's zone (safbox_firewall_zone above),
+# and the services it allows there are the box's (safbox_firewall_services),
+# in the shape the role expects (a list of {name: <service>}).
 rhel10stig_custom_firewall_zone: "{{ safbox_firewall_zone }}"
+rhel10stig_white_list_services: "{{ safbox_firewall_services | map('community.general.dict_kv', 'name') | list }}"
 
 # Login banner shown before local and SSH logins (/etc/issue, which sshd's
 # Banner names). A SAFBox placeholder, not the DoD notice: a site replaces it

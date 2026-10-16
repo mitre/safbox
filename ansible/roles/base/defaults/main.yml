@@ -25,3 +25,10 @@ base_cli_commands_dir: /usr/local/lib/safbox/commands
 # their own by installing an executable into base_cli_commands_dir.
 base_cli_commands:
   - status
+  - services
+
+# The registry `safbox services` reads: each service role registers its
+# service here while the safbox command is on (safbox_base_2), as a file
+# named <order>-<name> (the order of its first-boot hook) holding label=
+# and units= lines (files/commands/services).
+base_services_dir: /usr/local/share/safbox/services.d
