@@ -85,6 +85,41 @@ include_controls 'redhat-enterprise-linux-10-stig-baseline' do
     end
   end
 
+  control 'SV-280970' do
+    impact 0.0
+    desc 'justification', <<~JUSTIFICATION
+      SAFBox is an automation runner: its accounts run the InSpec profiles and
+      Ansible playbooks they bring. fapolicyd judges the program that opens a
+      file, and for InSpec, Ansible and Node.js packages an account installs,
+      that program is an interpreter (CINC Auditor's Ruby, Python, Node.js), so
+      it cannot allow a tool without allowing its interpreter to run any code; a
+      rule on the process name is met by any link given that name. Tested with
+      fapolicyd enforcing, as an account other than root: an InSpec profile with
+      Ruby libraries, a playbook with its own module or filter plugin, a
+      collection in the account's home, a Python virtual environment and an npm
+      package were all refused, as were cp and git checkout of Ruby files.
+      /home, /tmp, /var/tmp and /dev/shm are mounted noexec, so programs placed
+      there cannot be run directly; that does not stop interpreters or rootless
+      containers running code an account supplies, which is what a runner is
+      for. fapolicyd stays installed (RHEL-10-200600) and is not enabled.
+    JUSTIFICATION
+    describe 'Enable the fapolicy module (application allow-listing)' do
+      skip 'Not Applicable: a usability deviation for an automation runner; see the justification.'
+    end
+  end
+
+  control 'SV-280971' do
+    impact 0.0
+    desc 'justification', <<~JUSTIFICATION
+      The policy takes effect only while fapolicyd runs, and SAFBox does not
+      enable fapolicyd (SV-280970, same reasoning). Its rules are left as the
+      package installs them.
+    JUSTIFICATION
+    describe 'Employ a deny-all, permit-by-exception fapolicy policy' do
+      skip 'Not Applicable: follows the SV-280970 deviation; see the justification.'
+    end
+  end
+
   # Not Applicable only until a site names its remote log server (input
   # remote_log_server, set with group_vars safbox_remote_log_server); then
   # the baseline control runs unchanged. InSpec holds an empty input as
