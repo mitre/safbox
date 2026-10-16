@@ -667,7 +667,9 @@ reason: Alpine's OpenSSL has no FIPS provider. Three
 weaknesses remain and are recorded as findings (`safbox-heimdall-4`,
 `safbox-heimdall-5`, `safbox-vulcan-4`): Heimdall hashes passwords and API
 keys with bcrypt in pure JavaScript, outside any FIPS provider (the finding
-observes passwords, since a fresh box has no API keys), and both
+counts both, though a fresh box has no API key until a user creates one;
+upstream [mitre/heimdall2#4145](https://github.com/mitre/heimdall2/issues/4145),
+draft fix [#4850](https://github.com/mitre/heimdall2/pull/4850)), and both
 upstream PostgreSQL images (Debian and Alpine) have no OpenSSL FIPS
 provider at all.
 

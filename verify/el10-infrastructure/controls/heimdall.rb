@@ -167,17 +167,24 @@ end
 
 control 'safbox-heimdall-4' do
   impact 0.3
-  title 'Heimdall hashes local account passwords with a FIPS-approved algorithm'
-  desc "Heimdall stores local account passwords as bcrypt hashes made by bcryptjs, a pure JavaScript implementation outside the container's OpenSSL FIPS provider; bcrypt is not FIPS-approved. Every SAFBox with Heimdall has such a hash, because Heimdall seeds an administrator at first start. Heimdall's source hashes API keys the same way (upstream mitre/heimdall2#4145); this control observes passwords only, since a fresh box has no API keys. Recorded as a low-severity finding; it is never waived."
-  tag finding: 'Heimdall password hashing (bcryptjs) bypasses the FIPS provider'
+  title 'Heimdall hashes local account passwords and API keys with a FIPS-approved algorithm'
+  desc "Heimdall stores local account passwords and API keys as bcrypt hashes made by bcryptjs, a pure JavaScript implementation outside the container's OpenSSL FIPS provider; bcrypt is not FIPS-approved. Every SAFBox with Heimdall has such a password hash, because Heimdall seeds an administrator at first start; API keys are counted too, and a fresh box has none until a user creates one. Upstream: mitre/heimdall2#4145, fix in draft PR mitre/heimdall2#4850. Recorded as a low-severity finding; it is never waived."
+  tag finding: 'Heimdall password and API-key hashing (bcryptjs) bypasses the FIPS provider'
   only_if('Heimdall is not in expected_services, or this is not a deployed clone') do
     service_expected.call('heimdall') && input('firstboot_completed_expected')
   end
 
-  # bcrypt hashes start with $2 (modular crypt format).
-  bcrypt_accounts = %q(podman exec heimdall-db psql -U postgres -d heimdall-server-production -tAc "SELECT count(*) FROM \"Users\" WHERE \"encryptedPassword\" LIKE '\$2%'")
+  # bcrypt hashes start with $2 (modular crypt format). Only a count leaves
+  # the box, never a hash.
+  bcrypt_rows = lambda do |table, column|
+    command(%(podman exec heimdall-db psql -U postgres -d heimdall-server-production -tAc "SELECT count(*) FROM \\"#{table}\\" WHERE \\"#{column}\\" LIKE '\\$2%'")).stdout.strip
+  end
   describe 'Heimdall accounts whose password is a bcrypt hash' do
-    subject { command(bcrypt_accounts).stdout.strip }
+    subject { bcrypt_rows.call('Users', 'encryptedPassword') }
+    it { should eq '0' }
+  end
+  describe 'Heimdall API keys stored as a bcrypt hash' do
+    subject { bcrypt_rows.call('ApiKeys', 'apiKey') }
     it { should eq '0' }
   end
 end
