@@ -96,6 +96,12 @@ jobs:
       - name: pre-commit hooks
         run: pre-commit run --all-files --show-diff-on-failure
 
+      - name: Workstation prerequisite check
+        run: tests/scripts/check-tools.sh
+
+      - name: build.sh credentials file check
+        run: tests/scripts/build-env.sh
+
       - name: validate.sh options
         run: tests/scripts/validate.sh
 

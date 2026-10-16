@@ -29,7 +29,13 @@ variable "proxmox_insecure_skip_tls_verify" {
 
 variable "proxmox_node" {
   type        = string
-  description = "Node the build VM is created on."
+  description = "Node the build VM is created on: its name as shown under Datacenter in the GUI (hostname on the node, or pvesh get /nodes), not its address."
+  # An address makes Proxmox try to forward the request to a node of that
+  # name and fail with "596 ... certificate verify failed".
+  validation {
+    condition     = !can(regex("^[0-9]+(\\.[0-9]+){3}$", var.proxmox_node)) && !strcontains(var.proxmox_node, ":")
+    error_message = "The proxmox_node must be the node's name, not an IP address; the address belongs in PROXMOX_URL (docs/guides/proxmox/build.md, step 1)."
+  }
 }
 
 variable "proxmox_pool" {
@@ -51,6 +57,14 @@ variable "vm_name" {
 variable "iso_file" {
   type        = string
   description = "Datastore path of the RHEL 10 family DVD or minimal ISO, e.g. local:iso/Rocky-10-x86_64-minimal.iso or an AlmaLinux 10 x86_64_v2 ISO."
+  # A live image boots to a desktop and never runs the kickstart, so the build
+  # would wait for SSH until install_timeout. Only the file name is checked,
+  # by whole word, so a storage name like "olive" or a file name like
+  # "...-automated-..." is not mistaken for one.
+  validation {
+    condition     = !can(regex("(?i)(^|[-_.])(live|workstation|kde|xfce|mate|cinnamon|lxqt)([-_.]|$)", regex("[^/:]*$", var.iso_file)))
+    error_message = "The iso_file must be an installer ISO (minimal, dvd or boot), not a live image such as Workstation, Workstation-Lite or Live-GNOME (docs/guides/proxmox/build.md, step 2)."
+  }
 }
 
 variable "iso_checksum" {

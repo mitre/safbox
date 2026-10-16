@@ -55,7 +55,8 @@ file. Other targets get their own guide alongside their Packer source.
 ## Workstation prerequisites
 
 - Packer 1.12 or newer; plugins are pinned and installed by `packer init`
-- Ansible on the workstation (`pipx install ansible`); the build runs the
+- Ansible on the workstation (`pipx install --include-deps ansible==14.5.0`;
+  see the Proxmox guide's Prerequisites for which Ansible); the build runs the
   appliance playbooks from here against the build VM, and installs the
   pinned collections from `ansible/requirements.yml` itself
 - CINC Auditor and the SAF CLI on the workstation; the build validates the

@@ -12,7 +12,7 @@ cd "$ROOT"
 umask 077
 ENV_FILE="${SAFBOX_PROXMOX_ENV:-$HOME/.config/proxmox/packer.env}"
 if [ -f "$ENV_FILE" ]; then
-  perm=$(stat -f %Lp "$ENV_FILE" 2>/dev/null || stat -c %a "$ENV_FILE")
+  perm=$(stat -c %a "$ENV_FILE" 2>/dev/null || stat -f %Lp "$ENV_FILE")
   [ "$perm" = 600 ] || { echo "refusing $ENV_FILE: mode $perm, must be 600" >&2; exit 1; }
   set -a
   # shellcheck disable=SC1090
@@ -58,11 +58,8 @@ if [ -n "$(git -C "$ROOT" status --porcelain 2>/dev/null)" ]; then REVISION="$RE
 
 # The Ansible provisioner runs ansible-playbook on this machine.
 export PATH="$HOME/.local/bin:$PATH"
-command -v ansible-playbook >/dev/null || { echo "ansible-playbook not found; pipx install ansible" >&2; exit 1; }
 # The build validates the VM from this machine before sealing it.
-for tool in cinc-auditor saf; do
-  command -v "$tool" >/dev/null || { echo "$tool not found; the build validates the VM from this machine (see docs/rebuild.md)" >&2; exit 1; }
-done
+"$ROOT/scripts/check-tools.sh"
 
 packer init packer/
 packer build \

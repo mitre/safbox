@@ -10,6 +10,57 @@ Everything below runs as root on a Proxmox node unless stated otherwise.
 Replace the angle-bracket placeholders with your own names; none of the
 values here are committed to git.
 
+## Prerequisites
+
+The build runs from your workstation: Packer drives the Proxmox API, Ansible
+configures the build VM over SSH, and CINC Auditor and the SAF CLI check the
+VM before it is sealed. `scripts/build.sh` refuses to start if any of them
+is missing. Install them with whatever your OS provides, or from the
+upstream pages linked below. The versions listed are the ones CI uses
+(`.github/workflows/static.yml`, `tests/requirements.txt`).
+
+| Tool | Version | Install |
+|---|---|---|
+| Packer | 1.12 or newer (CI: 1.16.1); `packer init` installs the pinned plugins | [developer.hashicorp.com/packer/install](https://developer.hashicorp.com/packer/install) |
+| Ansible | the `ansible` package, 14.5.0 (see below) | [Ansible installation guide](https://docs.ansible.com/ansible/latest/installation_guide/intro_installation.html) |
+| CINC Auditor | 7.2.1 (any 5.0 or newer runs the profiles) | [cinc.sh/docs/auditor](https://cinc.sh/docs/auditor/#install) |
+| SAF CLI | 1.7.0, on Node.js 22 | [SAF CLI installation](https://github.com/mitre/saf#installation) |
+
+The scripts also use the usual command-line tools: git, the OpenSSH client
+(`ssh`, `ssh-keygen`), curl, and jq.
+
+**Install the right Ansible.** Several different things are called Ansible,
+and it is easy to get the wrong one:
+
+- `ansible` is the community package: `ansible-core` plus a set of
+  collections. **This is the one to install**, at the version pinned in
+  `tests/requirements.txt` (currently 14.5.0). `ansible/requirements.yml`
+  pins collection versions that match it.
+- `ansible-core` on its own has no collections. It works for the build,
+  which installs its collections from `ansible/requirements.yml`, but it is
+  not what the static suite or the linters were verified with.
+- Packages from an OS repository called `ansible` or `ansible-core` are
+  often several releases old, and the version number they carry may be
+  for either of the two above. Don't use them unless their version matches.
+- The appliance itself installs `ansible-core` 2.16.16 on the box
+  (`ansible/group_vars/all/main.yml`). That pin applies to the image, not
+  to your workstation.
+
+With pipx, `--include-deps` is required. The `ansible` package declares only
+one command of its own, `ansible-community`; `ansible-playbook` and the rest
+come from its dependency `ansible-core`, whose commands pipx does not expose
+without the flag.
+
+```
+pipx install --include-deps ansible==14.5.0
+ansible-community --version   # Ansible community version 14.5.0
+```
+
+The Ansible control node does not run natively on Windows; use WSL there.
+Contributors also need the development tools (pre-commit, pykickstart,
+the linters) listed under "Workstation prerequisites" in
+[docs/rebuild.md](../../rebuild.md#workstation-prerequisites).
+
 ## 1. Pick the node and check its CPU
 
 The release base, Rocky Linux 10, needs an x86-64-v3 CPU (AVX2). AlmaLinux
@@ -26,6 +77,13 @@ builds; a Rocky 10 VM will not boot on that node.
 | Fact | Variable |
 |---|---|
 | Node name | `proxmox_node` |
+
+Use the node's name as shown under Datacenter in the GUI (`hostname` on the
+node, or `pvesh get /nodes`), not its IP address. The address goes only in
+`PROXMOX_URL`. An address here makes Proxmox try to forward the request to
+another node of that name, and the build fails with
+`596 ... certificate verify failed`, which looks like a certificate problem
+but isn't. Use the same name in the `/nodes/<node>` ACL in step 6.
 
 ## 2. Upload the ISO
 
@@ -53,6 +111,11 @@ the ISO by its storage volume id:
 
 The minimal ISO installs a headless system from the media alone. A desktop
 build needs the DVD ISO or a reachable package mirror.
+
+Use an installer ISO (`minimal` or `dvd`), never a live image such as
+`Workstation` or `Workstation-Lite`. A live image boots to a desktop and
+ignores the kickstart, so the build waits for SSH until `install_timeout`
+expires.
 
 ## 3. Create the sandbox
 
@@ -169,7 +232,7 @@ every variable from the tables above, plus:
 | Variable | Set it when |
 |---|---|
 | `vm_cores`, `vm_memory`, `vm_disk_size` | the node is smaller than the reference 4 vCPU, 8 GiB, 60G; the disk must be at least 40G |
-| `proxmox_insecure_skip_tls_verify = true` | the API serves a self-signed certificate |
+| `proxmox_insecure_skip_tls_verify = true` | a throwaway lab only, where you will not trust the cluster CA (step 6 explains why trusting it is better: with verification off, the token goes to whoever answers) |
 | `http_interface` | the workstation has several network interfaces |
 | `kickstart_url` | the VM's network cannot reach the workstation; host the rendered kickstart elsewhere |
 | `installer_ssh = true` | you want to SSH into a stuck installer while developing; `scripts/build.sh` refuses it unless `SAFBOX_DEV=1` |

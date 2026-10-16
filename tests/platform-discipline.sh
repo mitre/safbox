@@ -4,7 +4,7 @@
 #
 # Scope. The ADR names packer/source-*.pkr.hcl and packer/answerfiles/ as the only
 # places a platform may appear. The rest of the install layer (variables,
-# the shared build block, its tests and the runner scripts) necessarily
+# the shared build block, its tests, the runner scripts and theirs) necessarily
 # names the builder plugin, and the documentation describes the targets, so
 # those paths are listed as the install-layer allowance below. Everything
 # else in the tree, in particular ansible/ and verify/, is scanned.
@@ -17,7 +17,7 @@ PATTERN='(^|[^[:alnum:]_])(proxmox|vsphere|vmware|aws|azure|gcp|hyper-v|virtualb
 # Install layer and documentation, where naming the target is the point.
 # The secret-scanning rules and their test name the install layer's own
 # credential (the hypervisor API token) so it can never be committed.
-ALLOW_DIRS=(packer tests/packer tests/kickstart tests/secrets scripts docs)
+ALLOW_DIRS=(packer tests/packer tests/kickstart tests/secrets scripts tests/scripts docs)
 ALLOW_FILES=(README.md NOTICE tests/platform-discipline.sh .gitleaks.toml)
 # Tool and state directories that are not project content.
 SKIP_DIRS=(.git .beads .build .dolt .claude .codex .agents packer_cache collections)
