@@ -4,9 +4,10 @@
 # 71: the build scan of 2026-10-16T16:05Z, 274 of 385 applicable controls passed (71.2%), rounded down.
 compliance:
   min: 71
+# 5: the CAT I (high) controls that fail on every image today; a new one fails the gate.
 failed:
-  critical:
-    max: 0
+  high:
+    max: 5
 error:
   total:
     max: 0

@@ -3,9 +3,10 @@
 # 76: the release scan of clone 9190 on 2026-10-16, 292 of 383 applicable controls passed (76.2%), rounded down.
 compliance:
   min: 76
+# 5: the CAT I (high) controls that fail on every image today; a new one fails the gate.
 failed:
-  critical:
-    max: 0
+  high:
+    max: 5
 error:
   total:
     max: 0
