@@ -102,6 +102,9 @@ jobs:
       - name: build.sh credentials file check
         run: tests/scripts/build-env.sh
 
+      - name: Concurrent build.sh runs
+        run: tests/scripts/build-concurrency.sh
+
       - name: validate.sh options
         run: tests/scripts/validate.sh
 

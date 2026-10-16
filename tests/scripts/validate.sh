@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # scripts/validate.sh hands CINC Auditor the SSH client config an operator
 # names with --ssh-config, and nothing new when none is named (ADR-0001
-# Verification Strategy: the outside-in gates run from the build runner).
+# Verification Strategy: the outside-in gates run from the build runner),
+# and never writes its results over another scan's results file.
 # Stub cinc-auditor and saf record their arguments; no target is contacted.
 #
 #   tests/scripts/validate.sh [path to validate.sh]
@@ -41,11 +42,17 @@ expect() {
   if [ "$2" = "$3" ]; then echo "ok: $1"
   else fail "$1: got '$2', want '$3'"; fi
 }
-# run <options...>: validate.sh with fixed positional arguments after them.
-run() {
+# scan <options...>: validate.sh with fixed positional arguments after them.
+scan() {
   rm -f "$STUB_ARGV"
   PATH="$tmp/bin:$PATH" "$VALIDATE" "$@" packer@192.0.2.10:22 "$tmp/key" "$LABEL" \
     "$tmp/profile" "$tmp/threshold.yml" "$tmp/inputs.yml" >"$tmp/out" 2>"$tmp/err"
+}
+# run <options...>: scan with none of this test's earlier results files
+# present, so each case's results file gets the plain timestamped name.
+run() {
+  rm -f "$ROOT/.build/validate-$LABEL-"*.json
+  scan "$@"
 }
 # The cinc-auditor argv validate.sh must produce: the default command line,
 # with "--ssh-config-file FILE" after --sudo when FILE is given. The results
@@ -138,5 +145,32 @@ else
   fail "spaces run exited non-zero: $(cat "$tmp/err")"
 fi
 
+# (f) Another scan with the same label already wrote this second's results
+# file (two concurrent builds reaching their gates): this scan writes its own
+# file and leaves the other's alone. The names for this second and the next
+# two are taken, so the scan's second falls inside them.
+rm -f "$ROOT/.build/validate-$LABEL-"*.json
+mkdir -p "$ROOT/.build"
+now=$(date -u +%s)
+taken=()
+for i in 0 1 2; do
+  stamp=$(date -u -d "@$((now + i))" +%Y%m%dT%H%M%SZ 2>/dev/null || date -u -r "$((now + i))" +%Y%m%dT%H%M%SZ)
+  f="$ROOT/.build/validate-$LABEL-$stamp.json"
+  echo other-scan > "$f"; taken+=("$f")
+done
+if scan; then
+  results=$(sed -n 's/^json://p' "$STUB_ARGV")
+  if [[ "$results" =~ /validate-$LABEL-[0-9]{8}T[0-9]{6}Z-2\.json$ ]]; then
+    echo "ok: a taken results name gets -2"
+  else
+    fail "results file with a taken name: got '$results'"
+  fi
+  kept=yes
+  for f in "${taken[@]}"; do [ "$(cat "$f")" = other-scan ] || kept=no; done
+  expect "the other scan's results file is untouched" "$kept" yes
+else
+  fail "taken-name run exited non-zero: $(cat "$tmp/err")"
+fi
+
 [ "$failures" -eq 0 ] || exit 1
-echo "PASS: validate.sh passes --ssh-config through and nothing by default"
+echo "PASS: validate.sh passes --ssh-config through and nothing by default, and never reuses a results file"

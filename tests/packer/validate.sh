@@ -66,4 +66,41 @@ accept "storage 'nas-automated' with a DVD ISO" -var iso_file=nas-automated:iso/
 accept "a file name containing 'ultimate'" -var iso_file=local:iso/rocky-ultimate-minimal.iso
 accept "an AlmaLinux x86_64_v2 DVD" -var iso_file=local:iso/AlmaLinux-10.1-x86_64_v2-dvd.iso
 accept "a storage named 'live-nas'" -var iso_file=live-nas:iso/Rocky-10.2-x86_64-minimal.iso
+# galaxy_dir (scripts/build.sh passes one per run, so concurrent builds never
+# install into the same place) reaches every path Ansible reads: the galaxy
+# install paths and the ANSIBLE_* search paths, with ansible.cfg's paths
+# when it is null. packer inspect prints the evaluated locals.
+inspect_local() { # name -var...
+  local name=$1 out; shift
+  out=$(packer inspect -var-file=packer/example.pkrvars.hcl \
+    -var "ssh_public_key=$(cat "$tmp/key.pub")" -var "ssh_private_key_file=$tmp/key" "$@" packer/ 2>&1) \
+    || { echo "FAIL: packer inspect $*: $out" >&2; exit 1; }
+  sed -n "s/^local\.$name: //p" <<<"$out"
+}
+want_local() { # description name want -var...
+  local desc=$1 name=$2 want=$3 got; shift 3
+  got=$(inspect_local "$name" "$@")
+  if [ "$got" = "$want" ]; then echo "ok: $desc"
+  else echo "FAIL: $desc: local.$name is $got, want $want" >&2; exit 1; fi
+}
+want_env() { # description entry -var...
+  local desc=$1 entry=$2; shift 2
+  if inspect_local ansible_env "$@" | grep -qF "\\\"$entry\\\""; then echo "ok: $desc"
+  else echo "FAIL: $desc: local.ansible_env lacks $entry" >&2; exit 1; fi
+}
+A="$ROOT/ansible"
+want_local "galaxy_dir sets the roles install path" galaxy_roles '"/run/galaxy/roles"' -var galaxy_dir=/run/galaxy
+want_local "galaxy_dir sets the collections install path" galaxy_collections '"/run/galaxy/collections"' -var galaxy_dir=/run/galaxy
+want_env "galaxy_dir leads ANSIBLE_ROLES_PATH" "ANSIBLE_ROLES_PATH=/run/galaxy/roles:$A/roles" -var galaxy_dir=/run/galaxy
+want_env "galaxy_dir leads ANSIBLE_COLLECTIONS_PATH" \
+  "ANSIBLE_COLLECTIONS_PATH=/run/galaxy/collections:~/.ansible/collections:/usr/share/ansible/collections" -var galaxy_dir=/run/galaxy
+want_local "no galaxy_dir installs roles where ansible.cfg says" galaxy_roles "\"$A/galaxy_roles\""
+want_local "no galaxy_dir installs collections where ansible.cfg says" galaxy_collections "\"$A/collections\""
+# Provisioner arguments are not printed by inspect: the appliance-layer
+# provisioner (the one with galaxy_file) must install into those paths.
+galaxy_block=$(awk '/provisioner "ansible"/ {b=""; inb=1} inb {b = b $0 "\n"} inb && /^  }/ {if (b ~ /galaxy_file/) printf "%s", b; inb=0}' packer/build.pkr.hcl)
+for want in 'roles_path *= local.galaxy_roles' 'collections_path *= local.galaxy_collections' 'ansible_env_vars *= local.ansible_env'; do
+  if grep -qE "^ *$want\$" <<<"$galaxy_block"; then echo "ok: the galaxy provisioner sets ${want%% *}"
+  else echo "FAIL: the ansible provisioner with galaxy_file does not set '$want'" >&2; exit 1; fi
+done
 echo "PASS: packer fmt/init/validate"

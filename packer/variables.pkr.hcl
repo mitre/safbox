@@ -154,6 +154,12 @@ variable "ansible_dir" {
   default     = null
 }
 
+variable "galaxy_dir" {
+  type        = string
+  description = "Directory ansible-galaxy installs ansible/requirements.yml into for this build: roles under roles/, collections under collections/, both searched first by the playbooks. scripts/build.sh passes one inside the run's own directory so concurrent builds never install into the same place. Null installs into ansible/galaxy_roles/ and ansible/collections/, the paths ansible.cfg names."
+  default     = null
+}
+
 variable "ansible_extra_vars" {
   type        = list(string)
   description = "Extra variables passed to every appliance playbook as key=value, e.g. [\"safbox_example_quadlet_enabled=true\"] for the acceptance build."

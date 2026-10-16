@@ -275,6 +275,75 @@ over plain HTTP from the runner, so the build network segment is trusted;
 for release builds host it over HTTPS via `kickstart_url` or use the ISO
 route described in the rebuild guide.
 
+### Where a run keeps its files
+
+Every `scripts/build.sh` run gets its own directory, `.build/runs/<run id>/`
+(the UTC start time and a random suffix, mode 0700), and prints it as its
+first line (`build log: .../build.log`). It holds:
+
+| File | Kept after the run |
+|---|---|
+| `build.log`, everything the run printed | yes |
+| `packer-debug.log`, Packer's full debug log, checked for the API token when the run ends: normally, on failure, or on a SIGINT, SIGTERM or SIGHUP (a run whose debug log holds the token exits 2 and says so in `build.log`). A SIGKILL skips every end-of-run step; delete that run's key yourself | yes |
+| `build_key`, `build_key.pub`, the ephemeral key pair | only with `SAFBOX_DEV=1` |
+| `galaxy/`, the run's own install of `ansible/requirements.yml` | no |
+
+`.build/runs/latest` points at the newest run, and `last.log` in the
+repository root at `.build/runs/latest/build.log`, so `tail -F last.log`
+follows the current build and the next one. Run directories are not pruned;
+delete old ones when you no longer need their logs.
+
+To stop a run, signal its whole process group: Ctrl-C in its terminal
+(SIGINT), `kill -TERM -<pgid>`, or `kill -HUP -<pgid>` (what closing the
+terminal sends). Packer cancels the build and removes its VM, its output
+still reaches `build.log`, and then the end-of-run steps above run; the run
+exits 130 for SIGINT, 143 for SIGTERM and 129 for SIGHUP, or 2 if the token
+is in the debug log. A SIGTERM or SIGHUP sent to `build.sh` alone takes
+effect only once Packer has exited on its own.
+
+Earlier versions kept the key in `.build/build_key` (with `SAFBOX_DEV=1`),
+the logs in `.build/logs/` and the debug log in `.build/packer-debug.log`.
+Nothing uses or cleans those any more; delete them.
+
+When the clone's user cannot log in to a development template, the clone
+test reads cloud-init's state over SSH as the build user, for diagnostics.
+That needs the key of the run that built the template, which is kept only
+if the build ran with `SAFBOX_DEV=1`. The clone test offers every kept key,
+newest first; with many kept keys sshd's `MaxAuthTries` can refuse before
+it reaches the right one, so name it with
+`SAFBOX_BUILD_KEY=.build/runs/<run id>/build_key`.
+
+### Running builds in parallel
+
+Two builds can run at the same time from one checkout, for example a Rocky
+and an AlmaLinux build, on a host large enough for both VMs. Give each its
+own template ID and name; everything else a run writes is already its own:
+
+```
+scripts/build.sh -var vm_id=9003 -var vm_name=safbox-rocky &
+scripts/build.sh -var vm_id=9004 -var vm_name=safbox-alma -var iso_file=<storage>:iso/<alma iso> &
+```
+
+- Both IDs must be free and inside what the account may use (step 6: the
+  pool grant, and any per-ID ceiling you set).
+- `last.log` follows whichever run started last. Follow a particular run
+  with `tail -F .build/runs/<run id>/build.log`.
+- Each run installs the pinned Lockdown role from its Git source itself, so
+  each needs to reach it.
+- The build gates write separate results files: a second scan in the same
+  second gets `.build/validate-build-<timestamp>-2.json`.
+- CINC Auditor shares one cache for profile dependencies (the STIG
+  baseline). The first scan after the baseline pin changes, or on a new
+  workstation, clones it into the cache while holding a lock, and a second
+  scan waits for that lock for at most 30 seconds. If the clone takes
+  longer, the second build's gate fails with `Giving up waiting on cache
+  lock` and `validate.sh: cinc-auditor exited 1 (tool or connection
+  error)`. It fails loudly, with no verdict recorded, and the template is
+  not made. Rerun it. To avoid it, start the parallel builds only once one
+  scan has filled the cache, for example one earlier build, or
+  `cinc-auditor vendor` of a scratch copy of `verify/` (as
+  `tests/verify/profile.sh` does).
+
 ## What the account cannot do, on purpose
 
 - Upload ISOs or templates. You stage media.

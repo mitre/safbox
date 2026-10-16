@@ -27,7 +27,8 @@
 #
 # Inputs only ever come from files, never --input on the command line, so a
 # run is reproducible from what is tracked plus what the site names.
-# Results land in .build/validate-<label>-<UTC timestamp>.json (HDF-readable).
+# Results land in .build/validate-<label>-<UTC timestamp>.json (HDF-readable),
+# with -2, -3, ... before .json when another scan took that name first.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 usage() {
@@ -78,7 +79,17 @@ done
 OUT_DIR="$ROOT/.build"
 mkdir -p "$OUT_DIR"
 chmod 700 "$OUT_DIR"
-RESULTS="$OUT_DIR/validate-$LABEL-$(date -u +%Y%m%dT%H%M%SZ).json"
+# Reserve the results file: two scans with the same label in the same second
+# (two concurrent builds reaching their gates) must not write one file and
+# each gate the other's results. noclobber makes the create fail if it exists.
+STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+RESULTS="$OUT_DIR/validate-$LABEL-$STAMP.json"
+n=1
+until (set -C; : > "$RESULTS") 2>/dev/null; do
+  n=$((n + 1))
+  [ "$n" -le 100 ] || { echo "validate.sh: cannot create a results file in $OUT_DIR" >&2; exit 1; }
+  RESULTS="$OUT_DIR/validate-$LABEL-$STAMP-$n.json"
+done
 
 echo "validate.sh: $PROFILE against $TARGET"
 echo "validate.sh: inputs ${INPUT_FILES[*]}"
@@ -87,8 +98,13 @@ echo "validate.sh: threshold $THRESHOLD"
 # resolved then, and CINC Auditor reads it even after inspec.yml changes (a
 # renamed child, a new baseline commit), silently scanning stale content.
 # Lockfiles are generated and git-ignored: drop any under verify/ and write
-# none, so every scan resolves its dependencies from inspec.yml.
-find "$ROOT/verify" -name inspec.lock -type f -delete
+# none, so every scan resolves its dependencies from inspec.yml. No scan
+# writes one (--no-create-lockfile holds for the dependencies too), so this
+# only ever removes a stale lockfile from a manual run, and a concurrent scan
+# has nothing of its own here to lose. rm -f, not find -delete: when another
+# scan removes the same stale file first, find -delete fails ("cannot
+# delete ... No such file or directory") and would fail this gate.
+find "$ROOT/verify" -name inspec.lock -type f -exec rm -f -- {} +
 rc=0
 cinc-auditor exec "$PROFILE" \
   -t "ssh://$TARGET" -i "$KEY" --sudo ${SSH_ARGS[@]+"${SSH_ARGS[@]}"} \

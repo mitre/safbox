@@ -36,12 +36,19 @@ locals {
 
   repo_root   = abspath("${path.root}/..")
   ansible_dir = coalesce(var.ansible_dir, "${local.repo_root}/ansible")
+  # Where ansible-galaxy installs the pinned third-party roles (the Lockdown
+  # STIG role) and collections from requirements.yml. scripts/build.sh gives
+  # every run its own galaxy_dir, so two builds at once never extract into
+  # the same directory; without one, the paths ansible.cfg names.
+  galaxy_roles       = var.galaxy_dir == null ? "${local.ansible_dir}/galaxy_roles" : "${var.galaxy_dir}/roles"
+  galaxy_collections = var.galaxy_dir == null ? "${local.ansible_dir}/collections" : "${var.galaxy_dir}/collections"
   ansible_env = [
     "ANSIBLE_CONFIG=${local.ansible_dir}/ansible.cfg",
-    # galaxy_roles/ first: ansible-galaxy installs the pinned third-party
-    # roles from requirements.yml (the Lockdown STIG role) into the first
-    # entry, as ansible.cfg's roles_path does.
-    "ANSIBLE_ROLES_PATH=${local.ansible_dir}/galaxy_roles:${local.ansible_dir}/roles",
+    # The galaxy paths first, then the project's own roles; the collection
+    # search path is ansible.cfg's collections_path with the galaxy path in
+    # place of its first entry.
+    "ANSIBLE_ROLES_PATH=${local.galaxy_roles}:${local.ansible_dir}/roles",
+    "ANSIBLE_COLLECTIONS_PATH=${local.galaxy_collections}:~/.ansible/collections:/usr/share/ansible/collections",
     "ANSIBLE_FORCE_COLOR=0",
   ]
   ansible_extra = flatten([for v in var.ansible_extra_vars : ["-e", v]])
@@ -84,6 +91,8 @@ build {
   provisioner "ansible" {
     playbook_file    = "${local.ansible_dir}/playbooks/safbox.yml"
     galaxy_file      = "${local.ansible_dir}/requirements.yml"
+    roles_path       = local.galaxy_roles
+    collections_path = local.galaxy_collections
     user             = var.build_user
     use_proxy        = false
     ansible_env_vars = local.ansible_env

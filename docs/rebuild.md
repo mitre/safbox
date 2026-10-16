@@ -151,9 +151,12 @@ tests/kickstart/ks-lint.sh       # render and lint the kickstart
 scripts/build.sh                 # mints an ephemeral build key, runs packer
 ```
 
-Each run writes a timestamped log under `.build/logs/`, and `last.log` in the
-repository root points at the newest one, so `tail -F last.log` follows the
-current build (and the next one, without restarting `tail`).
+Each run keeps its log, key pair and Packer debug log in its own
+`.build/runs/<run id>/`, and `last.log` in the repository root points at the
+newest run's log, so `tail -F last.log` follows the current build (and the
+next one, without restarting `tail`). To run builds in parallel, see
+"Running builds in parallel" in the
+[Proxmox guide](guides/proxmox/build.md#running-builds-in-parallel).
 
 The build types a short GRUB edit at the ISO menu, serves the kickstart,
 waits through the install and reboot, confirms FIPS, Secure Boot, and the
@@ -954,9 +957,13 @@ the runner SSH into the Anaconda environment as root with the ephemeral build
 key while an install is wedged:
 
 ```
-ssh -i .build/build_key root@<installer-ip>
+ssh -i .build/runs/<run id>/build_key root@<installer-ip>
 less /tmp/anaconda.log /tmp/storage.log /tmp/packaging.log
 ```
+
+`<run id>` is the stuck build's run directory, from its first line
+(`build log: ...`). `.build/runs/latest` is only that run if no other build
+started after it.
 
 The installer's IP is whatever DHCP handed the VM's MAC; the guest agent is
 not running yet, so read the MAC from the VM's hardware tab and look it up

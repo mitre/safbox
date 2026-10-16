@@ -21,8 +21,8 @@ failures=0
 # each part prints a placeholder instead of failing under set -e.
 state() {
   readlink "$ROOT/last.log" 2>/dev/null || echo "no last.log"
-  stat -c '%Y' "$ROOT/.build/build_key" 2>/dev/null || echo "no build key"
-  if [ -d "$ROOT/.build/logs" ]; then find "$ROOT/.build/logs" -mindepth 1 -maxdepth 1 | wc -l; else echo "no logs"; fi
+  readlink "$ROOT/.build/runs/latest" 2>/dev/null || echo "no latest run"
+  if [ -d "$ROOT/.build/runs" ]; then find "$ROOT/.build/runs" -mindepth 1 -maxdepth 1 | wc -l; else echo "no runs"; fi
 }
 before=$(state)
 fail() { echo "FAIL: $*" >&2; failures=1; }

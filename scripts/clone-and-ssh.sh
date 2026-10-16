@@ -11,6 +11,9 @@
 #      clone joins; authorizes the clone via VM.Allocate on /pool/<name>, which
 #      survives VM destruction, unlike an ACL on /vms/<id>), SAFBOX_SSH_KEY
 #      (private key; default .build/clone_key, RSA because the clone is FIPS),
+#      SAFBOX_BUILD_KEY (optional: when SSH fails on a development template,
+#      the build key of the run that built it, .build/runs/<run id>/build_key,
+#      kept by SAFBOX_DEV=1; default: every kept run key, newest first),
 #      SAFBOX_SITE_INPUTS and SAFBOX_SITE_THRESHOLD (optional: a site's inputs
 #      file layered after verify/inputs/release.yml, and a site threshold used
 #      instead of verify/thresholds/release.yml, for a template built with
@@ -148,12 +151,29 @@ for _ in $(seq 1 72); do
   sleep 5
 done
 echo "FAIL: SSH to $ip as $USER_NAME never succeeded" >&2
-# Development aid: before the seal step exists, the template still carries the
-# build user and the ephemeral build key, so cloud-init's own view can be read.
-BUILD_KEY="$ROOT/.build/build_key"
-if [ -f "$BUILD_KEY" ]; then
-  echo "--- diagnostics via build user (pre-seal templates only)" >&2
-  ssh -i "$BUILD_KEY" -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 \
+# Development aid: a development template (seal = false) still carries the
+# build user, and a build run with SAFBOX_DEV=1 keeps its ephemeral key in its
+# own run directory, so cloud-init's own view can be read. SAFBOX_BUILD_KEY
+# names the key of the run that built this template; without it every kept
+# run key is offered, newest first, and the template accepts only its own.
+BUILD_KEYS=()
+if [ -n "${SAFBOX_BUILD_KEY:-}" ]; then
+  BUILD_KEYS=("$SAFBOX_BUILD_KEY")
+  [ -f "$SAFBOX_BUILD_KEY" ] || echo "SAFBOX_BUILD_KEY $SAFBOX_BUILD_KEY not found; no build-user diagnostics" >&2
+else
+  for k in "$ROOT"/.build/runs/*/build_key; do
+    # runs/latest is a link to one of the others.
+    case "$k" in */runs/latest/build_key) continue ;; esac
+    if [ -f "$k" ]; then BUILD_KEYS=("$k" ${BUILD_KEYS[@]+"${BUILD_KEYS[@]}"}); fi
+  done
+fi
+ID_ARGS=()
+for k in ${BUILD_KEYS[@]+"${BUILD_KEYS[@]}"}; do
+  if [ -f "$k" ]; then ID_ARGS+=(-i "$k"); fi
+done
+if [ ${#ID_ARGS[@]} -gt 0 ]; then
+  echo "--- diagnostics via build user (development templates only)" >&2
+  ssh "${ID_ARGS[@]}" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 \
     "${SAFBOX_BUILD_USER:-packer}@$ip" \
     'cloud-init status --long 2>&1 | head -6; echo "--- id"; id '"$USER_NAME"' 2>&1; echo "--- cloud-init errors"; sudo -n grep -iE "error|traceback|warn" /var/log/cloud-init.log 2>/dev/null | tail -8' >&2 || true
 fi
