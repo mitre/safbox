@@ -8,6 +8,8 @@ platform_packages:
   - qemu-guest-agent
   - cloud-init
   - python3-libselinux
+  # SELinux policy management from Ansible (seboolean, persistent).
+  - python3-libsemanage
   - python3-firewall
 platform_services_enabled:
   - sshd
@@ -18,3 +20,6 @@ platform_services_enabled:
 platform_container_packages:
   - podman
   - containers-common
+# The host's extracted CA trust store, mounted read-only into the service
+# containers (Red Hat UBI images, which read it at the same path).
+platform_container_trust_volume: /etc/pki/ca-trust/extracted:/etc/pki/ca-trust/extracted:ro

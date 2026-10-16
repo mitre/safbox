@@ -19,3 +19,6 @@ platform_container_packages:
   - golang-github-containers-common
 # AppArmor, not SELinux, on this family.
 platform_selinux_required: false
+# The host's CA bundle, mounted read-only into the service containers where
+# their Red Hat UBI images read theirs.
+platform_container_trust_volume: /etc/ssl/certs/ca-certificates.crt:/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem:ro

@@ -389,17 +389,20 @@ ever destroyed if it carries this run's ID. A template built with
 
 ## Choosing what the appliance layer does
 
-Every task group in the `platform`, `base`, `tools`, `heimdall`, `vulcan`
-and `proxy` roles is a block
+Every task group in the `platform`, `site_config`, `base`, `tools`,
+`heimdall`, `vulcan` and `proxy` roles is a block
 tagged `safbox-<role>-<n>` with a switch `safbox_<role>_<n>` (default on),
-in the style of Ansible Lockdown. The switches and a one-line description of
+in the style of Ansible Lockdown (a hyphen for the underscore in the tag:
+`safbox-site-config-1`, switch `safbox_site_config_1`). The switches and a one-line description of
 each group are listed in `ansible/group_vars/all/main.yml`.
 
 - Turn a group off for every build by setting its switch to `false` in
   `ansible/local.yml` (site overrides, git-ignored).
 - Run or skip groups for one invocation with `--tags` / `--skip-tags`, for
-  example against an existing host:
-  `ansible-playbook -i <host>, -u <user> ansible/playbooks/safbox.yml -e @ansible/local.yml --tags safbox-platform-3`
+  example against an existing host, from the repository root
+  (`ANSIBLE_CONFIG` names the project's configuration, which finds the
+  roles):
+  `ANSIBLE_CONFIG=ansible/ansible.cfg ansible-playbook -i <host>, -u <user> ansible/playbooks/safbox.yml -e @ansible/local.yml --tags safbox-platform-3`
 - The `seal` role's groups are tagged (`safbox-seal-<n>`) but have no
   switch: a partially sealed image carries build identity, so the seal runs
   whole. The one exception is the development seal (`seal = false`), which
@@ -425,6 +428,164 @@ each group are listed in `ansible/group_vars/all/main.yml`.
   drop a switched-off service there in a site inputs file, and its
   controls (`safbox-vulcan-*`, and `safbox-proxy-3` for Vulcan's proxy
   port) from a site threshold, as for a tools group.
+- `safbox_site_config_1` installs the site's CA bundles, the DoD PKI bundle
+  by default; see "Site CA bundles" below.
+
+## Site CA bundles
+
+The `site_config` role adds CA certificates to the system trust store, so
+the box, its tools, and the Heimdall and Vulcan containers trust servers
+those CAs sign. It runs right after `platform`, so the roles after it
+(the tools downloads, the container image pulls) already use the new
+store; `platform`'s own package installs, and the role's install of
+OpenSSL and unzip, use the store the box had before. No certificate is
+kept in the repository: each bundle is downloaded by the box or copied
+from your workstation when the role runs.
+
+**DoD PKI, on by default.** The DoD root and issuing CAs (DoD Root CA 3 to
+6 and their subordinates) come from DISA's public PKI library at a pinned
+URL, checked against a pinned sha256 (`safbox_trust_bundle_dod`), and the
+default list trusts them:
+
+```
+safbox_trust_bundles:
+  - "{{ safbox_trust_bundle_dod }}"
+```
+
+To build or run without them, set the list to `[]` (or to your own
+bundles only) in `ansible/local.yml`. The role then removes any DoD anchor
+a previous run installed.
+
+**Network at build.** Because the DoD bundle is on by default, every build
+and every run of this group downloads it from `dl.dod.cyber.mil`, so the
+build VM (or the box) needs outbound HTTPS to that host. On a network
+without it, give the same file as a local path instead: download the zip
+once on a connected machine, check it with `sha256sum` against the pin,
+carry it to the machine that runs Ansible, and put in `ansible/local.yml`:
+
+```
+safbox_trust_bundles:
+  - name: dod
+    path: /absolute/path/to/unclass-certificates_pkcs7_DoD.zip
+    sha256: "{{ safbox_trust_bundle_dod.sha256 }}"
+    format: "{{ safbox_trust_bundle_dod.format }}"
+    member: "{{ safbox_trust_bundle_dod.member }}"
+```
+
+The role copies it to the box and checks the same sha256, so the result is
+identical to the download.
+
+**When DISA releases a new bundle.** DISA replaces the file behind the
+pinned URL with each release. The download then no longer matches the pin
+and, with the DoD bundle on by default, every build and every run of this
+group fails rather than trust content nobody reviewed, until the pin is
+updated as the comment above `safbox_trust_bundle_dod` describes (DISA's
+signed manifest inside the zip, then the version, sha256 and member, and
+the root fingerprints of the profile's `trust_bundle_anchors` input). A
+site that cannot wait can build from a local copy of the pinned release as
+above, or remove the DoD bundle.
+
+**Your own bundle.** Add an entry beside the DoD one (or instead of it):
+
+```
+safbox_trust_bundles:
+  - "{{ safbox_trust_bundle_dod }}"
+  - name: example-org           # lowercase letters, digits, hyphens
+    path: /home/me/pki/example-org-ca.pem   # absolute, on the machine running Ansible
+    sha256: <sha256sum of that file>
+    format: pem                 # pem, der, pkcs7-der or pkcs7-pem
+```
+
+or `url: https://...` instead of `path` for a file the box downloads, and
+`member: <path inside the zip>` (relative, without `..`) when the file is
+a zip archive, as DISA's is. Every entry needs its sha256: a download or
+file that does not match fails the run, and nothing from any bundle is
+trusted. A malformed entry (an unknown format or key, both or neither of
+`url` and `path`, a relative `path`, two bundles with one name) is refused
+before anything is fetched.
+
+**What the role does.** It reads each bundle with OpenSSL, writes one
+anchor file per certificate (`safbox-<bundle>-<id>.pem` in
+`/etc/pki/ca-trust/source/anchors`; one per certificate because the
+Debian family's mechanism needs it), runs `update-ca-trust`, and removes
+the anchors of any certificate no longer configured, so dropping a bundle
+from the list untrusts it. Before installing anything it verifies every
+certificate under the system crypto policy (`openssl verify` at the
+policy's security level, each signature checked, a root's own included,
+expiry not judged): a root the FIPS policy would refuse in use, such as a
+SHA-1 signature, an RSA key shorter than 2048 bits or an elliptic curve
+FIPS mode does not offer, fails the run and is named, rather than trusted
+on paper and rejected silently later. Every certificate of the DoD bundle
+passes on a FIPS-mode SAFBox.
+
+**Containers.** Heimdall and Vulcan mount the host's extracted trust store
+(`/etc/pki/ca-trust/extracted`) read-only where their Red Hat UBI images
+read their own, so their Node.js and Ruby trust exactly what the host
+trusts. When the store changes on a running box, the role restarts
+`heimdall.service` and `vulcan.service`, which read it at start.
+
+SELinux labels the host's certificate files `cert_t`, which a container
+(`container_t`) may not read; the `platform` role turns on the
+container-selinux boolean `container_read_certs` to allow it. The boolean
+is host-wide: it lets every container read every `cert_t` file mounted
+into it, and `cert_t` covers private keys too (`/etc/pki/tls/private`,
+for example), so a future unit that mounted such a directory would expose
+those keys to its container without any SELinux denial. SAFBox accepts
+this because a container reaches only what its unit mounts, the units are
+the appliance's own (reviewed here, checked by the validation profile),
+the only `cert_t` path any of them mounts is the public extracted store,
+and the proxy's private key lives in `/etc/safbox/tls`, labelled for its
+container alone. The alternative, relabelling the store for containers,
+would change the label the host's own programs rely on. Mount nothing
+else under `/etc/pki` into a container.
+
+**At build or on a deployed box.** The list in effect at build (the
+default, or `ansible/local.yml` named to the build, see "Site overrides")
+is baked into the image. On a box that is already deployed, apply only
+this group from the repository root on your workstation, with the same
+`ansible/local.yml` if you use one (drop `-e @ansible/local.yml` for the
+repository defaults; `ANSIBLE_CONFIG` names the project's configuration,
+which finds the roles):
+
+```
+ANSIBLE_CONFIG=ansible/ansible.cfg ansible-playbook -i <box>, -u <user> --private-key <key> \
+  ansible/playbooks/safbox.yml -e @ansible/local.yml --tags safbox-site-config-1
+```
+
+A second run changes nothing. `tests/ansible/trust-bundles.sh` runs this
+path against a box (`SAFBOX_HOST`, `SAFBOX_USER`, `SAFBOX_KEY`, as for the
+idempotence check): the default list, then throwaway CAs it generates:
+install, a second run, wrong checksums, roots the policy rejects, malformed
+entries, an empty bundle, and removal. It leaves the box at the default.
+
+**Validation.** `safbox-trust-1` checks that the extracted store holds
+exactly the bundles the image is meant to trust: the identifying roots of
+each bundle named in the input `trust_bundles_expected` (default `[dod]`)
+are trusted, those of every other known bundle (`trust_bundle_anchors`:
+the DoD roots by SHA-256 fingerprint) are not, and every SAFBox anchor
+file belongs to an expected bundle. A site that changes the list says so
+in its site inputs file, for the build gate and the release gate alike:
+`trust_bundles_expected: []` without the DoD bundle, or its bundle names
+and their roots when it adds its own:
+
+```
+---
+trust_bundles_expected: [dod, example-org]
+trust_bundle_anchors:
+  dod:
+    DoD Root CA 3: <fingerprint>   # the four DoD lines of the profile's default
+    # ...
+  example-org:
+    Example Org Root CA: <fingerprint>
+```
+
+where each fingerprint is `openssl x509 -noout -fingerprint -sha256 -in
+<root>.pem`. An inputs file replaces an input's whole value, so a site
+that adds a bundle repeats the `dod` entry of the default in
+`verify/el10-infrastructure/inspec.yml`.
+
+The thresholds need no change: `safbox-trust-1` is in both, whichever
+bundles the image trusts.
 
 ## STIG hardening and deviations
 
@@ -709,7 +870,9 @@ FIPS module is the RHEL 9 one inside each image, not the host's RHEL 10
 module; that is documented here rather than recorded as a finding, because
 the containers run a FIPS provider under the host's policy. The proxy uses
 `ubi9/nginx-126` rather than upstream Heimdall's `nginx:alpine` for this
-reason: Alpine's OpenSSL has no FIPS provider. Three
+reason: Alpine's OpenSSL has no FIPS provider. Each application container
+mounts the host's CA trust store read-only, so it trusts the same CAs as the
+host, a site's own included (see "Site CA bundles"). Three
 weaknesses remain and are recorded as findings (`safbox-heimdall-4`,
 `safbox-heimdall-5`, `safbox-vulcan-4`): Heimdall hashes passwords and API
 keys with bcrypt in pure JavaScript, outside any FIPS provider (the finding

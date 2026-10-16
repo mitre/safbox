@@ -1,0 +1,22 @@
+---
+galaxy_info:
+  role_name: site_config
+  namespace: safbox
+  author: MITRE SAF
+  description: "Fits a SAFBox into a site: trusted CA bundles in the system trust store"
+  license: Apache-2.0
+  min_ansible_version: "2.16"
+  platforms:
+    - name: EL
+      versions:
+        - "10"
+    - name: Debian
+      versions:
+        - all
+    - name: Ubuntu
+      versions:
+        - all
+  galaxy_tags:
+    - safbox
+    - appliance
+dependencies: []

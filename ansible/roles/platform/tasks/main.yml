@@ -90,6 +90,18 @@
         group: root
         mode: '0644'
 
+    # The service containers mount the host's CA trust store read-only
+    # (platform_container_trust_volume), so they trust exactly what the
+    # host trusts, the site_config role's bundles included. SELinux lets a
+    # container read the host's certificates only with this boolean; the
+    # store keeps its own label, so the host is unaffected.
+    - name: Let containers read the host's CA trust store
+      ansible.posix.seboolean:
+        name: container_read_certs
+        state: true
+        persistent: true
+      when: platform_selinux_required | bool
+
 - name: Smoke-test container
   when: safbox_platform_5 | default(true) | bool
   tags: [safbox-platform-5]

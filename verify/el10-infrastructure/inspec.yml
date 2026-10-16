@@ -15,13 +15,14 @@ summary: >-
   absence of build residue; and the services (Phases 5 and 6, and the TLS
   proxy): Heimdall and Vulcan as Quadlet pods on the loopback address with
   secrets from first boot, behind an nginx TLS proxy with a first-boot
-  certificate. Every control is impact 1.0, so the thresholds in
+  certificate; and the site CA bundles in the system trust store, the DoD
+  PKI bundle by default. Every control is impact 1.0, so the thresholds in
   verify/thresholds/ can name each one in the critical bucket, which no STIG
   control uses, except documented findings: known weaknesses kept visible as
   low-impact controls that fail, tagged finding. Runs alone or through the
   verify/inspec-safbox wrapper, from the build runner over SSH; the sealed
   template's own invariants are asserted by the seal step itself.
-version: 0.6.0
+version: 0.7.0
 inspec_version: ">= 5.0"
 supports:
   - platform-family: redhat
@@ -208,3 +209,34 @@ inputs:
       applied (safbox_hardening_lockdown.version).
     type: String
     value: 1.1.0
+  # Site CA bundles (the site_config role, safbox_site_config_1). The
+  # default equals the names in safbox_trust_bundles in
+  # ansible/group_vars/all/main.yml, the DoD bundle (tests/ansible/pins.sh
+  # fails on drift); a site that builds or deploys with other bundles, or
+  # without the DoD one, names them in its site inputs file.
+  - name: trust_bundles_expected
+    description: >-
+      Names of the CA bundles the image trusts (the name of each entry of
+      safbox_trust_bundles). Each must have its identifying roots in
+      trust_bundle_anchors. By default the DoD bundle; [] for an image
+      built or deployed with the DoD bundle removed, so no DoD root may be
+      trusted.
+    type: Array
+    value:
+      - dod
+  - name: trust_bundle_anchors
+    description: >-
+      Identifying root certificates of each known bundle: bundle name to a
+      map of certificate label to SHA-256 fingerprint (openssl x509 -noout
+      -fingerprint -sha256; colons and case are ignored). A bundle in
+      trust_bundles_expected must have every root here in the system trust
+      store; a known bundle not expected must have none. Every pinned
+      safbox_trust_bundle_<name> has an entry (tests/ansible/pins.sh). The
+      dod roots are those of the pinned DISA bundle (version 5.14).
+    type: Hash
+    value:
+      dod:
+        DoD Root CA 3: B1:07:B3:3F:45:3E:55:10:F6:8E:51:31:10:C6:F6:94:4B:AC:C2:63:DF:01:37:F8:21:C1:B3:C2:F8:F8:63:D2
+        DoD Root CA 4: 55:9A:51:89:45:2B:13:F8:23:3F:00:22:36:3C:06:F2:6E:3C:51:7C:1D:4B:77:44:50:35:95:9D:F3:24:4F:74
+        DoD Root CA 5: 1F:4E:DE:9D:C2:A2:41:F6:52:1B:F5:18:42:4A:CD:49:EB:E8:44:20:E6:9D:AF:5B:AC:57:AF:1F:8E:E2:94:A9
+        DoD Root CA 6: 2A:5E:41:AC:A9:3D:F7:CC:49:6D:23:69:B7:A0:A0:37:04:5D:50:2F:1A:BA:AF:76:97:5F:C0:7C:66:60:CF:93

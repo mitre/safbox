@@ -4,13 +4,18 @@
     daemon_reload: true
 
 # Only on a deployed box (its secrets exist); at build nothing runs. The pod
-# first, so a changed published port takes effect, then its containers.
+# alone: Quadlet binds each container unit to it (BindsTo) and makes the pod
+# want them in order, so restarting the pod restarts the database and then
+# the application, and a changed published port takes effect. Restarting
+# the containers separately as well races with that restart and can fail
+# the database's start ("Bound to unit heimdall-pod.service, but unit isn't
+# active"). The restart reloads systemd itself first: several roles define
+# a handler named "Reload systemd units", and on a deployed box the one this
+# role's notification ran was seen to run after this restart, which then
+# used the units generated from the old Quadlet files.
 - name: Restart Heimdall
   ansible.builtin.systemd_service:
-    name: "{{ item }}"
+    name: heimdall-pod.service
     state: restarted
-  loop:
-    - heimdall-pod.service
-    - heimdall-db.service
-    - heimdall.service
+    daemon_reload: true
   when: heimdall_secrets.stat.exists | default(false)

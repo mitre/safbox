@@ -1,0 +1,16 @@
+---
+# RHEL 10 family: p11-kit's shared trust store (update-ca-trust(8)).
+
+# Administrator-added trust anchors; update-ca-trust extract regenerates the
+# bundles under /etc/pki/ca-trust/extracted from them.
+site_config_trust_anchor_dir: /etc/pki/ca-trust/source/anchors
+site_config_trust_anchor_ext: pem
+site_config_trust_update: [update-ca-trust, extract]
+
+# The extracted store as a hashed directory, where the policy check finds
+# the issuers of a bundle certificate the bundle itself does not carry.
+site_config_trust_system_capath: /etc/pki/ca-trust/extracted/pem/directory-hash
+
+# The system crypto policy's OpenSSL back end, which names the security
+# level (@SECLEVEL) TLS enforces; the FIPS and DEFAULT policies set 2.
+site_config_trust_policy_file: /etc/crypto-policies/back-ends/opensslcnf.config

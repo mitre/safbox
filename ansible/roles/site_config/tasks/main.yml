@@ -1,0 +1,263 @@
+---
+- name: Load OS family variables
+  tags: [always]
+  ansible.builtin.include_vars:
+    file: "{{ lookup('ansible.builtin.first_found', site_config_vars_lookup) }}"
+  vars:
+    site_config_vars_lookup:
+      files:
+        - "{{ ansible_facts['os_family'] }}.yml"
+      paths:
+        - "{{ role_path }}/vars"
+
+# Each entry of safbox_trust_bundles names a bundle (name), where it comes
+# from (url, fetched by the box, or path, a file on the machine running
+# Ansible), its sha256, its format (a key of site_config_trust_convert)
+# and, for a zip archive, the member that holds the certificates. Nothing
+# is trusted unless every entry is valid, every download and file matches
+# its sha256, and every certificate passes the system crypto policy.
+- name: Trusted CA bundles
+  when: safbox_site_config_1 | default(true) | bool
+  tags: [safbox-site-config-1]
+  vars:
+    site_config_trust_source: >-
+      {{ site_config_trust_work_dir ~ '/' ~ item.name ~ '/'
+         ~ ((item.url if item.url is defined else item.path) | basename) }}
+  block:
+    - name: Refuse a malformed trust bundle entry
+      ansible.builtin.assert:
+        that:
+          - item is mapping
+          - item.keys() | difference(site_config_trust_entry_keys) | length == 0
+          - item.name is defined and item.name is string
+          - item.name is match('^[a-z0-9]+(-[a-z0-9]+)*$')
+          - (item.url is defined) != (item.path is defined)
+          - item.path is not defined or (item.path is string and item.path is abs)
+          - item.sha256 is defined and item.sha256 is string and item.sha256 is match('^[0-9a-f]{64}$')
+          - item.format is defined and item.format in site_config_trust_convert
+          - >-
+            item.member is not defined
+            or (item.member is string and item.member | length > 0 and item.member is not match('/')
+                and '..' not in item.member.split('/'))
+        fail_msg: >-
+          Trust bundle entry {{ item.name | default(item) }} is malformed: it needs a name
+          (lowercase letters, digits and hyphens), exactly one of url or path (an absolute
+          path), a sha256 of 64 lowercase hex digits, a format, one of
+          {{ site_config_trust_convert.keys() | list }}, and, for a zip archive, a member
+          (a relative path inside it, without ..); its keys must be among
+          {{ site_config_trust_entry_keys }}.
+        quiet: true
+      loop: "{{ safbox_trust_bundles }}"
+      loop_control:
+        label: "{{ item.name | default(item) }}"
+
+    - name: Refuse two trust bundles with one name
+      ansible.builtin.assert:
+        that:
+          - safbox_trust_bundles | map(attribute='name') | unique | length == safbox_trust_bundles | length
+        fail_msg: "Trust bundle names must be unique: {{ safbox_trust_bundles | map(attribute='name') | list }}"
+        quiet: true
+
+    - name: Install the packages that unpack and read bundles
+      ansible.builtin.package:
+        name: "{{ site_config_trust_packages }}"
+        state: present
+
+    - name: Create the working directory of each bundle
+      ansible.builtin.file:
+        path: "{{ site_config_trust_work_dir }}/{{ item.name }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+      loop: "{{ safbox_trust_bundles }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    # get_url verifies the download against the sha256 and fails, keeping
+    # nothing, on a mismatch; a file already there with that sha256 is kept.
+    - name: Download each bundle given by URL and verify its sha256
+      ansible.builtin.get_url:
+        url: "{{ item.url }}"
+        dest: "{{ site_config_trust_source }}"
+        checksum: "sha256:{{ item.sha256 }}"
+        owner: root
+        group: root
+        mode: '0600'
+      loop: "{{ safbox_trust_bundles | selectattr('url', 'defined') | list }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Copy each bundle given as a local path to the box
+      ansible.builtin.copy:
+        src: "{{ item.path }}"
+        dest: "{{ site_config_trust_source }}"
+        owner: root
+        group: root
+        mode: '0600'
+      loop: "{{ safbox_trust_bundles | selectattr('path', 'defined') | list }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    # The file on the box, whichever way it arrived, is the one read below.
+    - name: Checksum each bundle on the box
+      ansible.builtin.stat:
+        path: "{{ site_config_trust_source }}"
+        checksum_algorithm: sha256
+      loop: "{{ safbox_trust_bundles }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: site_config_trust_stat
+
+    - name: Refuse a bundle whose sha256 does not match
+      ansible.builtin.assert:
+        that:
+          - item.stat.checksum | default('') == item.item.sha256
+        fail_msg: >-
+          Trust bundle {{ item.item.name }}: the sha256 of {{ item.item.url | default(item.item.path) }}
+          ({{ item.stat.checksum | default('missing') }}) does not match the configured {{ item.item.sha256 }}
+        quiet: true
+      loop: "{{ site_config_trust_stat.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+
+    - name: Extract the certificate member of each archive
+      ansible.builtin.unarchive:
+        src: "{{ site_config_trust_source }}"
+        dest: "{{ site_config_trust_work_dir }}/{{ item.name }}"
+        remote_src: true
+        include: ["{{ item.member }}"]
+        owner: root
+        group: root
+      loop: "{{ safbox_trust_bundles | selectattr('member', 'defined') | list }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Read the certificates of each bundle as PEM
+      ansible.builtin.command:
+        argv: >-
+          {{ site_config_trust_convert[item.format]
+             + [site_config_trust_work_dir ~ '/' ~ item.name ~ '/' ~ item.member
+                if item.member is defined else site_config_trust_source] }}
+      loop: "{{ safbox_trust_bundles }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: site_config_trust_read
+      changed_when: false
+
+    - name: Collect the certificates to trust
+      ansible.builtin.set_fact:
+        site_config_trust_certs: "{{ lookup('ansible.builtin.template', 'certificates.json.j2') | from_json }}"
+
+    - name: Refuse a bundle that holds no certificate
+      ansible.builtin.assert:
+        that:
+          - site_config_trust_certs | selectattr('bundle', 'eq', item.name) | list | length > 0
+        fail_msg: "Trust bundle {{ item.name }} holds no certificate in format {{ item.format }}"
+        quiet: true
+      loop: "{{ safbox_trust_bundles }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    # Before anything is trusted, every certificate must verify under the
+    # system crypto policy: its chain built from the bundles and the system
+    # store, each signature checked (a root's own signature too) and each
+    # key and signature at the policy's security level, so a root the policy
+    # would refuse in use (SHA-1, a short key, a curve FIPS mode lacks) is
+    # reported here rather than trusted and rejected silently. Expiry is not
+    # judged: a bundle may carry expired CAs, which are never valid in use.
+    - name: Check the certificates against the system crypto policy
+      when: site_config_trust_certs | length > 0
+      block:
+        - name: Read the system crypto policy's OpenSSL settings
+          ansible.builtin.slurp:
+            src: "{{ site_config_trust_policy_file }}"
+          register: site_config_trust_policy
+
+        - name: Take the security level the policy sets for TLS
+          ansible.builtin.set_fact:
+            site_config_trust_level: >-
+              {{ site_config_trust_policy.content | b64decode
+                 | regex_search('@SECLEVEL=([0-9])', '\1') | default([''], true) | first }}
+
+        - name: Refuse to judge without a security level
+          ansible.builtin.assert:
+            that:
+              - site_config_trust_level is match('^[0-9]$')
+            fail_msg: "No OpenSSL security level (@SECLEVEL=<n>) in {{ site_config_trust_policy_file }}"
+            quiet: true
+
+        - name: Write every bundle certificate to one candidate file
+          ansible.builtin.copy:
+            content: "{{ site_config_trust_certs | map(attribute='pem') | join }}"
+            dest: "{{ site_config_trust_work_dir }}/candidates.pem"
+            owner: root
+            group: root
+            mode: '0600'
+
+        - name: Verify each certificate at the policy's security level
+          ansible.builtin.command:
+            argv:
+              - openssl
+              - verify
+              - -auth_level
+              - "{{ site_config_trust_level }}"
+              - -check_ss_sig
+              - -no_check_time
+              - -CAfile
+              - "{{ site_config_trust_work_dir }}/candidates.pem"
+              - -CApath
+              - "{{ site_config_trust_system_capath }}"
+            stdin: "{{ item.pem }}"
+          loop: "{{ site_config_trust_certs }}"
+          loop_control:
+            label: "{{ item.file }}"
+          register: site_config_trust_verify
+          changed_when: false
+          failed_when: false
+
+        - name: Refuse the bundles if the crypto policy rejects any certificate
+          ansible.builtin.assert:
+            that:
+              - item.rc == 0
+            fail_msg: >-
+              Trust bundle {{ item.item.bundle }}: {{ item.item.file }} is rejected by the system crypto
+              policy (security level {{ site_config_trust_level }}):
+              {{ (item.stdout_lines + item.stderr_lines) | join('; ') }}
+            quiet: true
+          loop: "{{ site_config_trust_verify.results }}"
+          loop_control:
+            label: "{{ item.item.file }}"
+
+    - name: Install one anchor file per certificate
+      ansible.builtin.copy:
+        content: "{{ item.pem }}"
+        dest: "{{ site_config_trust_anchor_dir }}/{{ item.file }}"
+        owner: root
+        group: root
+        mode: '0644'
+      loop: "{{ site_config_trust_certs }}"
+      loop_control:
+        label: "{{ item.file }}"
+      notify: Trust store changed
+
+    - name: Find the SAFBox anchor files on the box
+      ansible.builtin.find:
+        paths: "{{ site_config_trust_anchor_dir }}"
+        patterns: "safbox-*"
+        file_type: any
+      register: site_config_trust_installed
+
+    - name: Remove the anchors of certificates no longer configured
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: >-
+        {{ site_config_trust_installed.files | map(attribute='path') | map('basename')
+           | difference(site_config_trust_certs | map(attribute='file'))
+           | map('regex_replace', '^', site_config_trust_anchor_dir ~ '/') | list }}
+      notify: Trust store changed
+
+    # The store is current before any later role fetches over TLS.
+    - name: Update the trust store now
+      ansible.builtin.meta: flush_handlers

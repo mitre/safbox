@@ -20,6 +20,7 @@ image_ref = lambda do |key|
 end
 loopback_port = input('loopback_ports')['heimdall']
 quadlet_dir = '/etc/containers/systemd'
+trust_store = '/etc/pki/ca-trust/extracted'
 env_file = '/etc/safbox/heimdall.env'
 db_env_file = '/etc/safbox/heimdall-db.env'
 # Secret name to the number of random bytes upstream's setup-docker-env.sh
@@ -29,7 +30,7 @@ secrets = { 'DATABASE_PASSWORD' => 33, 'JWT_SECRET' => 64, 'API_KEY_SECRET' => 3
 control 'safbox-heimdall-1' do
   impact 1.0
   title 'Heimdall Quadlet units are installed and enabled'
-  desc 'ADR-0001 Phase 5: Heimdall and its PostgreSQL run as a systemd-managed podman pod built from the upstream images and the service shape of Heimdall\'s docker-compose.yml, with pinned images, memory limits, a restart policy and a named volume for data. The units wait for first boot: each needs the env file the first-boot hook writes.'
+  desc 'ADR-0001 Phase 5: Heimdall and its PostgreSQL run as a systemd-managed podman pod built from the upstream images and the service shape of Heimdall\'s docker-compose.yml, with pinned images, memory limits, a restart policy, a named volume for data and the host\'s CA trust store mounted read-only. The units wait for first boot: each needs the env file the first-boot hook writes.'
   only_if('Heimdall is not in expected_services (safbox_heimdall_1 switched off)') do
     service_expected.call('heimdall')
   end
@@ -69,9 +70,13 @@ control 'safbox-heimdall-1' do
     its('content') { should match(%r{^EnvironmentFile=#{Regexp.escape(db_env_file)}$}) }
   end
 
+  # The host's extracted trust store, read-only, where the image's own
+  # OpenSSL, Node.js and Ruby read it, so the application trusts exactly
+  # what the host trusts (the site CA bundles of the site_config role).
   describe file("#{quadlet_dir}/heimdall.container") do
     its('content') { should match(%r{^EnvironmentFile=#{Regexp.escape(env_file)}$}) }
     its('content') { should match(/^DropCapability=all$/) }
+    its('content') { should match(%r{^Volume=#{Regexp.escape(trust_store)}:#{Regexp.escape(trust_store)}:ro$}) }
   end
 
   %w[heimdall-pod heimdall-db heimdall].each do |unit|
@@ -128,7 +133,7 @@ end
 control 'safbox-heimdall-3' do
   impact 1.0
   title 'Heimdall runs, reachable only on the loopback address, with FIPS-mode crypto'
-  desc "ADR-0001 Quality Standards (security by design): services bind to the proxy, not to all interfaces. The pod publishes Heimdall's port on 127.0.0.1 only, for the TLS proxy; PostgreSQL is published nowhere. Heimdall's own OpenSSL (Red Hat UBI 9) runs its FIPS provider under the host's FIPS enforcement, so Node.js crypto is FIPS-mode."
+  desc "ADR-0001 Quality Standards (security by design): services bind to the proxy, not to all interfaces. The pod publishes Heimdall's port on 127.0.0.1 only, for the TLS proxy; PostgreSQL is published nowhere. Heimdall's own OpenSSL (Red Hat UBI 9) runs its FIPS provider under the host's FIPS enforcement, so Node.js crypto is FIPS-mode. The container has the host's CA trust store mounted read-only and reads it, so it trusts the CAs the host trusts, a site's own included."
   only_if('Heimdall is not in expected_services, or this is not a deployed clone') do
     service_expected.call('heimdall') && input('firstboot_completed_expected')
   end
@@ -158,6 +163,22 @@ control 'safbox-heimdall-3' do
 
   describe command(%q(podman exec heimdall node -p "require('crypto').getFips()")) do
     its('stdout.strip') { should eq '1' }
+  end
+
+  # The running container has the host's trust store mounted read-only and
+  # can read it (SELinux lets containers read the host's certificates,
+  # container_read_certs), so the bundle it sees is byte for byte the
+  # host's. The image carries a bundle of its own at the same path, so the
+  # mount is checked as well as the content.
+  describe 'Host paths mounted into the heimdall container' do
+    subject { command("podman inspect heimdall --format '{{range .Mounts}}{{.Source}}:{{.Destination}}:{{.RW}} {{end}}'").stdout.split }
+    it { should include "#{trust_store}:#{trust_store}:false" }
+  end
+
+  describe 'TLS trust bundle inside the heimdall container' do
+    subject { command("podman exec heimdall sha256sum #{trust_store}/pem/tls-ca-bundle.pem").stdout.split.first }
+    it { should match(/\A[0-9a-f]{64}\z/) }
+    it { should eq command("sha256sum #{trust_store}/pem/tls-ca-bundle.pem").stdout.split.first }
   end
 
   describe command('runuser -u nobody -- /usr/local/bin/safbox status') do

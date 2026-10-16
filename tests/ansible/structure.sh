@@ -2,7 +2,9 @@
 # Task-group structure (ADR-0001 "Role layout and task groups"): in the
 # switchable roles every top-level task is either the OS variable load
 # (tagged always) or a block tagged safbox-<role>-<n> and gated by
-# safbox_<role>_<n>, and group_vars lists every switch. The seal's top-level
+# safbox_<role>_<n>, and group_vars lists every switch. A role name with an
+# underscore (site_config) keeps it in the switch and uses a hyphen in the
+# tag (safbox_site_config_1, safbox-site-config-1). The seal's top-level
 # tasks are tagged safbox-seal-<n> and are deliberately not switchable.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
@@ -15,9 +17,11 @@ errors = []
 def check_load(role, t):
     if "always" not in (t.get("tags") or []):
         errors.append(f"{role}: '{t['name']}' must be tagged always")
-# The switchable roles, in playbook order. Each service (Heimdall, Vulcan,
-# the TLS proxy) is its own role so a site can switch one off; hardening is last.
-SWITCHABLE = ["platform", "base", "tools", "heimdall", "vulcan", "proxy", "hardening"]
+# The switchable roles, in playbook order. site_config (the site's trusted
+# CA bundles) follows the OS contract and precedes every role that fetches
+# over TLS. Each service (Heimdall, Vulcan, the TLS proxy) is its own role
+# so a site can switch one off; hardening is last.
+SWITCHABLE = ["platform", "site_config", "base", "tools", "heimdall", "vulcan", "proxy", "hardening"]
 playbook = yaml.safe_load((root / "ansible/playbooks/safbox.yml").read_text())
 in_play = [r["role"] if isinstance(r, dict) else r for r in playbook[0].get("roles") or []]
 if [r for r in in_play if r in SWITCHABLE] != SWITCHABLE:
@@ -32,9 +36,10 @@ for role in SWITCHABLE:
         if t.get("name") == "Load OS family variables":
             check_load(role, t); continue
         tags = t.get("tags") or []
-        tag = next((x for x in tags if re.fullmatch(rf"safbox-{role}-\d+", x)), None)
+        tag_role = role.replace("_", "-")
+        tag = next((x for x in tags if re.fullmatch(rf"safbox-{tag_role}-\d+", x)), None)
         if "block" not in t or not tag:
-            errors.append(f"{role}: top-level task '{t.get('name')}' is not a tagged safbox-{role}-<n> block"); continue
+            errors.append(f"{role}: top-level task '{t.get('name')}' is not a tagged safbox-{tag_role}-<n> block"); continue
         n = tag.rsplit("-", 1)[1]
         switch = f"safbox_{role}_{n}"
         when = t.get("when"); when = when if isinstance(when, list) else [when]

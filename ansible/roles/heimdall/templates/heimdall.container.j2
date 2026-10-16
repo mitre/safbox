@@ -13,9 +13,12 @@
 #                                           for, is set here
 #   ports "3000"                         -> published by the pod on 127.0.0.1
 #   depends_on database (healthy)        -> Requires and After heimdall-db.service
-#   cert_bundles volume (certs sidecar)  -> not reproduced: Heimdall starts
-#                                           without it; consumer CA bundles are
-#                                           separate work
+#   cert_bundles volume at               -> the host's extracted trust store,
+#     /etc/pki/ca-trust/extracted (ro)      read-only at the same path
+#     filled by the certs sidecar           (platform_container_trust_volume);
+#                                           the site_config role installs the
+#                                           site's CA bundles there, DoD's
+#                                           included, instead of the sidecar
 # The nginx service is the proxy role's safbox-proxy unit. In production
 # mode Heimdall trusts the proxy's X-Forwarded-* headers itself.
 [Unit]
@@ -34,6 +37,7 @@ Environment=DATABASE_HOST=127.0.0.1
 Environment=JWT_EXPIRE_TIME={{ heimdall_jwt_expire_time }}
 EnvironmentFile={{ heimdall_env_file }}
 Memory={{ heimdall_memory }}
+Volume={{ platform_container_trust_volume }}
 NoNewPrivileges=true
 DropCapability=all
 

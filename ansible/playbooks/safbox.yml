@@ -18,6 +18,8 @@
     - ../group_vars/all/main.yml
   roles:
     - role: platform
+    # The site's trusted CA bundles, before any role fetches over TLS.
+    - role: site_config
     - role: base
     - role: tools
     # Services (ADR-0001 Phases 5 and 6) and the TLS proxy in front of them.

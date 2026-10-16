@@ -50,6 +50,9 @@ safbox_platform_4: true   # container runtime (podman, Quadlet, registry policy)
 safbox_platform_5: true   # smoke-test container (also needs safbox_example_quadlet_enabled)
 safbox_platform_6: true   # persistent journal
 
+# site_config
+safbox_site_config_1: true  # site CA bundles in the system trust store (safbox_trust_bundles, DoD by default)
+
 # base
 safbox_base_1: true  # first-boot framework
 safbox_base_2: true  # the safbox command
@@ -73,6 +76,29 @@ safbox_proxy_1: true      # nginx TLS proxy for the enabled applications, certif
 # deviations). Which STIG rules it applies is set by the Lockdown role's own
 # variables (rhel10stig_*) and the deviations file; see docs/deviations.md.
 safbox_hardening_1: true  # apply the RHEL 10 STIG with the pinned Ansible Lockdown role
+
+# ---------------------------------------------------------------------------
+# Site CA bundles
+# ---------------------------------------------------------------------------
+# CA bundles the site_config role installs in the system trust store (task
+# group safbox-site-config-1), which the host and the Heimdall and Vulcan
+# containers then trust. The DoD PKI bundle by default (owner decision,
+# 2026-10-16): every build downloads it from dl.dod.cyber.mil. Set the list
+# to [] in ansible/local.yml to build without it, or give the pinned file as
+# a local path on a network without that host (docs/rebuild.md "Site CA
+# bundles"). Each entry is a mapping:
+#   name     lowercase letters, digits and hyphens; names the anchor files
+#   url      fetched by the box (https://...), or
+#   path     a file on the machine running Ansible (absolute path)
+#   sha256   of the downloaded or local file; a mismatch fails the run
+#   format   pem, der, pkcs7-der or pkcs7-pem (what the file, or the
+#            archive member, holds)
+#   member   for a zip archive, the file inside it in that format (a
+#            relative path, without ..)
+# A pinned bundle is enabled by naming its pin. Set your own list in
+# ansible/local.yml; see docs/rebuild.md "Site CA bundles".
+safbox_trust_bundles:
+  - "{{ safbox_trust_bundle_dod }}"
 
 # ---------------------------------------------------------------------------
 # Services
@@ -195,6 +221,31 @@ safbox_image_proxy:
   name: registry.access.redhat.com/ubi9/nginx-126
   tag: 9.8-1791881018
   digest: sha256:ede0e7a8623c1d6a7db313b4b8e7a4bfcc86cbdd47f2d62798d50aba86066cdc
+
+# ---------------------------------------------------------------------------
+# Pins: CA bundles
+# ---------------------------------------------------------------------------
+# The DoD PKI CA bundle from DISA's public PKI library (the DoD Cyber
+# Exchange download site): a stable URL whose content DISA replaces with
+# each release, pinned by the sha256 of release 5.14 as served on
+# 2026-10-15 (Last-Modified 2026-04-28). The library's index page now sits
+# behind a sign-in, so the URL is pinned rather than scraped from it. When
+# DISA publishes a new release the download no longer matches and the run
+# fails, until the pin is updated deliberately: download the zip, check the
+# signed manifest inside it as its README describes (openssl smime -verify
+# against DoD_PKE_CA_chain.pem, whose root's fingerprint matches the one
+# published at https://crl.disa.mil), then set version, sha256 and member
+# here and the root fingerprints of the profile's trust_bundle_anchors
+# input. The member is the DER PKCS#7 of every DoD root and issuing CA
+# (49 certificates: DoD Root CA 3, 4, 5 and 6 and their subordinates).
+# Trusted while listed in safbox_trust_bundles, as it is by default.
+safbox_trust_bundle_dod:
+  name: dod
+  version: '5.14'
+  url: https://dl.dod.cyber.mil/wp-content/uploads/pki-pke/zip/unclass-certificates_pkcs7_DoD.zip
+  sha256: 32595adbe752df5823cedd2c6a4f206c07fcc3c1520fb831015204e9fbb75711
+  format: pkcs7-der
+  member: Certificates_PKCS7_v5_14_DoD/Certificates_PKCS7_v5_14_DoD.der.p7b
 
 # ---------------------------------------------------------------------------
 # Pins: downloaded tools

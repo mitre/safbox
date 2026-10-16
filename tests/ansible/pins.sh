@@ -8,8 +8,9 @@
 # inputs must default to the same pins, and every tools group switch must
 # have its tool in the expected_tools input default. Container images are
 # pinned by digest, and the profile's service_images, proxy_ports and
-# loopback_ports inputs default to the group_vars values. Static; no target
-# host is needed.
+# loopback_ports inputs default to the group_vars values. A pinned site CA
+# bundle (safbox_trust_bundle_<name>) is fetched over HTTPS and verified by
+# sha256, and the profile knows its roots. Static; no target host is needed.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 read -r -a PY <<<"$(head -1 "$(command -v ansible-playbook)" | sed 's/^#!//')"
@@ -177,9 +178,75 @@ else:
         errors.append(f"verify: input lockdown_version defaults to {inputs.get('lockdown_version')!r} "
                       f"but group_vars pins {lockdown.get('version')!r}")
 
+# Site CA bundles (the site_config role). Each pinned bundle,
+# safbox_trust_bundle_<name>, is named <name>, downloaded over HTTPS at an
+# exact version and verified by the sha256 of the download before anything
+# is trusted, in a format the role converts (the keys of
+# site_config_trust_convert in the role's vars/main.yml). The validation
+# profile's trust_bundle_anchors input names the identifying roots of every
+# pinned bundle, and trust_bundles_expected defaults to the names of the
+# bundles safbox_trust_bundles enables by default, the DoD bundle among them;
+# an entry is a mapping or a "{{ safbox_trust_bundle_<name> }}" reference to a pin.
+role_vars = root / "ansible/roles/site_config/vars/main.yml"
+formats = set(((yaml.safe_load(role_vars.read_text()) or {}) if role_vars.exists() else {})
+              .get("site_config_trust_convert") or {})
+if not formats:
+    errors.append("site_config: vars/main.yml has no site_config_trust_convert formats")
+bundle_pins = {k: v for k, v in gv.items() if k.startswith("safbox_trust_bundle_")}
+if not bundle_pins:
+    errors.append("group_vars: no safbox_trust_bundle_* pins found")
+for key, pin in bundle_pins.items():
+    name = key[len("safbox_trust_bundle_"):]
+    if not isinstance(pin, dict):
+        errors.append(f"{key}: must be a mapping"); continue
+    if pin.get("name") != name:
+        errors.append(f"{key}: name is {pin.get('name')!r}, must be {name!r}")
+    if not re.fullmatch(r"\d+(\.\d+)+", str(pin.get("version", ""))):
+        errors.append(f"{key}: version {pin.get('version')!r} is not an exact release")
+    if not str(pin.get("url", "")).startswith("https://"):
+        errors.append(f"{key}: url is not HTTPS")
+    if "path" in pin:
+        errors.append(f"{key}: a pinned bundle is downloaded (url), not a local path")
+    if not re.fullmatch(r"[0-9a-f]{64}", str(pin.get("sha256", ""))):
+        errors.append(f"{key}: downloaded bundle has no sha256")
+    if pin.get("format") not in formats:
+        errors.append(f"{key}: format {pin.get('format')!r} is not one of {sorted(formats)}")
+enabled = []
+for entry in gv.get("safbox_trust_bundles", None) or []:
+    ref = re.fullmatch(r"\{\{\s*(safbox_trust_bundle_\w+)\s*\}\}", entry) if isinstance(entry, str) else None
+    entry = gv.get(ref.group(1)) if ref else entry
+    enabled.append(entry.get("name") if isinstance(entry, dict) else None)
+if "safbox_trust_bundles" not in gv:
+    errors.append("group_vars: safbox_trust_bundles is not defined")
+if None in enabled:
+    errors.append("group_vars: every safbox_trust_bundles entry must be a mapping with a name or a pin reference")
+# The DoD bundle is on by default (owner decision, 2026-10-16); a site
+# removes it from safbox_trust_bundles to turn it off.
+if "dod" not in enabled:
+    errors.append("group_vars: safbox_trust_bundles must enable the DoD bundle by default "
+                  "(\"{{ safbox_trust_bundle_dod }}\")")
+if inputs.get("trust_bundles_expected") != enabled:
+    errors.append(f"verify: input trust_bundles_expected defaults to {inputs.get('trust_bundles_expected')!r} "
+                  f"but safbox_trust_bundles enables {enabled!r}")
+anchors = inputs.get("trust_bundle_anchors")
+if not isinstance(anchors, dict):
+    errors.append("verify: inspec.yml has no trust_bundle_anchors input (bundle to root label to fingerprint)")
+    anchors = {}
+for key in bundle_pins:
+    name = key[len("safbox_trust_bundle_"):]
+    roots = anchors.get(name)
+    if not isinstance(roots, dict) or not roots:
+        errors.append(f"verify: trust_bundle_anchors names no roots for the pinned bundle {name!r}")
+        continue
+    for label, fingerprint in roots.items():
+        if not re.fullmatch(r"[0-9a-f]{64}", str(fingerprint).replace(":", "").lower()):
+            errors.append(f"verify: trust_bundle_anchors.{name}.{label} is not a SHA-256 fingerprint")
+
+
 if errors:
     print("\n".join("FAIL: " + e for e in errors), file=sys.stderr); sys.exit(1)
 print(f"PASS: {len(tools)} tool pins carry versions, downloads carry sha256; {len(images)} images pinned by digest; "
       "the Lockdown role is pinned by release and commit in group_vars and requirements.yml; "
-      "profile inputs match the pins and service ports")
+      f"{len(bundle_pins)} CA bundle pin(s) over HTTPS with sha256; "
+      "profile inputs match the pins, service ports and trust bundles")
 PY

@@ -1,0 +1,17 @@
+---
+# Debian family: ca-certificates (update-ca-certificates(8)). Present per
+# ADR-0001 but untested until the Ubuntu source lands.
+
+# Local certificates; update-ca-certificates takes each *.crt here (one
+# certificate per file, so its hashed links cover every one) into
+# /etc/ssl/certs and its bundle.
+site_config_trust_anchor_dir: /usr/local/share/ca-certificates
+site_config_trust_anchor_ext: crt
+site_config_trust_update: [update-ca-certificates]
+
+# The hashed certificate directory update-ca-certificates maintains.
+site_config_trust_system_capath: /etc/ssl/certs
+
+# OpenSSL's configuration, whose system default section names the security
+# level (@SECLEVEL) TLS enforces.
+site_config_trust_policy_file: /etc/ssl/openssl.cnf

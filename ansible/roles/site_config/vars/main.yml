@@ -1,0 +1,26 @@
+---
+# Names common to every OS family. A vars/<os_family>.yml file, loaded by
+# the role, overrides a name here only where that family differs.
+
+# OpenSSL reads and converts the bundles; unarchive needs unzip for a zip.
+site_config_trust_packages:
+  - ca-certificates
+  - openssl
+  - unzip
+
+# The formats a bundle may come in, each with the command that prints its
+# certificates as PEM; the bundle file is appended. A format not listed
+# here is refused before anything is fetched.
+#   pem        one or more PEM certificates
+#   der        one DER certificate
+#   pkcs7-der  a PKCS#7 (.p7b) bundle in DER, as DISA publishes
+#   pkcs7-pem  a PKCS#7 bundle in PEM
+site_config_trust_convert:
+  pem: [openssl, storeutl, -certs]
+  der: [openssl, storeutl, -certs]
+  pkcs7-der: [openssl, pkcs7, -inform, DER, -print_certs, -in]
+  pkcs7-pem: [openssl, pkcs7, -inform, PEM, -print_certs, -in]
+
+# The keys a bundle entry may carry; any other key is refused rather than
+# ignored. version is informational (the pinned DoD bundle records DISA's).
+site_config_trust_entry_keys: [name, url, path, sha256, format, member, version]

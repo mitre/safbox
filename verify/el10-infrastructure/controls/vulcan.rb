@@ -20,6 +20,7 @@ image_ref = lambda do |key|
 end
 loopback_port = input('loopback_ports')['vulcan']
 quadlet_dir = '/etc/containers/systemd'
+trust_store = '/etc/pki/ca-trust/extracted'
 env_file = '/etc/safbox/vulcan.env'
 db_env_file = '/etc/safbox/vulcan-db.env'
 # Secret name to the number of random bytes upstream's
@@ -37,7 +38,7 @@ settings = {
 control 'safbox-vulcan-1' do
   impact 1.0
   title 'Vulcan Quadlet units are installed and enabled'
-  desc "ADR-0001 Phase 6: Vulcan and its PostgreSQL run as a systemd-managed podman pod from the upstream image and the service shape of Vulcan's docker-compose.yml, with pinned images, memory limits, a restart policy and a named volume for data. Local login and registration are on and the first registered user is admin. The units wait for first boot: each needs the env file the first-boot hook writes."
+  desc "ADR-0001 Phase 6: Vulcan and its PostgreSQL run as a systemd-managed podman pod from the upstream image and the service shape of Vulcan's docker-compose.yml, with pinned images, memory limits, a restart policy, a named volume for data and the host's CA trust store mounted read-only. Local login and registration are on and the first registered user is admin. The units wait for first boot: each needs the env file the first-boot hook writes."
   only_if('Vulcan is not in expected_services (safbox_vulcan_1 switched off)') do
     service_expected.call('vulcan')
   end
@@ -77,9 +78,13 @@ control 'safbox-vulcan-1' do
     its('content') { should match(%r{^EnvironmentFile=#{Regexp.escape(db_env_file)}$}) }
   end
 
+  # The host's extracted trust store, read-only, where the image's own
+  # OpenSSL, Node.js and Ruby read it, so the application trusts exactly
+  # what the host trusts (the site CA bundles of the site_config role).
   describe file("#{quadlet_dir}/vulcan.container") do
     its('content') { should match(%r{^EnvironmentFile=#{Regexp.escape(env_file)}$}) }
     its('content') { should match(/^DropCapability=all$/) }
+    its('content') { should match(%r{^Volume=#{Regexp.escape(trust_store)}:#{Regexp.escape(trust_store)}:ro$}) }
     settings.each do |key, value|
       its('content') { should match(/^Environment=#{key}=#{value}$/) }
     end
@@ -139,7 +144,7 @@ end
 control 'safbox-vulcan-3' do
   impact 1.0
   title 'Vulcan runs, reachable only on the loopback address, with FIPS-mode crypto'
-  desc "ADR-0001 Quality Standards (security by design): services bind to the proxy, not to all interfaces. The pod publishes Vulcan's port on 127.0.0.1 only, for the TLS proxy; PostgreSQL is published nowhere. Vulcan's Ruby links the image's OpenSSL (Red Hat UBI 9), which runs its FIPS provider under the host's FIPS enforcement."
+  desc "ADR-0001 Quality Standards (security by design): services bind to the proxy, not to all interfaces. The pod publishes Vulcan's port on 127.0.0.1 only, for the TLS proxy; PostgreSQL is published nowhere. Vulcan's Ruby links the image's OpenSSL (Red Hat UBI 9), which runs its FIPS provider under the host's FIPS enforcement. The container has the host's CA trust store mounted read-only and reads it, so it trusts the CAs the host trusts, a site's own included."
   only_if('Vulcan is not in expected_services, or this is not a deployed clone') do
     service_expected.call('vulcan') && input('firstboot_completed_expected')
   end
@@ -170,6 +175,22 @@ control 'safbox-vulcan-3' do
 
   describe command(%q(podman exec vulcan ruby -ropenssl -e 'print OpenSSL.fips_mode')) do
     its('stdout.strip') { should eq 'true' }
+  end
+
+  # The running container has the host's trust store mounted read-only and
+  # can read it (SELinux lets containers read the host's certificates,
+  # container_read_certs), so the bundle it sees is byte for byte the
+  # host's. The image carries a bundle of its own at the same path, so the
+  # mount is checked as well as the content.
+  describe 'Host paths mounted into the vulcan container' do
+    subject { command("podman inspect vulcan --format '{{range .Mounts}}{{.Source}}:{{.Destination}}:{{.RW}} {{end}}'").stdout.split }
+    it { should include "#{trust_store}:#{trust_store}:false" }
+  end
+
+  describe 'TLS trust bundle inside the vulcan container' do
+    subject { command("podman exec vulcan sha256sum #{trust_store}/pem/tls-ca-bundle.pem").stdout.split.first }
+    it { should match(/\A[0-9a-f]{64}\z/) }
+    it { should eq command("sha256sum #{trust_store}/pem/tls-ca-bundle.pem").stdout.split.first }
   end
 
   describe command('runuser -u nobody -- /usr/local/bin/safbox status') do

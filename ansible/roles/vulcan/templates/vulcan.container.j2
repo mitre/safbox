@@ -18,6 +18,11 @@
 #                                         four); settings below (vulcan_settings)
 #   ports 3000 (expose behind a proxy) -> published by the pod on 127.0.0.1
 #   depends_on db (healthy)            -> Requires and After vulcan-db.service
+#   certs/ (Dockerfile: copied into    -> the host's extracted trust store,
+#     the image's store at build)        read-only where the image reads its
+#                                         own (platform_container_trust_volume);
+#                                         the site_config role installs the
+#                                         site's CA bundles there
 #   healthcheck curl /up, every 30s,   -> the same; with RAILS_FORCE_SSL /up
 #     timeout 10s, 3 retries, start       answers plain HTTP with a redirect,
 #     period 60s                          which curl -f accepts
@@ -46,6 +51,7 @@ HealthTimeout=10s
 HealthRetries=3
 HealthStartPeriod=60s
 Memory={{ vulcan_memory }}
+Volume={{ platform_container_trust_volume }}
 NoNewPrivileges=true
 DropCapability=all
 
