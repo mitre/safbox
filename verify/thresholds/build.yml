@@ -10,7 +10,7 @@
 # in the critical bucket): exactly the controls a repository-default image
 # passes here. The list is an exact set: a listed control that fails, skips
 # or is missing, or an unlisted one that passes, fails the gate. Not listed:
-# safbox-build-info-1, safbox-seal-1, safbox-seal-2, safbox-firstboot-2 and
+# safbox-build-info-1, safbox-sealed-1, safbox-sealed-2, safbox-firstboot-2 and
 # the running-service controls (safbox-heimdall-3, safbox-vulcan-3,
 # safbox-proxy-2, -3 and -6), which need a sealed, deployed clone whose first
 # boot wrote the services' secrets and certificate; and safbox-podman-2,
@@ -49,8 +49,8 @@ passed:
       - safbox-hardening-2
       - safbox-heimdall-1
       - safbox-heimdall-2
-      - safbox-platform-1
-      - safbox-platform-2
+      - safbox-os-1
+      - safbox-os-2
       - safbox-podman-1
       - safbox-proxy-1
       - safbox-proxy-4

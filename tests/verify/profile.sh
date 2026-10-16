@@ -61,9 +61,9 @@ done
 "$RUBY" -rripper - "$INFRA/controls" <<'RUBY'
 dir = ARGV[0]
 ALLOWED = {
-  ['platform.rb', 13, 'family'] => 'describe os.family do',
-  ['platform.rb', 22, 'release'] => 'describe os.release.to_s do',
-  ['platform.rb', 33, 'name'] => 'subject { os.name }',
+  ['os.rb', 13, 'family'] => 'describe os.family do',
+  ['os.rb', 22, 'release'] => 'describe os.release.to_s do',
+  ['os.rb', 33, 'name'] => 'subject { os.name }',
 }
 SAFE_MEMBERS = %w[arch].freeze
 FOREIGN_WORD = /(?<![a-z0-9])(dpkg|apt|apt-get|aptitude|debian|ubuntu|amd64|arm64)(?![a-z0-9])/i

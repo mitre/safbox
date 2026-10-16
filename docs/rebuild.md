@@ -258,7 +258,7 @@ being listed fails the gate.
 
 - **build** (the build VM before the seal): every control except those
   that need a sealed, deployed clone (`safbox-build-info-1`,
-  `safbox-seal-1`, `safbox-seal-2`, `safbox-firstboot-2`, and the
+  `safbox-sealed-1`, `safbox-sealed-2`, `safbox-firstboot-2`, and the
   running-service controls `safbox-heimdall-3`, `safbox-vulcan-3`,
   `safbox-proxy-2`, `-3` and `-6`). The service units and their absent
   secrets are checked here (`safbox-heimdall-1` and `-2`, `safbox-vulcan-1`
@@ -459,18 +459,24 @@ and so on for every `heimdall_*`, `vulcan_*` and `proxy_*` variable in
 `ansible/local.yml`, which otherwise has no effect.
 
 The validation controls of the services keep their names
-(`safbox-heimdall-*`, `safbox-vulcan-*`, `safbox-proxy-*`). The controls
-that check the host's base services, once named like the new tags, are
-renamed so that `safbox-services-<n>` names only the task groups:
+(`safbox-heimdall-*`, `safbox-vulcan-*`, `safbox-proxy-*`). A control
+never shares its name with the tag of a task group it does not check (the
+`hardening` and `tools` controls are named after their groups because they
+check exactly what those groups do), so the controls that had a group's
+name are renamed:
 
 | Old control | New control | Checks |
 |---|---|---|
 | `safbox-services-1` | `safbox-system-1` | the guest agent, cloud-init and sshd enabled, sshd running |
 | `safbox-services-2` | `safbox-system-2` | chrony and firewalld running, SSH allowed |
 | `safbox-services-3` | `safbox-system-3` | the journal kept on disk |
+| `safbox-platform-1` | `safbox-os-1` | the operating system is one the appliance supports |
+| `safbox-platform-2` | `safbox-os-2` | the distribution and microarchitecture level are recorded |
+| `safbox-seal-1` | `safbox-sealed-1` | the build user, its key and its sudo rule are gone |
+| `safbox-seal-2` | `safbox-sealed-2` | no installer residue |
 
-A site threshold that lists `safbox-services-1`, `-2` or `-3` must list
-`safbox-system-1`, `-2` or `-3` instead; site inputs need no change.
+A site threshold that lists an old control name must list the new one
+instead; site inputs need no change.
 
 ## Site CA bundles
 

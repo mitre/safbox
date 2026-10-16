@@ -50,8 +50,8 @@ passed:
       - safbox-heimdall-1
       - safbox-heimdall-2
       - safbox-heimdall-3
-      - safbox-platform-1
-      - safbox-platform-2
+      - safbox-os-1
+      - safbox-os-2
       - safbox-podman-1
       - safbox-proxy-1
       - safbox-proxy-2
@@ -59,8 +59,8 @@ passed:
       - safbox-proxy-4
       - safbox-proxy-5
       - safbox-proxy-6
-      - safbox-seal-1
-      - safbox-seal-2
+      - safbox-sealed-1
+      - safbox-sealed-2
       - safbox-secureboot-1
       - safbox-system-1
       - safbox-system-2

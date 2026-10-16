@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-control 'safbox-seal-1' do
+control 'safbox-sealed-1' do
   impact 1.0
   title 'The build user, its SSH key and its sudo drop-in are gone'
   desc 'ADR-0001 Phase 2: the seal step deletes the build account the install layer created, with its ' \
@@ -19,7 +19,7 @@ control 'safbox-seal-1' do
   end
 end
 
-control 'safbox-seal-2' do
+control 'safbox-sealed-2' do
   impact 1.0
   title 'No installer residue: kickstart copies, the %post log or installer logs'
   desc 'The kickstart copies and logs carry the build user name and public key. The seal step removes ' \

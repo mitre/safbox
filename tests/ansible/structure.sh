@@ -128,22 +128,18 @@ if (services_dir / "tasks/main.yml").exists():
         want = f"{{{{ safbox_services_{i} | default(true) | bool }}}}"
         if (services_proxy_apps.get(app) or {}).get("enabled") != want:
             errors.append(f"services: services_proxy_apps {app} must be enabled by \"{want}\"")
-# safbox-services-<n> names the services role's task groups only. The
-# validation controls of the services are named per service
-# (safbox-heimdall-*, safbox-vulcan-*, safbox-proxy-*), and the controls for
-# the host's base services (sshd, chrony, firewalld, the journal) are
-# safbox-system-<n>, so no control, threshold or inputs file under verify/
-# uses safbox-services-<n> as a control name.
-controls_text = "\n".join(p.read_text() for p in sorted((root / "verify").glob("*/controls/*.rb")))
-for n in (1, 2, 3):
-    if f"control 'safbox-system-{n}'" not in controls_text:
-        errors.append(f"verify: no control safbox-system-{n} (the host's base services)")
-for p in sorted((root / "verify").rglob("*")):
-    if p.suffix not in (".rb", ".yml") or not p.is_file():
-        continue
-    for n, line in enumerate(p.read_text().splitlines(), 1):
-        if re.search(r"control\s+'safbox-services-\d|^\s*-\s*safbox-services-\d", line):
-            errors.append(f"{p.relative_to(root)}:{n}: safbox-services-<n> is a task group, not a control name: {line.strip()}")
+# Validation controls renamed because their old IDs were task tags of an
+# unrelated group (checked below); the migration note in docs/rebuild.md
+# lists each pair for sites with their own thresholds.
+RENAMED_CONTROLS = {
+    "safbox-services-1": "safbox-system-1",  # guest agent, cloud-init, sshd
+    "safbox-services-2": "safbox-system-2",  # chrony, firewalld, SSH allowed
+    "safbox-services-3": "safbox-system-3",  # persistent journal
+    "safbox-platform-1": "safbox-os-1",      # a supported operating system
+    "safbox-platform-2": "safbox-os-2",      # distribution and microarchitecture recorded
+    "safbox-seal-1": "safbox-sealed-1",      # build user, key and sudo rule gone
+    "safbox-seal-2": "safbox-sealed-2",      # no installer residue
+}
 # The per-service roles are gone (folded into services): no role directory,
 # and no file names their roles, switches or tags, except the ADRs (decision
 # records, kept as written), the recorded scans (tests/verify/fixtures,
@@ -181,8 +177,9 @@ for rel in tracked:
             for old, i in (("heimdall", 1), ("vulcan", 2), ("proxy", 3)):
                 if f"safbox_{old}_1" not in note.group(0) or f"safbox_services_{i}" not in note.group(0):
                     errors.append(f"docs/rebuild.md: the migration note must rename safbox_{old}_1 to safbox_services_{i}")
-                if f"safbox-system-{i}" not in note.group(0):
-                    errors.append(f"docs/rebuild.md: the migration note must rename control safbox-services-{i} to safbox-system-{i}")
+            for old_id, new_id in RENAMED_CONTROLS.items():
+                if not re.search(rf"`{old_id}`.*`{new_id}`", note.group(0)):
+                    errors.append(f"docs/rebuild.md: the migration note must rename control {old_id} to {new_id}")
             text = text.replace(note.group(0), "")
     for n, line in enumerate(text.splitlines(), 1):
         if OLD_NAMES.search(line):
@@ -211,6 +208,35 @@ for role_dir in sorted(p for p in (root / "ansible/roles").iterdir() if p.is_dir
                 if tag != "always" and not want.fullmatch(str(tag)):
                     errors.append(f"{f.relative_to(root)}: task '{t.get('name')}' has tag '{tag}'; "
                                   f"tags in this role are {want.pattern} (or always)")
+all_tags = {str(tag)
+            for f in (root / "ansible/roles").glob("*/tasks/*.yml")
+            for t in tagged(yaml.safe_load(f.read_text()))
+            for tag in ([t["tags"]] if isinstance(t.get("tags"), str) else t.get("tags") or [])}
+# A validation control ID is never a task tag of an unrelated group: a site
+# that switches group safbox-<role>-<n> off drops the control of that name,
+# so the two names must mean the same thing. Only these share a name, by
+# design: each control checks exactly what its task group does.
+SHARED_WITH_TAG = {
+    "safbox-hardening-1",  # hardening group 1 applies the STIG; the control checks its record
+    "safbox-tools-1", "safbox-tools-2", "safbox-tools-3", "safbox-tools-4",  # each checks its group's tool
+}
+control_ids = {m.group(1) for p in (root / "verify").glob("*/controls/*.rb")
+               for m in re.finditer(r"^\s*control\s+'([^']+)'", p.read_text(), re.MULTILINE)}
+for cid in sorted(control_ids & all_tags - SHARED_WITH_TAG):
+    errors.append(f"verify: control {cid} has the name of a task tag of an unrelated group; rename it")
+for cid in sorted(SHARED_WITH_TAG - (control_ids & all_tags)):
+    errors.append(f"structure.sh: {cid} is allowed to share a tag's name but is no longer both a control and a tag")
+for old_id, new_id in RENAMED_CONTROLS.items():
+    if new_id not in control_ids:
+        errors.append(f"verify: no control {new_id} (formerly {old_id})")
+    if new_id in all_tags:
+        errors.append(f"verify: control {new_id} is now a task tag too")
+# No threshold or inputs file names a control by a task tag's name either.
+for p in sorted((root / "verify").rglob("*.yml")):
+    for n, line in enumerate(p.read_text().splitlines(), 1):
+        m = re.match(r"\s*-\s*(safbox-[a-z-]+-\d+)\s*$", line)
+        if m and m.group(1) in all_tags - SHARED_WITH_TAG:
+            errors.append(f"{p.relative_to(root)}:{n}: {m.group(1)} is a task tag, not a control name")
 for f in sorted((root / "ansible/playbooks").glob("*.yml")):
     for play in yaml.safe_load(f.read_text()) or []:
         for item in [play] + list(tagged(play.get("tasks"))) + [r for r in play.get("roles") or [] if isinstance(r, dict)]:
