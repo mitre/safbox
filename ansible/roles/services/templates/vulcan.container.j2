@@ -15,7 +15,8 @@
 #                                         upstream's proxy profiles do
 #   env_file .env                      -> secrets in vulcan.env, written by
 #                                         first boot (setup-docker-secrets.sh's
-#                                         four); settings below (vulcan_settings)
+#                                         four); settings below
+#                                         (services_vulcan_settings)
 #   ports 3000 (expose behind a proxy) -> published by the pod on 127.0.0.1
 #   depends_on db (healthy)            -> Requires and After vulcan-db.service
 #   certs/ (Dockerfile: copied into    -> the host's extracted trust store,
@@ -26,31 +27,31 @@
 #   healthcheck curl /up, every 30s,   -> the same; with RAILS_FORCE_SSL /up
 #     timeout 10s, 3 retries, start       answers plain HTTP with a redirect,
 #     period 60s                          which curl -f accepts
-# The caddy and nginx profiles are the proxy role's safbox-proxy unit.
+# The caddy and nginx profiles are the TLS proxy's safbox-proxy unit.
 [Unit]
 Description=Vulcan
 Documentation=https://github.com/mitre/vulcan
 Requires=vulcan-db.service
 After=vulcan-db.service safbox-firstboot.service
-ConditionPathExists={{ vulcan_env_file }}
+ConditionPathExists={{ services_vulcan_env_file }}
 
 [Container]
-Image={{ vulcan_image }}
+Image={{ services_vulcan_image }}
 ContainerName=vulcan
 Pod=vulcan.pod
 Environment=NODE_ENV=production
 Environment=DATABASE_HOST=127.0.0.1
 Environment=POSTGRES_USER=postgres
-{% for name, value in vulcan_settings | dictsort %}
+{% for name, value in services_vulcan_settings | dictsort %}
 Environment={{ name }}={{ value }}
 {% endfor %}
-EnvironmentFile={{ vulcan_env_file }}
+EnvironmentFile={{ services_vulcan_env_file }}
 HealthCmd=curl -f http://localhost:3000/up || exit 1
 HealthInterval=30s
 HealthTimeout=10s
 HealthRetries=3
 HealthStartPeriod=60s
-Memory={{ vulcan_memory }}
+Memory={{ services_vulcan_memory }}
 Volume={{ platform_container_trust_volume }}
 NoNewPrivileges=true
 DropCapability=all

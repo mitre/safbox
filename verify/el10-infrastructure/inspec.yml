@@ -148,9 +148,9 @@ inputs:
   # site inputs file.
   - name: expected_services
     description: >-
-      Services the image ships, one per service role: heimdall
-      (safbox_heimdall_1), vulcan (safbox_vulcan_1) and proxy
-      (safbox_proxy_1). A site that switches a service off removes it here,
+      Services the image ships, one per task group of the services role:
+      heimdall (safbox_services_1), vulcan (safbox_services_2) and proxy
+      (safbox_services_3). A site that switches a service off removes it here,
       and that service's controls skip; it also needs a site threshold
       without them.
     type: Array

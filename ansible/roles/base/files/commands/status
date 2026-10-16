@@ -152,10 +152,10 @@ tool_versions() {
   row "Packer" "${version:-not installed}"
 }
 
-# State of each service's main unit (the heimdall, vulcan and proxy roles)
+# State of each service's main unit (the services role's task groups)
 # as systemd reports it to any user: active once first boot has written the
-# secrets and the unit runs, inactive before; not installed when the role
-# was switched off.
+# secrets and the unit runs, inactive before; not installed when its task
+# group was switched off.
 services() {
   local label unit state
   while IFS='|' read -r label unit; do

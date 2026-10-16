@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 40-proxy.sh: first-boot hook of the proxy role. Generates the TLS proxy's
+# 40-proxy.sh: first-boot hook of the TLS proxy (services role). Generates its
 # self-signed certificate (ADR-0001 §Decision: first boot mints a
 # self-signed certificate), never at build:
 #   /etc/safbox/tls/safbox.key  RSA 3072, root only (0600)

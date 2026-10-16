@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# 30-vulcan.sh: first-boot hook of the vulcan role. The one place Vulcan's
-# per-install secrets are generated (ADR-0001 §Decision: secrets are
-# generated on first boot, never at build).
+# 30-vulcan.sh: first-boot hook of Vulcan (services role). The one place
+# Vulcan's per-install secrets are generated (ADR-0001 §Decision: secrets
+# are generated on first boot, never at build).
 #
 # Writes, root-only (0600), with the strength of upstream's
 # setup-docker-secrets.sh (https://github.com/mitre/vulcan/blob/master/setup-docker-secrets.sh):

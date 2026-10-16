@@ -389,12 +389,12 @@ ever destroyed if it carries this run's ID. A template built with
 
 ## Choosing what the appliance layer does
 
-Every task group in the `platform`, `site_config`, `base`, `tools`,
-`heimdall`, `vulcan` and `proxy` roles is a block
-tagged `safbox-<role>-<n>` with a switch `safbox_<role>_<n>` (default on),
-in the style of Ansible Lockdown (a hyphen for the underscore in the tag:
-`safbox-site-config-1`, switch `safbox_site_config_1`). The switches and a one-line description of
-each group are listed in `ansible/group_vars/all/main.yml`.
+Every task group in the `platform`, `site_config`, `base`, `tools` and
+`services` roles is a block tagged `safbox-<role>-<n>` with a switch
+`safbox_<role>_<n>` (default on), in the style of Ansible Lockdown (a
+hyphen for the underscore in the tag: `safbox-site-config-1`, switch
+`safbox_site_config_1`). The switches and a one-line description of each
+group are listed in `ansible/group_vars/all/main.yml`.
 
 - Turn a group off for every build by setting its switch to `false` in
   `ansible/local.yml` (site overrides, git-ignored).
@@ -420,16 +420,54 @@ each group are listed in `ansible/group_vars/all/main.yml`.
   controls. A distributor who does not
   want to ship Packer's Business Source License sets `safbox_tools_4:
   false`; see `docs/third-party.md`.
-- Each service is its own role with one group: `safbox_heimdall_1`,
-  `safbox_vulcan_1`, `safbox_proxy_1`. A host short of memory runs Heimdall
-  alone with `safbox_vulcan_1: false`; the proxy then serves Heimdall only
-  and closes Vulcan's port. The profile's `expected_services` input lists
+- The `services` role holds every long-running service, one task group and
+  one task file each: `safbox_services_1` Heimdall (`tasks/heimdall.yml`),
+  `safbox_services_2` Vulcan (`tasks/vulcan.yml`), `safbox_services_3` the
+  TLS proxy (`tasks/proxy.yml`). A host short of memory runs Heimdall alone
+  with `safbox_services_2: false`; the proxy then serves Heimdall only and
+  closes Vulcan's port. The profile's `expected_services` input lists
   the services the image ships (default `heimdall`, `vulcan`, `proxy`):
   drop a switched-off service there in a site inputs file, and its
   controls (`safbox-vulcan-*`, and `safbox-proxy-3` for Vulcan's proxy
   port) from a site threshold, as for a tools group.
 - `safbox_site_config_1` installs the site's CA bundles, the DoD PKI bundle
   by default; see "Site CA bundles" below.
+
+### Migrating from the per-service roles
+
+Heimdall, Vulcan and the TLS proxy were once three roles (`heimdall`,
+`vulcan`, `proxy`), each with one switch. They are now the task groups of
+the `services` role. The old switches are not read any more, so a site that
+set one in `ansible/local.yml` must rename it, or the service it had
+switched off is built again:
+
+| Old switch | New switch | Old tag | New tag |
+|---|---|---|---|
+| `safbox_heimdall_1` | `safbox_services_1` | `safbox-heimdall-1` | `safbox-services-1` |
+| `safbox_vulcan_1` | `safbox_services_2` | `safbox-vulcan-1` | `safbox-services-2` |
+| `safbox_proxy_1` | `safbox_services_3` | `safbox-proxy-1` | `safbox-services-3` |
+
+Rename the tags the same way in any `--tags` or `--skip-tags` you pass.
+The role's own variables now carry the role's name as a prefix
+(`heimdall_memory` is `services_heimdall_memory`, `vulcan_settings` is
+`services_vulcan_settings`, `proxy_tls_dir` is `services_proxy_tls_dir`,
+and so on for every `heimdall_*`, `vulcan_*` and `proxy_*` variable in
+`ansible/roles/services/defaults/main.yml`); rename any you override in
+`ansible/local.yml`, which otherwise has no effect.
+
+The validation controls of the services keep their names
+(`safbox-heimdall-*`, `safbox-vulcan-*`, `safbox-proxy-*`). The controls
+that check the host's base services, once named like the new tags, are
+renamed so that `safbox-services-<n>` names only the task groups:
+
+| Old control | New control | Checks |
+|---|---|---|
+| `safbox-services-1` | `safbox-system-1` | the guest agent, cloud-init and sshd enabled, sshd running |
+| `safbox-services-2` | `safbox-system-2` | chrony and firewalld running, SSH allowed |
+| `safbox-services-3` | `safbox-system-3` | the journal kept on disk |
+
+A site threshold that lists `safbox-services-1`, `-2` or `-3` must list
+`safbox-system-1`, `-2` or `-3` instead; site inputs need no change.
 
 ## Site CA bundles
 
@@ -773,11 +811,11 @@ it converts the report in the browser, not on the box.
 
 ## Services on the box
 
-The `heimdall` and `vulcan` roles run each application and its PostgreSQL
-as a podman pod of Quadlet units, in the service shape of the
-application's upstream `docker-compose.yml` (each unit file cites the
-compose service it reproduces). The `proxy` role runs one nginx container
-that terminates TLS for both. Images are pinned by digest in
+The `services` role runs each application and its PostgreSQL as a podman
+pod of Quadlet units (`tasks/heimdall.yml`, `tasks/vulcan.yml`), in the
+service shape of the application's upstream `docker-compose.yml` (each unit
+file cites the compose service it reproduces), and one nginx container that
+terminates TLS for both (`tasks/proxy.yml`). Images are pinned by digest in
 `ansible/group_vars/all/main.yml` and pulled at build, so a clone starts
 offline.
 
@@ -826,14 +864,14 @@ random password on its first start, and prints that password in its log
 register. In Vulcan, local login and registration are on and the first
 registered user becomes administrator: register before handing the
 appliance out. OIDC, LDAP and SMTP are site settings
-(`vulcan_settings` in the vulcan role's defaults).
+(`services_vulcan_settings` in the services role's defaults).
 
 **Footprint.** Measured on a 2 vCPU, 4 GiB development clone with both
 applications idle after the service tests: about 750 MB in the containers
 (Heimdall 290 MB, Vulcan 280 MB, the databases 75 and 80 MB, nginx 25 MB),
 2.5 GiB of the host's memory still available. The container memory limits
-(`heimdall_memory`, `vulcan_memory`, 1g; the databases 512m; nginx 512m)
-sum to under 4 GiB.
+(`services_heimdall_memory`, `services_vulcan_memory`, 1g; the databases
+512m; nginx 512m) sum to under 4 GiB.
 
 **Applying the roles to a box that has already booted.** The first-boot
 runner does nothing once `/var/lib/safbox/firstboot.done` exists, so on

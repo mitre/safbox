@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 20-heimdall.sh: first-boot hook of the heimdall role. The one place
+# 20-heimdall.sh: first-boot hook of Heimdall (services role). The one place
 # Heimdall's per-install secrets are generated (ADR-0001 §Decision: secrets
 # are generated on first boot, never at build).
 #

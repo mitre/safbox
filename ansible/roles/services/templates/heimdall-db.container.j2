@@ -14,23 +14,23 @@
 [Unit]
 Description=Heimdall PostgreSQL
 After=safbox-firstboot.service
-ConditionPathExists={{ heimdall_db_env_file }}
+ConditionPathExists={{ services_heimdall_db_env_file }}
 
 [Container]
-Image={{ heimdall_db_image }}
+Image={{ services_heimdall_db_image }}
 ContainerName=heimdall-db
 Pod=heimdall.pod
 Volume=heimdall-db.volume:/var/lib/postgresql/data
 Environment=POSTGRES_DB=heimdall-server-production
 Environment=PGDATA=/var/lib/postgresql/data/pgdata
-EnvironmentFile={{ heimdall_db_env_file }}
+EnvironmentFile={{ services_heimdall_db_env_file }}
 HealthCmd=pg_isready -U postgres
 HealthInterval=30s
 HealthTimeout=60s
 HealthRetries=5
 HealthStartPeriod=80s
 Notify=healthy
-Memory={{ heimdall_db_memory }}
+Memory={{ services_heimdall_db_memory }}
 NoNewPrivileges=true
 
 [Service]

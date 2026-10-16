@@ -1,10 +1,10 @@
 # frozen_string_literal: true
 
-# Heimdall and its PostgreSQL as Quadlet units (ADR-0001 Phase 5; the heimdall
-# role, task group safbox-heimdall-1). The units are installed and enabled
-# at build but start only once first boot has written their secrets, so the
-# build-time gate checks the units and the absence of secrets, and the
-# release gate (a deployed clone) checks the running pod.
+# Heimdall and its PostgreSQL as Quadlet units (ADR-0001 Phase 5; the
+# services role, task group safbox-services-1). The units are installed and
+# enabled at build but start only once first boot has written their secrets,
+# so the build-time gate checks the units and the absence of secrets, and
+# the release gate (a deployed clone) checks the running pod.
 #
 # Secret values never reach the results: env files are checked by counting
 # matching lines, never by printing their content.
@@ -31,7 +31,7 @@ control 'safbox-heimdall-1' do
   impact 1.0
   title 'Heimdall Quadlet units are installed and enabled'
   desc 'ADR-0001 Phase 5: Heimdall and its PostgreSQL run as a systemd-managed podman pod built from the upstream images and the service shape of Heimdall\'s docker-compose.yml, with pinned images, memory limits, a restart policy, a named volume for data and the host\'s CA trust store mounted read-only. The units wait for first boot: each needs the env file the first-boot hook writes.'
-  only_if('Heimdall is not in expected_services (safbox_heimdall_1 switched off)') do
+  only_if('Heimdall is not in expected_services (safbox_services_1 switched off)') do
     service_expected.call('heimdall')
   end
 
@@ -96,7 +96,7 @@ control 'safbox-heimdall-2' do
   impact 1.0
   title "Heimdall's secrets are generated on first boot, never at build"
   desc "ADR-0001 §Decision: the first-boot hook generates DATABASE_PASSWORD, JWT_SECRET and API_KEY_SECRET with the strength of upstream's setup-docker-env.sh into #{env_file} (root, 0600), and the database password into #{db_env_file} for the PostgreSQL container. Before first boot (the build VM) neither file exists; the seal also asserts that the template holds no env file."
-  only_if('Heimdall is not in expected_services (safbox_heimdall_1 switched off)') do
+  only_if('Heimdall is not in expected_services (safbox_services_1 switched off)') do
     service_expected.call('heimdall')
   end
 

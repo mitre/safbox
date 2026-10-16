@@ -1,9 +1,9 @@
 ---
 galaxy_info:
-  role_name: heimdall
+  role_name: services
   namespace: safbox
   author: MITRE SAF
-  description: "MITRE Heimdall and its PostgreSQL as podman Quadlet units with first-boot secrets"
+  description: "Heimdall, Vulcan and their nginx TLS proxy as podman Quadlet units with first-boot secrets"
   license: Apache-2.0
   min_ansible_version: "2.16"
   platforms:

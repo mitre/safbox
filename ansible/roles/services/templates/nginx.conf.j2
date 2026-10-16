@@ -43,7 +43,7 @@ http {
     ssl_session_cache shared:SSL:10m;
     ssl_session_timeout 10m;
     ssl_session_tickets off;
-{% for app in proxy_apps if app.enabled | bool %}
+{% for app in services_proxy_apps if app.enabled | bool %}
 {% if app.name == 'heimdall' %}
 
     # Heimdall, after upstream's nginx/conf/default.conf.template

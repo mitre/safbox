@@ -22,12 +22,10 @@
     - role: site_config
     - role: base
     - role: tools
-    # Services (ADR-0001 Phases 5 and 6) and the TLS proxy in front of them.
-    # Each is its own switchable role; the proxy fronts whichever
+    # Services (ADR-0001 Phases 5 and 6) and the TLS proxy in front of them,
+    # one switchable task group each; the proxy fronts whichever
     # applications are on.
-    - role: heimdall
-    - role: vulcan
-    - role: proxy
+    - role: services
     # Hardening is always the last role (ADR-0001 §Decision): it applies the
     # RHEL 10 STIG over everything the roles above installed, and the
     # outside-in validation and the seal follow it.

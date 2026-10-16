@@ -13,22 +13,22 @@
 [Unit]
 Description=Vulcan PostgreSQL
 After=safbox-firstboot.service
-ConditionPathExists={{ vulcan_db_env_file }}
+ConditionPathExists={{ services_vulcan_db_env_file }}
 
 [Container]
-Image={{ vulcan_db_image }}
+Image={{ services_vulcan_db_image }}
 ContainerName=vulcan-db
 Pod=vulcan.pod
 Volume=vulcan-db.volume:/var/lib/postgresql
 Environment=POSTGRES_USER=postgres
 Environment=POSTGRES_DB=vulcan_production
-EnvironmentFile={{ vulcan_db_env_file }}
+EnvironmentFile={{ services_vulcan_db_env_file }}
 HealthCmd=pg_isready -U postgres
 HealthInterval=30s
 HealthTimeout=10s
 HealthRetries=5
 Notify=healthy
-Memory={{ vulcan_db_memory }}
+Memory={{ services_vulcan_db_memory }}
 NoNewPrivileges=true
 
 [Service]

@@ -12,7 +12,7 @@
 #                                         host network (nginx.conf); 443 is the
 #                                         landing page's, and there is no plain
 #                                         HTTP
-#   templates and certs volumes        -> nginx.conf from the proxy role and the
+#   templates and certs volumes        -> nginx.conf (services role) and the
 #                                         certificate first boot generates, both
 #                                         read-only
 # The host network lets nginx reach the pods' loopback-only ports. It runs as
@@ -21,21 +21,21 @@
 [Unit]
 Description=SAFBox TLS proxy (nginx)
 After=safbox-firstboot.service
-ConditionPathExists={{ proxy_key }}
+ConditionPathExists={{ services_proxy_key }}
 
 [Container]
-Image={{ proxy_image }}
+Image={{ services_proxy_image }}
 ContainerName=safbox-proxy
 Network=host
 User=root
 Exec=nginx -c /etc/nginx/safbox/nginx.conf
-Volume={{ proxy_conf_dir }}:/etc/nginx/safbox:ro,Z
-Volume={{ proxy_tls_dir }}:/etc/nginx/tls:ro,Z
+Volume={{ services_proxy_conf_dir }}:/etc/nginx/safbox:ro,Z
+Volume={{ services_proxy_tls_dir }}:/etc/nginx/tls:ro,Z
 ReadOnly=true
 NoNewPrivileges=true
 DropCapability=all
 AddCapability=CAP_CHOWN CAP_SETGID CAP_SETUID
-Memory={{ proxy_memory }}
+Memory={{ services_proxy_memory }}
 
 [Service]
 Restart=always

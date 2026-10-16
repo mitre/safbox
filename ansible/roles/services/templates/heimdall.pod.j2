@@ -10,12 +10,12 @@
 [Unit]
 Description=Heimdall pod (Heimdall and its PostgreSQL)
 After=safbox-firstboot.service
-ConditionPathExists={{ heimdall_env_file }}
+ConditionPathExists={{ services_heimdall_env_file }}
 
 [Pod]
 PodName=heimdall
 Network=heimdall.network
-PublishPort=127.0.0.1:{{ heimdall_loopback_port }}:3000
+PublishPort=127.0.0.1:{{ services_heimdall_loopback_port }}:3000
 
 [Install]
 WantedBy=multi-user.target

@@ -63,14 +63,11 @@ safbox_tools_2: true      # SAF CLI on the distribution's Node.js
 safbox_tools_3: true      # Ansible (ansible-core) and the Lockdown STIG collections
 safbox_tools_4: true      # HashiCorp Packer (BSL 1.1; distributors may switch it off, see docs/third-party.md)
 
-# heimdall
-safbox_heimdall_1: true   # Heimdall and its PostgreSQL as a Quadlet pod, secrets from first boot
-
-# vulcan
-safbox_vulcan_1: true     # Vulcan and its PostgreSQL as a Quadlet pod, secrets from first boot
-
-# proxy
-safbox_proxy_1: true      # nginx TLS proxy for the enabled applications, certificate from first boot
+# services (each long-running service is one group; the proxy fronts the
+# applications whose groups are on)
+safbox_services_1: true   # Heimdall and its PostgreSQL as a Quadlet pod, secrets from first boot
+safbox_services_2: true   # Vulcan and its PostgreSQL as a Quadlet pod, secrets from first boot
+safbox_services_3: true   # nginx TLS proxy for the enabled applications, certificate from first boot
 
 # hardening (the last role; ADR-0001 §Decision: hardened with documented
 # deviations). Which STIG rules it applies is set by the Lockdown role's own

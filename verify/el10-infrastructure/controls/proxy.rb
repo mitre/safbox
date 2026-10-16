@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# The TLS proxy (the proxy role, task group safbox-proxy-1): one nginx
+# The TLS proxy (the services role, task group safbox-services-3): one nginx
 # Quadlet container from a pinned upstream image that terminates TLS for
 # each application on its own HTTPS port, with a certificate generated on
 # first boot. 443 stays free for the Phase 8 landing page. The build-time
@@ -43,7 +43,7 @@ control 'safbox-proxy-1' do
   impact 1.0
   title 'The TLS proxy Quadlet unit and configuration are installed and enabled'
   desc "An nginx container from a pinned upstream image (Red Hat UBI 9, whose OpenSSL runs its FIPS provider under the host's FIPS enforcement) on the host network, terminating TLS for each application on its own HTTPS port. Cipher selection defers to the system crypto policy (PROFILE=SYSTEM), which podman maps into the container from the FIPS host. The unit waits for the certificate first boot generates."
-  only_if('the proxy is not in expected_services (safbox_proxy_1 switched off)') do
+  only_if('the proxy is not in expected_services (safbox_services_3 switched off)') do
     service_expected.call('proxy')
   end
 
@@ -120,7 +120,7 @@ control 'safbox-proxy-4' do
   impact 1.0
   title "The proxy's certificate is generated on first boot, never at build"
   desc "ADR-0001 §Decision: first boot mints a self-signed certificate into #{tls_dir}, the key readable by root only. Before first boot (the build VM) there is none; the seal also asserts the template holds none. A consumer replaces both files with their own certificate and key."
-  only_if('the proxy is not in expected_services (safbox_proxy_1 switched off)') do
+  only_if('the proxy is not in expected_services (safbox_services_3 switched off)') do
     service_expected.call('proxy')
   end
 
@@ -161,7 +161,7 @@ control 'safbox-proxy-5' do
   impact 1.0
   title 'The firewall opens exactly the proxy ports'
   desc 'ADR-0001 Quality Standards: the firewall opens no port beyond the proxy ports. Every open port in the default zone, at runtime and permanently, is a proxy port of an application this image ships. The applications themselves listen on the loopback address only.'
-  only_if('the proxy is not in expected_services (safbox_proxy_1 switched off)') do
+  only_if('the proxy is not in expected_services (safbox_services_3 switched off)') do
     service_expected.call('proxy')
   end
 

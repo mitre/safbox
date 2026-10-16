@@ -62,9 +62,9 @@ passed:
       - safbox-seal-1
       - safbox-seal-2
       - safbox-secureboot-1
-      - safbox-services-1
-      - safbox-services-2
-      - safbox-services-3
+      - safbox-system-1
+      - safbox-system-2
+      - safbox-system-3
       - safbox-tools-1
       - safbox-tools-2
       - safbox-tools-3

@@ -42,9 +42,9 @@ seal_firstboot_state:
   - /var/lib/safbox/firstboot.done
 seal_env_file_dir: /etc/safbox
 seal_env_file_pattern: '*.env'
-# The TLS proxy's certificate and key, which first boot generates (the proxy
-# role). The template must hold neither: a key baked in would be shared by
-# every clone.
+# The TLS proxy's certificate and key, which first boot generates (the
+# services role). The template must hold neither: a key baked in would be
+# shared by every clone.
 seal_tls_dir: /etc/safbox/tls
 
 # Files cloud-init wrote for the build VM's own instance that `cloud-init

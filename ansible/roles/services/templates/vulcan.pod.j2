@@ -10,12 +10,12 @@
 [Unit]
 Description=Vulcan pod (Vulcan and its PostgreSQL)
 After=safbox-firstboot.service
-ConditionPathExists={{ vulcan_env_file }}
+ConditionPathExists={{ services_vulcan_env_file }}
 
 [Pod]
 PodName=vulcan
 Network=vulcan.network
-PublishPort=127.0.0.1:{{ vulcan_loopback_port }}:3000
+PublishPort=127.0.0.1:{{ services_vulcan_loopback_port }}:3000
 
 [Install]
 WantedBy=multi-user.target

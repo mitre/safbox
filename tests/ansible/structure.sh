@@ -10,7 +10,7 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 read -r -a PY <<<"$(head -1 "$(command -v ansible-playbook)" | sed 's/^#!//')"
 "${PY[@]}" - "$ROOT" <<'PY'
-import re, sys, yaml, pathlib
+import re, subprocess, sys, yaml, pathlib
 root = pathlib.Path(sys.argv[1])
 gv = yaml.safe_load((root / "ansible/group_vars/all/main.yml").read_text())
 errors = []
@@ -19,9 +19,9 @@ def check_load(role, t):
         errors.append(f"{role}: '{t['name']}' must be tagged always")
 # The switchable roles, in playbook order. site_config (the site's trusted
 # CA bundles) follows the OS contract and precedes every role that fetches
-# over TLS. Each service (Heimdall, Vulcan, the TLS proxy) is its own role
-# so a site can switch one off; hardening is last.
-SWITCHABLE = ["platform", "site_config", "base", "tools", "heimdall", "vulcan", "proxy", "hardening"]
+# over TLS. The services role holds every long-running service, one task
+# group per service so a site can switch one off; hardening is last.
+SWITCHABLE = ["platform", "site_config", "base", "tools", "services", "hardening"]
 playbook = yaml.safe_load((root / "ansible/playbooks/safbox.yml").read_text())
 in_play = [r["role"] if isinstance(r, dict) else r for r in playbook[0].get("roles") or []]
 if [r for r in in_play if r in SWITCHABLE] != SWITCHABLE:
@@ -94,6 +94,151 @@ for switch in sorted(k for k in gv if re.fullmatch(r"safbox_tools_\d+", k)):
     n = switch.rsplit("_", 1)[1]
     if f"control 'safbox-tools-{n}'" not in tools_controls:
         errors.append(f"verify: no control safbox-tools-{n} checks the tool group {switch} installs")
+# The services role: every long-running service in one role, one task file
+# per service, each its own task group in this order. A group's block
+# imports its task file statically (import_tasks), so the group's tag and
+# switch reach every task in it; include_tasks would pass neither to the
+# included tasks, and --tags safbox-services-<n> would then run nothing.
+SERVICES = ["heimdall", "vulcan", "proxy"]
+services_dir = root / "ansible/roles/services"
+if (services_dir / "tasks/main.yml").exists():
+    groups = [t for t in yaml.safe_load((services_dir / "tasks/main.yml").read_text())
+              if t.get("name") != "Load OS family variables"]
+    for i, service in enumerate(SERVICES, 1):
+        t = groups[i - 1] if len(groups) >= i else {}
+        body = t.get("block") or []
+        if f"safbox-services-{i}" not in (t.get("tags") or []) or len(body) != 1 \
+                or body[0].get("ansible.builtin.import_tasks") != f"{service}.yml":
+            errors.append(f"services: group safbox-services-{i} must be one block importing {service}.yml "
+                          "(ansible.builtin.import_tasks)")
+        if not (services_dir / f"tasks/{service}.yml").exists():
+            errors.append(f"services: tasks/{service}.yml missing")
+    if len(groups) != len(SERVICES):
+        errors.append(f"services: expected {len(SERVICES)} task groups, found {len(groups)}")
+    # One handler per name in the role: a single systemd reload, and each
+    # service's restart under its own name.
+    handlers = [h.get("name") for h in yaml.safe_load((services_dir / "handlers/main.yml").read_text()) or []]
+    for name in sorted({h for h in handlers if handlers.count(h) > 1}):
+        errors.append(f"services: handler '{name}' is defined more than once")
+    if "Reload systemd units" not in handlers:
+        errors.append("services: no 'Reload systemd units' handler")
+    # The proxy fronts exactly the applications whose groups are on.
+    services_proxy_apps = {a["name"]: a for a in yaml.safe_load((services_dir / "defaults/main.yml").read_text())["services_proxy_apps"]}
+    for i, app in ((1, "heimdall"), (2, "vulcan")):
+        want = f"{{{{ safbox_services_{i} | default(true) | bool }}}}"
+        if (services_proxy_apps.get(app) or {}).get("enabled") != want:
+            errors.append(f"services: services_proxy_apps {app} must be enabled by \"{want}\"")
+# safbox-services-<n> names the services role's task groups only. The
+# validation controls of the services are named per service
+# (safbox-heimdall-*, safbox-vulcan-*, safbox-proxy-*), and the controls for
+# the host's base services (sshd, chrony, firewalld, the journal) are
+# safbox-system-<n>, so no control, threshold or inputs file under verify/
+# uses safbox-services-<n> as a control name.
+controls_text = "\n".join(p.read_text() for p in sorted((root / "verify").glob("*/controls/*.rb")))
+for n in (1, 2, 3):
+    if f"control 'safbox-system-{n}'" not in controls_text:
+        errors.append(f"verify: no control safbox-system-{n} (the host's base services)")
+for p in sorted((root / "verify").rglob("*")):
+    if p.suffix not in (".rb", ".yml") or not p.is_file():
+        continue
+    for n, line in enumerate(p.read_text().splitlines(), 1):
+        if re.search(r"control\s+'safbox-services-\d|^\s*-\s*safbox-services-\d", line):
+            errors.append(f"{p.relative_to(root)}:{n}: safbox-services-<n> is a task group, not a control name: {line.strip()}")
+# The per-service roles are gone (folded into services): no role directory,
+# and no file names their roles, switches or tags, except the ADRs (decision
+# records, kept as written), the recorded scans (tests/verify/fixtures,
+# regenerated only from real scans), this test, and the migration note in
+# docs/rebuild.md that tells sites what to rename in ansible/local.yml.
+# Validation control names (safbox-heimdall-1 and so on) are unchanged and
+# allowed.
+OLD = r"heimdall|vulcan|proxy"
+PROSE = [rf"\b({OLD})`?\s+roles?\b", rf"\broles?\s+`?({OLD})\b"]
+OLD_NAMES = re.compile("|".join([
+    rf"safbox_({OLD})_\d+",                          # switches
+    rf"(group|tags?)\W+safbox-({OLD})-\d",           # tags and task groups
+    rf"roles/({OLD})\b", rf"role:\s*({OLD})\b",      # role paths and play entries
+] + PROSE), re.IGNORECASE)
+OLD_PROSE = re.compile("|".join(PROSE), re.IGNORECASE)
+MIGRATION = "Migrating from the per-service roles"
+for old in SERVICES:
+    if (root / f"ansible/roles/{old}").exists():
+        errors.append(f"roles: ansible/roles/{old} still exists (folded into services)")
+tracked = subprocess.run(["git", "-C", str(root), "ls-files", "-co", "--exclude-standard"],
+                         check=True, capture_output=True, text=True).stdout.splitlines()
+for rel in tracked:
+    if rel.startswith(("docs/adrs/", "tests/verify/fixtures/")) or rel == "tests/ansible/structure.sh":
+        continue
+    path = root / rel
+    try:
+        text = path.read_text()
+    except (UnicodeDecodeError, FileNotFoundError, IsADirectoryError):
+        continue
+    if rel == "docs/rebuild.md":
+        note = re.search(rf"^(#+) {MIGRATION}\n.*?(?=^#|\Z)", text, re.MULTILINE | re.DOTALL)
+        if not note:
+            errors.append(f"docs/rebuild.md: no '{MIGRATION}' section")
+        else:
+            for old, i in (("heimdall", 1), ("vulcan", 2), ("proxy", 3)):
+                if f"safbox_{old}_1" not in note.group(0) or f"safbox_services_{i}" not in note.group(0):
+                    errors.append(f"docs/rebuild.md: the migration note must rename safbox_{old}_1 to safbox_services_{i}")
+                if f"safbox-system-{i}" not in note.group(0):
+                    errors.append(f"docs/rebuild.md: the migration note must rename control safbox-services-{i} to safbox-system-{i}")
+            text = text.replace(note.group(0), "")
+    for n, line in enumerate(text.splitlines(), 1):
+        if OLD_NAMES.search(line):
+            errors.append(f"{rel}:{n}: names a per-service role, switch or tag: {line.strip()}")
+    # Prose wrapped across comment lines ("the heimdall\n# role").
+    joined = re.sub(r"[ \t]*\n[ \t]*(#+|//)?[ \t]*", " ", text)
+    for m in OLD_PROSE.finditer(joined):
+        if m.group(0) not in text:  # one-line matches are reported above
+            errors.append(f"{rel}: names a per-service role across lines: {m.group(0)!r}")
+# Every tag on a task of the project's roles is safbox-<role>-<n>, the role
+# being the one the task lives in (its directory name, _ as -), or always
+# (the OS variable loads). Nested blocks and imported task files included.
+def tagged(tasks):
+    for t in tasks or []:
+        if not isinstance(t, dict):
+            continue
+        yield t
+        for key in ("block", "rescue", "always"):
+            yield from tagged(t.get(key))
+for role_dir in sorted(p for p in (root / "ansible/roles").iterdir() if p.is_dir()):
+    want = re.compile(rf"safbox-{role_dir.name.replace('_', '-')}-\d+")
+    for f in sorted(role_dir.glob("tasks/*.yml")) + sorted(role_dir.glob("handlers/*.yml")):
+        for t in tagged(yaml.safe_load(f.read_text())):
+            tags = t.get("tags") or []
+            for tag in [tags] if isinstance(tags, str) else tags:
+                if tag != "always" and not want.fullmatch(str(tag)):
+                    errors.append(f"{f.relative_to(root)}: task '{t.get('name')}' has tag '{tag}'; "
+                                  f"tags in this role are {want.pattern} (or always)")
+for f in sorted((root / "ansible/playbooks").glob("*.yml")):
+    for play in yaml.safe_load(f.read_text()) or []:
+        for item in [play] + list(tagged(play.get("tasks"))) + [r for r in play.get("roles") or [] if isinstance(r, dict)]:
+            if item.get("tags"):
+                errors.append(f"{f.relative_to(root)}: tags belong on the roles' task groups, not the playbook ({item.get('tags')})")
+# The services role's variables carry its name (ansible-lint
+# var-naming[no-role-prefix]): services_heimdall_*, services_vulcan_*,
+# services_proxy_*. No file of the appliance layer uses one of the old
+# unprefixed names (the defaults and registered results of the former
+# heimdall, vulcan and proxy roles), which would now be undefined, or a
+# site override that no longer applies. Names, not a pattern: nginx's own
+# proxy_* directives and Vulcan's upstream names (vulcan_production) stay.
+OLD_VARS = {
+    "heimdall": ["image", "db_image", "loopback_port", "env_file", "db_env_file", "firstboot_hook",
+                 "jwt_expire_time", "memory", "db_memory", "secrets"],
+    "vulcan": ["image", "db_image", "loopback_port", "env_file", "db_env_file", "firstboot_hook",
+               "settings", "memory", "db_memory", "secrets"],
+    "proxy": ["image", "apps", "conf_dir", "tls_dir", "cert", "key", "firstboot_hook", "memory", "tls"],
+}
+UNPREFIXED = re.compile(r"(?<![\w.-])(" + "|".join(
+    f"{svc}_{name}" for svc, names in OLD_VARS.items() for name in names) + r")\b")
+for f in sorted((root / "ansible").rglob("*")):
+    rel = f.relative_to(root)
+    if not f.is_file() or rel.parts[1] in ("galaxy_roles", "collections") or f.suffix not in (".yml", ".j2", ".cfg", ".ini"):
+        continue
+    for n, line in enumerate(f.read_text().splitlines(), 1):
+        for m in UNPREFIXED.finditer(line):
+            errors.append(f"{rel}:{n}: unprefixed role variable {m.group(0)} (now services_{m.group(0)})")
 # One firewalld zone (safbox_firewall_zone): hardening moves the interface
 # into Lockdown's zone and makes it the default, so Lockdown's zone variable
 # and every firewalld task of the project's roles (platform group 3, the
@@ -119,7 +264,7 @@ for tasks_file in sorted((root / "ansible/roles").glob("*/tasks/*.yml")):
         seen_firewalld.add(role)
         if (t["ansible.posix.firewalld"] or {}).get("zone") != ZONE:
             errors.append(f"{role}: firewalld task '{t.get('name')}' must set zone: \"{ZONE}\"")
-for role in ("platform", "proxy"):
+for role in ("platform", "services"):
     if role not in seen_firewalld:
         errors.append(f"{role}: no ansible.posix.firewalld task found to check")
 # Hardening is the last role of the appliance play, after every role that
@@ -163,5 +308,5 @@ if 'seal_mode=${var.seal ? "full" : "development"}' not in hcl:
     errors.append("packer: the seal provisioner must pass seal_mode from var.seal")
 if errors:
     print("\n".join("FAIL: " + e for e in errors), file=sys.stderr); sys.exit(1)
-print("PASS: task groups are tagged and switched; variable loads are tagged always; OS vars cover both families without duplicates; tools groups have controls; seal modes gated")
+print("PASS: task groups are tagged and switched; variable loads are tagged always; OS vars cover both families without duplicates; tools groups have controls; seal modes gated; every task tag is safbox-<role>-<n>; services role folded with no old names left")
 PY

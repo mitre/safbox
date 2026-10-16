@@ -1,30 +1,123 @@
 ---
-# heimdall role: MITRE Heimdall and its PostgreSQL as a podman pod of Quadlet
-# units (ADR-0001 Phase 5), in the service shape of Heimdall's upstream
+# services role: every long-running service of the appliance, one task file
+# and one task group per service (tasks/main.yml), each switched off by
+# setting its switch to false (group_vars):
+#   safbox-services-1  Heimdall (tasks/heimdall.yml)   safbox_services_1
+#   safbox-services-2  Vulcan (tasks/vulcan.yml)       safbox_services_2
+#   safbox-services-3  TLS proxy (tasks/proxy.yml)     safbox_services_3
+# A site short of memory runs Heimdall alone by switching Vulcan off.
+
+# ---------------------------------------------------------------------------
+# Heimdall
+# ---------------------------------------------------------------------------
+# MITRE Heimdall and its PostgreSQL as a podman pod of Quadlet units
+# (ADR-0001 Phase 5), in the service shape of Heimdall's upstream
 # docker-compose.yml (cited in each unit). Secrets come from first boot: the
 # hook files/20-heimdall.sh writes them, and the units start only once they
-# exist, so the template carries none. Task group safbox-heimdall-1,
-# switched off by setting safbox_heimdall_1 to false (group_vars).
+# exist, so the template carries none.
 
-heimdall_image: "{{ safbox_image_heimdall.name }}@{{ safbox_image_heimdall.digest }}"
-heimdall_db_image: "{{ safbox_image_heimdall_db.name }}@{{ safbox_image_heimdall_db.digest }}"
+services_heimdall_image: "{{ safbox_image_heimdall.name }}@{{ safbox_image_heimdall.digest }}"
+services_heimdall_db_image: "{{ safbox_image_heimdall_db.name }}@{{ safbox_image_heimdall_db.digest }}"
 
 # Port the pod publishes on 127.0.0.1 for the TLS proxy (group_vars).
-heimdall_loopback_port: "{{ safbox_heimdall_loopback_port }}"
+services_heimdall_loopback_port: "{{ safbox_heimdall_loopback_port }}"
 
 # Env files the first-boot hook writes (root, 0600): the application's
 # secrets, and the database password alone for the PostgreSQL container.
-heimdall_env_file: /etc/safbox/heimdall.env
-heimdall_db_env_file: /etc/safbox/heimdall-db.env
-heimdall_firstboot_hook: /etc/safbox/firstboot.d/20-heimdall.sh
+services_heimdall_env_file: /etc/safbox/heimdall.env
+services_heimdall_db_env_file: /etc/safbox/heimdall-db.env
+services_heimdall_firstboot_hook: /etc/safbox/firstboot.d/20-heimdall.sh
 
 # Lifetime of the login token Heimdall issues. Upstream's setup script asks
 # for it ("ex. 1d or 25m") and Heimdall falls back to 60 seconds without it.
-heimdall_jwt_expire_time: 1d
+services_heimdall_jwt_expire_time: 1d
 
 # Container memory limits. The sum over every service stays inside the
 # reference 4 GiB appliance with room for the host and a scan. Heimdall
 # parses each uploaded HDF file (up to the proxy's 100 MB body limit) in
 # memory.
-heimdall_memory: 1g
-heimdall_db_memory: 512m
+services_heimdall_memory: 1g
+services_heimdall_db_memory: 512m
+
+# ---------------------------------------------------------------------------
+# Vulcan
+# ---------------------------------------------------------------------------
+# MITRE Vulcan and its PostgreSQL as a podman pod of Quadlet units (ADR-0001
+# Phase 6), in the service shape of Vulcan's upstream docker-compose.yml
+# (cited in each unit). Secrets come from first boot: the hook
+# files/30-vulcan.sh writes them, and the units start only once they exist,
+# so the template carries none.
+
+services_vulcan_image: "{{ safbox_image_vulcan.name }}@{{ safbox_image_vulcan.digest }}"
+services_vulcan_db_image: "{{ safbox_image_vulcan_db.name }}@{{ safbox_image_vulcan_db.digest }}"
+
+# Port the pod publishes on 127.0.0.1 for the TLS proxy (group_vars).
+services_vulcan_loopback_port: "{{ safbox_vulcan_loopback_port }}"
+
+# Env files the first-boot hook writes (root, 0600): the application's
+# secrets, and the database password alone for the PostgreSQL container.
+services_vulcan_env_file: /etc/safbox/vulcan.env
+services_vulcan_db_env_file: /etc/safbox/vulcan-db.env
+services_vulcan_firstboot_hook: /etc/safbox/firstboot.d/30-vulcan.sh
+
+# Vulcan's non-secret settings, passed to the container as environment
+# variables (the appliance's subset of upstream's .env.production.example;
+# every other setting keeps the image's default). Upstream's production
+# example turns local login, registration and first-user-admin off and
+# expects OIDC; the appliance has no identity provider, so (ADR-0001 Phase
+# 6) local login and registration are on and the first registered user is
+# admin. RAILS_FORCE_SSL stays on, as upstream recommends behind a proxy:
+# the TLS proxy terminates HTTPS and sends X-Forwarded-Proto. OIDC, LDAP and
+# SMTP are consumer settings: add VULCAN_ENABLE_OIDC and the rest here (see
+# upstream's .env.production.example) in ansible/local.yml.
+services_vulcan_settings:
+  VULCAN_ENABLE_LOCAL_LOGIN: "true"
+  VULCAN_ENABLE_USER_REGISTRATION: "true"
+  VULCAN_FIRST_USER_ADMIN: "true"
+  RAILS_FORCE_SSL: "true"
+
+# Container memory limits. The sum over every service stays inside the
+# reference 4 GiB appliance with room for the host and a scan.
+services_vulcan_memory: 1g
+services_vulcan_db_memory: 512m
+
+# ---------------------------------------------------------------------------
+# TLS proxy
+# ---------------------------------------------------------------------------
+# One nginx container (ADR-0001 §Decision: a single nginx reverse proxy
+# terminates TLS and fronts both applications on distinct ports) that serves
+# each enabled application over HTTPS on its own port, with a self-signed
+# certificate generated on first boot. 443 stays free for the landing page
+# (ADR-0001 Phase 8).
+
+services_proxy_image: "{{ safbox_image_proxy.name }}@{{ safbox_image_proxy.digest }}"
+
+# The applications the proxy fronts, each enabled by its service's task
+# group switch. An application switched off gets no server block, and its
+# port is closed in the firewall. Body and buffer sizes follow each
+# application's upstream proxy configuration (see templates/nginx.conf.j2);
+# 100m is the largest upload either accepts.
+services_proxy_apps:
+  - name: heimdall
+    enabled: "{{ safbox_services_1 | default(true) | bool }}"
+    https_port: "{{ safbox_heimdall_https_port }}"
+    loopback_port: "{{ safbox_heimdall_loopback_port }}"
+  - name: vulcan
+    enabled: "{{ safbox_services_2 | default(true) | bool }}"
+    https_port: "{{ safbox_vulcan_https_port }}"
+    loopback_port: "{{ safbox_vulcan_loopback_port }}"
+
+# nginx configuration on the host, mounted read-only into the container.
+services_proxy_conf_dir: /etc/safbox-proxy
+
+# The certificate and key first boot generates (files/40-proxy.sh). To use
+# your own, replace both files (PEM, the key unencrypted, root-only) and
+# restart safbox-proxy.service; first boot never overwrites them.
+services_proxy_tls_dir: /etc/safbox/tls
+services_proxy_cert: "{{ services_proxy_tls_dir }}/safbox.crt"
+services_proxy_key: "{{ services_proxy_tls_dir }}/safbox.key"
+services_proxy_firstboot_hook: /etc/safbox/firstboot.d/40-proxy.sh
+
+# Heimdall's upstream proxy buffers up to 160 MB of a response (32 x 5m)
+# so large evaluations stream through; the limit leaves room for that.
+services_proxy_memory: 512m

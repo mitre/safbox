@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
-# Vulcan and its PostgreSQL as Quadlet units (ADR-0001 Phase 6; the vulcan
-# role, task group safbox-vulcan-1). Like Heimdall, the units are installed
+# Vulcan and its PostgreSQL as Quadlet units (ADR-0001 Phase 6; the services
+# role, task group safbox-services-2). Like Heimdall, the units are installed
 # and enabled at build and start only once first boot has written their
 # secrets: the build-time gate checks the units and the absence of secrets,
 # the release gate (a deployed clone) the running pod.
@@ -39,7 +39,7 @@ control 'safbox-vulcan-1' do
   impact 1.0
   title 'Vulcan Quadlet units are installed and enabled'
   desc "ADR-0001 Phase 6: Vulcan and its PostgreSQL run as a systemd-managed podman pod from the upstream image and the service shape of Vulcan's docker-compose.yml, with pinned images, memory limits, a restart policy, a named volume for data and the host's CA trust store mounted read-only. Local login and registration are on and the first registered user is admin. The units wait for first boot: each needs the env file the first-boot hook writes."
-  only_if('Vulcan is not in expected_services (safbox_vulcan_1 switched off)') do
+  only_if('Vulcan is not in expected_services (safbox_services_2 switched off)') do
     service_expected.call('vulcan')
   end
 
@@ -107,7 +107,7 @@ control 'safbox-vulcan-2' do
   impact 1.0
   title "Vulcan's secrets are generated on first boot, never at build"
   desc "ADR-0001 §Decision: the first-boot hook generates POSTGRES_PASSWORD, SECRET_KEY_BASE, CIPHER_PASSWORD and CIPHER_SALT with the strength of upstream's setup-docker-secrets.sh into #{env_file} (root, 0600), and the database password into #{db_env_file} for the PostgreSQL container. Before first boot (the build VM) neither file exists; the seal also asserts that the template holds no env file."
-  only_if('Vulcan is not in expected_services (safbox_vulcan_1 switched off)') do
+  only_if('Vulcan is not in expected_services (safbox_services_2 switched off)') do
     service_expected.call('vulcan')
   end
 
