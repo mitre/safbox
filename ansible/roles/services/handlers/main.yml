@@ -31,6 +31,15 @@
     daemon_reload: true
   when: services_vulcan_secrets.stat.exists | default(false)
 
+# As for Heimdall: the pod alone, after its own systemd reload, and only on
+# a deployed box.
+- name: Restart Keycloak
+  ansible.builtin.systemd_service:
+    name: keycloak-pod.service
+    state: restarted
+    daemon_reload: true
+  when: services_keycloak_secrets.stat.exists | default(false)
+
 # Only on a deployed box (its certificate exists); at build nothing runs.
 - name: Restart the proxy
   ansible.builtin.systemd_service:

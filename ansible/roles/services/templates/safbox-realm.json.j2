@@ -1,0 +1,60 @@
+{#
+  The safbox realm, imported by Keycloak on its first start
+  (keycloak.container: --import-realm), after the spike's realm
+  (docs/spikes/keycloak-sso.md). It holds no secret: each ${...} is filled
+  from Keycloak's environment at import (Keycloak's import and export
+  guide, "Using Environment Variables within the Realm Configuration
+  Files"), from values first boot generates. FIPS strict mode forbids
+  argon2, Keycloak's default password hash, so the policy names
+  pbkdf2-sha512, and needs passwords of 14 characters or more.
+#}
+{
+  "realm": "safbox",
+  "displayName": "SAFBox",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "resetPasswordAllowed": false,
+  "rememberMe": false,
+  "bruteForceProtected": true,
+  "passwordPolicy": "hashAlgorithm(pbkdf2-sha512) and length(15) and notUsername",
+  "clients": [
+{% for client in services_keycloak_clients %}
+    {
+      "clientId": {{ client.name | to_json }},
+      "name": {{ client.title | to_json }},
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "${{ '{' ~ client.secret_var ~ '}' }}",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "rootUrl": {{ ('https://' ~ client.host) | to_json }},
+      "redirectUris": [{{ ('https://' ~ client.host ~ client.redirect_path) | to_json }}],
+      "webOrigins": [{{ ('https://' ~ client.host) | to_json }}],
+      "attributes": {
+{% if client.pkce %}
+        "pkce.code.challenge.method": "S256",
+{% endif %}
+        "post.logout.redirect.uris": {{ ('https://' ~ client.host ~ client.post_logout_path) | to_json }}
+      }
+    }{{ ',' if not loop.last }}
+{% endfor %}
+  ],
+  "users": [
+    {
+      "username": "safuser",
+      "enabled": true,
+      "email": {{ ('safuser@' ~ safbox_domain) | to_json }},
+      "emailVerified": true,
+      "firstName": "SAF",
+      "lastName": "User",
+      "credentials": [
+        { "type": "password", "value": "${SAFUSER_PASSWORD}", "temporary": false }
+      ]
+    }
+  ]
+}

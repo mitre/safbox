@@ -18,9 +18,10 @@
 safbox_build_user: packer
 
 # Default accounts distribution cloud images create (system_info.default_user
-# in cloud.cfg, or the image vendor's own). The kickstart stops cloud-init
-# creating one (users: [] in cloud.cfg.d); the validation profile asserts
-# none exists.
+# in cloud.cfg, or the image vendor's own). The kickstart renames the
+# default user admin and stops cloud-init creating any user the deployment
+# does not ask for (users: [] in cloud.cfg.d); the validation profile
+# asserts none of these exists.
 safbox_distro_default_users:
   - cloud-user
   - almalinux
@@ -33,6 +34,14 @@ safbox_distro_default_users:
 # validation profile checks the unit whenever it is installed.
 safbox_example_quadlet_enabled: false
 
+# A GNOME desktop on the box's console (platform group 7). Off by default:
+# the RHEL 10 STIG allows a GUI only where one is a documented requirement.
+# Setting it true is that decision. It also approves the GUI to the Lockdown
+# role (rhel10stig_gui_approved, and keeps gdm, RHEL-10-200080, below), and
+# the scan needs the matching site inputs (docs/reference/appliance.md, "A desktop
+# build").
+safbox_desktop_enabled: false
+
 # ---------------------------------------------------------------------------
 # Task group switches
 # ---------------------------------------------------------------------------
@@ -41,6 +50,12 @@ safbox_example_quadlet_enabled: false
 # style of Ansible Lockdown. Turn a group off here or in ansible/local.yml;
 # run or skip groups for one invocation with --tags / --skip-tags. The seal
 # role is tagged but not switchable: it runs whole or not at all.
+#
+# The switches take effect when a template is built. Setting one to false
+# and applying the roles again to a box that already has the group does not
+# undo it: no task removes a service's units, image or first-boot hook, and
+# nothing reconfigures the services left on to match (the proxy certificate,
+# for one, keeps the names first boot gave it). Build a new template instead.
 
 # platform
 safbox_platform_1: true   # base packages and services
@@ -49,6 +64,7 @@ safbox_platform_3: true   # firewall allows the base services
 safbox_platform_4: true   # container runtime (podman, Quadlet, registry policy)
 safbox_platform_5: true   # smoke-test container (also needs safbox_example_quadlet_enabled)
 safbox_platform_6: true   # persistent journal
+safbox_platform_7: true   # desktop (also needs safbox_desktop_enabled)
 
 # site_config
 safbox_site_config_1: true  # site CA bundles in the system trust store (safbox_trust_bundles, DoD by default)
@@ -56,18 +72,24 @@ safbox_site_config_1: true  # site CA bundles in the system trust store (safbox_
 # base
 safbox_base_1: true  # first-boot framework
 safbox_base_2: true  # the safbox command
+safbox_base_3: true  # update every installed package (dnf/apt), rebooting when needed
+safbox_base_4: true  # the SAF login greeting (message of the day)
+safbox_base_5: true  # safuser: first-boot account with password and key login, sudo that asks for its password
+safbox_base_6: true  # admin (cloud-init's default user): no password, no password ageing, not on the login screen
 
 # tools
 safbox_tools_1: true      # CINC Auditor
 safbox_tools_2: true      # SAF CLI on the distribution's Node.js
 safbox_tools_3: true      # Ansible (ansible-core) and the Lockdown STIG collections
-safbox_tools_4: true      # HashiCorp Packer (BSL 1.1; distributors may switch it off, see docs/third-party.md)
+safbox_tools_4: true      # HashiCorp Packer (BSL 1.1; see the licence note in README.md)
 
 # services (each long-running service is one group; the proxy fronts the
 # applications whose groups are on)
 safbox_services_1: true   # Heimdall and its PostgreSQL as a Quadlet pod, secrets from first boot
 safbox_services_2: true   # Vulcan and its PostgreSQL as a Quadlet pod, secrets from first boot
 safbox_services_3: true   # nginx TLS proxy for the enabled applications, certificate from first boot
+safbox_services_4: true   # Firefox bookmarks (desktop builds only: also needs safbox_desktop_enabled)
+safbox_services_5: true   # Keycloak (FIPS strict mode) and its PostgreSQL: single sign-on for Heimdall and Vulcan
 
 # hardening (the last role; ADR-0001 §Decision: hardened with documented
 # deviations). Which STIG rules it applies is set by the Lockdown role's own
@@ -83,8 +105,7 @@ safbox_hardening_1: true  # apply the RHEL 10 STIG with the pinned Ansible Lockd
 # containers then trust. The DoD PKI bundle by default (owner decision,
 # 2026-10-16): every build downloads it from dl.dod.cyber.mil. Set the list
 # to [] in ansible/local.yml to build without it, or give the pinned file as
-# a local path on a network without that host (docs/rebuild.md "Site CA
-# bundles"). Each entry is a mapping:
+# a local path on a network without that host (docs/reference/site-config.md). Each entry is a mapping:
 #   name     lowercase letters, digits and hyphens; names the anchor files
 #   url      fetched by the box (https://...), or
 #   path     a file on the machine running Ansible (absolute path)
@@ -94,7 +115,7 @@ safbox_hardening_1: true  # apply the RHEL 10 STIG with the pinned Ansible Lockd
 #   member   for a zip archive, the file inside it in that format (a
 #            relative path, without ..)
 # A pinned bundle is enabled by naming its pin. Set your own list in
-# ansible/local.yml; see docs/rebuild.md "Site CA bundles".
+# ansible/local.yml; see docs/reference/site-config.md.
 safbox_trust_bundles:
   - "{{ safbox_trust_bundle_dod }}"
 
@@ -102,17 +123,27 @@ safbox_trust_bundles:
 # Services
 # ---------------------------------------------------------------------------
 # Each application's pod publishes its port on the host's loopback address
-# only; the TLS proxy (nginx on the host network) serves it to the network
-# on the application's HTTPS port, and the firewall opens exactly those
-# ports. 443 is reserved for the landing page (ADR-0001 Phase 8). Both
-# applications listen on 3000 inside their pods (upstream); Vulcan's
-# loopback port is 3001, the port its compose file documents for running
-# beside another service on 3000. The safbox validation profile expects
-# these values.
+# only; the TLS proxy (nginx on the host network) serves every application
+# on port 443 by name: heimdall.<safbox_domain>, vulcan.<safbox_domain> and
+# keycloak.<safbox_domain>, with a start page linking to them at
+# safbox_domain itself (and at any other name or the bare address). Port 80 redirects to HTTPS, and the
+# firewall opens http and https only. Both applications listen on 3000
+# inside their pods (upstream); Vulcan's loopback port is 3001, the port
+# its compose file documents for running beside another service on 3000.
+# The safbox validation profile expects these values.
 safbox_heimdall_loopback_port: 3000
-safbox_heimdall_https_port: 8443
 safbox_vulcan_loopback_port: 3001
-safbox_vulcan_https_port: 9443
+# Keycloak listens on 8080 in its pod (upstream); 3002 is the next free
+# port beside the applications'.
+safbox_keycloak_loopback_port: 3002
+
+# The domain the box serves its applications under. .internal is reserved
+# for private use and never resolves on the public internet. The box maps
+# these names to itself in /etc/hosts and its first-boot certificate names
+# them; other machines reach the box by the same names through their own
+# DNS or hosts file (docs/reference/services.md "Names"). A site that changes it sets
+# the safbox validation profile's domain input to match.
+safbox_domain: safbox.internal
 
 # The firewalld zone the box ends up in. Hardening moves the interface into
 # Lockdown's zone and makes it the default (drop: only ssh, dns and ntp are
@@ -159,12 +190,27 @@ rhel10stig_rsyslog_remote_server_ip: "{{ safbox_remote_log_server }}"
 rhel10stig_rsyslog_remote_server_port: "{{ safbox_remote_log_port }}"
 rhel10stig_rsyslog_remote_server_protocol: "{{ safbox_remote_log_protocol }}"
 
+# The desktop (safbox_desktop_enabled) is a documented GUI requirement, not
+# a deviation: the STIG baseline's gdm_required and gui_required inputs make
+# SV-280950 require gdm and SV-281297 Not Applicable. Lockdown keeps the X
+# server packages only when the GUI is approved (RHEL-10-700940), and
+# removes gdm whenever RHEL-10-200080 is on, so that rule follows the
+# desktop too. Lockdown applies its GUI rules (dconf locks, banner, no
+# automatic login) only when rhel10stig_gui is true, and detects that by
+# /usr/share/gnome/gnome-version.xml, which EL10's GNOME does not ship; the
+# switch that installs GNOME sets it instead.
+rhel10stig_gui: "{{ safbox_desktop_enabled | bool }}"
+rhel10stig_gui_approved: "{{ safbox_desktop_enabled | bool }}"
+rhel10stig_200080: "{{ not (safbox_desktop_enabled | bool) }}"
+
 # Lockdown rules SAFBox switches off, one per line. "N/A in the overlay": a
 # deviation, justified in the STIG overlay
 # (verify/profiles/safbox-rhel10-stig-overlay/controls/overlay.rb).
 # "Lockdown task fails": the task errors or misapplies on SAFBox; the
-# baseline control still runs. A site that decides differently sets the
-# switch in ansible/local.yml.
+# baseline control still runs. "Lockdown task harmful": the task would
+# damage SAFBox; the control is applicable and its baseline control still
+# runs. A site that decides differently sets the switch in
+# ansible/local.yml.
 rhel10stig_000510: false  # RHEL-10-000510 SV-280935 disk encryption: N/A in the overlay
 rhel10stig_200601: false  # RHEL-10-200601 SV-280970 fapolicyd: N/A in the overlay
 rhel10stig_200602: false  # RHEL-10-200602 SV-280971 fapolicyd policy: N/A in the overlay
@@ -176,13 +222,15 @@ rhel10stig_200645: false  # RHEL-10-200645 SV-280988 log offload encryption: N/A
 rhel10stig_300010: false
 # RHEL-10-300040 SV-281011 sshd ciphers: Lockdown task fails: unclosed parenthesis in its when
 rhel10stig_300040: false
+# RHEL-10-400290 SV-281075 file owners: Lockdown task harmful: chowns container image layers to root
+rhel10stig_400290: false
 rhel10stig_500035: false  # RHEL-10-500035 SV-281103 audit failure panic: N/A in the overlay
 rhel10stig_600000: false  # RHEL-10-600000 SV-281166 boot loader password: N/A in the overlay
 rhel10stig_600010: false  # RHEL-10-600010 SV-281167 boot loader superuser: N/A in the overlay
-rhel10stig_600100: false  # RHEL-10-600100 SV-281169 password maximum age: N/A in the overlay
-rhel10stig_600160: false  # RHEL-10-600160 SV-281175 inactive account lock: N/A in the overlay
 rhel10stig_600415: false  # RHEL-10-600415 SV-281195 root lockout: N/A in the overlay
-rhel10stig_600425: false  # RHEL-10-600425 SV-281197 lockout until admin release: N/A in the overlay
+rhel10stig_600560: false  # RHEL-10-600560 SV-281211 sudo NOPASSWD: admin keeps it, N/A in the overlay
+# RHEL-10-700020 SV-281225 GUI banner: Lockdown task fails: validate without %s (desktop only, safbox-m5f.49)
+rhel10stig_700020: false
 # RHEL-10-701150 SV-281317 core dump size: Lockdown task fails: writes coredump.conf outside its section
 rhel10stig_701150: false
 # RHEL-10-701160 SV-281318 core dump storage: Lockdown task fails: writes coredump.conf outside its section
@@ -239,12 +287,41 @@ safbox_image_vulcan_db:
   tag: 18.6-alpine
   digest: sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
 
+# Keycloak (quay.io/keycloak/keycloak:26.8.1), the base of the FIPS image
+# the services role builds at image build (safbox-services-5): Keycloak's
+# FIPS guide (https://www.keycloak.org/server/fips) adds the Bouncy Castle
+# FIPS jars below to it. Bump with the jars, to the versions the new
+# release's pom.xml names.
+safbox_image_keycloak:
+  name: quay.io/keycloak/keycloak
+  tag: 26.8.1
+  digest: sha256:79c623a22abacf3fe6c00a5fb30f5b7843d717b234033b80995891c06116d244
+
+# The Bouncy Castle FIPS jars Keycloak 26.8.1's pom.xml names
+# (https://github.com/keycloak/keycloak/blob/26.8.1/pom.xml), from Maven
+# Central, sha256 as in Maven Central's .sha256 files. bc-fips 2.1.3 is a
+# patch release on the line NIST's CMVP certificate #4943 validates, which
+# lists 2.1.1: the owner accepted Keycloak's tested pin (2026-10-17).
+safbox_keycloak_fips_jars:
+  - name: bc-fips
+    version: 2.1.3
+    sha256: f55fc476ede820d5c03fe87e6ced5bb0095e1dc30b387445846a3ff0274f8c0e
+  - name: bctls-fips
+    version: 2.1.25
+    sha256: af604aa5b337725872651067a819ebc03aa298685572b0b2ad5343c786faad0a
+  - name: bcpkix-fips
+    version: 2.1.13
+    sha256: cf161ba2f6b4505816f4661663b3e0771184a50ee5b178a0018c817b336f0e5c
+  - name: bcutil-fips
+    version: 2.1.8
+    sha256: f44904f61552c823bcc3686a24052ee3135212d547754eaa2ff6532e210103cb
+
 # The TLS proxy. Both upstream compose files use nginx:alpine, whose OpenSSL
 # has no FIPS provider. Red Hat's UBI 9 nginx image links the image's
 # OpenSSL, which runs its FIPS provider on a FIPS host and follows the FIPS
 # system crypto policy podman maps into the container (ADR-0001 Reverse
 # proxy: nginx chosen for its FIPS path). UBI 9, not UBI 10: UBI 10 images
-# need an x86-64-v3 CPU, and the development base runs on x86-64-v2.
+# need an x86-64-v3 CPU, and AlmaLinux's x86_64_v2 build runs on x86-64-v2.
 safbox_image_proxy:
   name: registry.access.redhat.com/ubi9/nginx-126
   tag: 9.8-1791881018
@@ -287,7 +364,7 @@ safbox_trust_bundle_dod:
 # CINC Auditor ships on the box as an assessment tool (the tools role). This
 # is the RHEL 10 family build. Hosts with unusual needs (for example a CPU
 # older than the x86-64-v3 level RHEL 10 builds assume) override the whole
-# entry in a local vars file; see docs/rebuild.md "Site overrides".
+# entry in a local vars file; see "Site overrides" in the build guide.
 safbox_tool_cinc_auditor:
   version: 7.2.1
   release: 1.el10
@@ -344,7 +421,8 @@ safbox_hardening_lockdown:
 # checksum is the one in packer_<version>_SHA256SUMS, whose detached
 # signature verifies against HashiCorp's release key, and was verified
 # against a download. Packer is under the Business Source License 1.1; see
-# docs/third-party.md before redistributing an image with this group on.
+# the licence note in README.md before redistributing an image with this
+# group on.
 safbox_tool_packer:
   version: 1.16.1
   url: https://releases.hashicorp.com/packer/1.16.1/packer_1.16.1_linux_amd64.zip

@@ -18,6 +18,9 @@ disk_format  = "raw" # qcow2 on directory/NFS/CIFS storages
 bridge       = "vmbr0"
 # vlan_tag   = 100           # if the build network is a tagged VLAN
 cpu_type = "x86-64-v3" # Rocky 10 needs v3; x86-64-v2-AES for the AlmaLinux v2 lane
+# Display adapter: "qxl" (the default) for the SPICE console, or "std"
+# (standard VGA, noVNC only); docs/guides/proxmox/desktop.md.
+# vga      = "std"
 
 # Reference footprint (4 / 8192 / 60G). Reduce for a small development host.
 vm_cores     = 4

@@ -1,0 +1,15 @@
+/* MITRE SAF brand colours, as on saf.mitre.org and mitre/hdf-libs. */
+:root {
+  --vp-c-brand-1: #005288;
+  --vp-c-brand-2: #0066a8;
+  --vp-c-brand-3: #0080cc;
+  --vp-c-tip-1: var(--vp-c-brand-1);
+  --vp-c-tip-2: var(--vp-c-brand-2);
+  --vp-c-tip-3: var(--vp-c-brand-3);
+}
+
+.dark {
+  --vp-c-brand-1: #4a9fd4;
+  --vp-c-brand-2: #5db3e4;
+  --vp-c-brand-3: #70c7f4;
+}

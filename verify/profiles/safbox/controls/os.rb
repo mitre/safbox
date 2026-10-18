@@ -21,6 +21,98 @@ control 'safbox-os-2' do
   end
 end
 
+control 'safbox-os-3' do
+  impact 1.0
+  title 'The console boots to the interface the image was built for'
+  desc 'A SAFBox is headless unless it was built with the desktop: no display manager, booting to the text console. A desktop SAFBox boots to the GNOME login screen, which shows the SAF logo, and gives every new user the SAF wallpaper, profile picture and terminal palette as defaults the user can change.'
+
+  if input('desktop')
+    describe package('gdm') do
+      it { should be_installed }
+    end
+    describe service('gdm') do
+      it { should be_enabled }
+    end
+    describe command('systemctl get-default') do
+      its('stdout.strip') { should eq 'graphical.target' }
+    end
+
+    navy = '/usr/share/backgrounds/safbox/saf-navy-3440x1440.png'
+    logo = '/usr/share/pixmaps/saf-logo.svg'
+    avatar = '/usr/share/pixmaps/saf-avatar.png'
+    terminal_profile = 'a64f2cd413c97b9f9cdb8f7438946c23'
+
+    # The branding files, and the settings files that name them.
+    [navy, logo, avatar, '/etc/skel/.local/share/org.gnome.Ptyxis/palettes/saf.palette',
+     '/usr/share/gnome-background-properties/safbox.xml',
+     '/etc/dconf/db/gdm.d/10-safbox-logo',
+     '/etc/dconf/db/local.d/10-safbox-background',
+     '/etc/dconf/db/local.d/10-safbox-terminal',
+     '/etc/accountsservice/user-templates/standard',
+     '/etc/accountsservice/user-templates/administrator'].each do |path|
+      describe file(path) do
+        it { should be_file }
+      end
+    end
+
+    describe file('/usr/share/gnome-background-properties/safbox.xml') do
+      its('content') { should include "<filename>#{navy}</filename>" }
+    end
+    describe ini('/etc/dconf/db/gdm.d/10-safbox-logo') do
+      its(['org/gnome/login-screen', 'logo']) { should eq "'#{logo}'" }
+    end
+    describe ini('/etc/dconf/db/local.d/10-safbox-background') do
+      its(['org/gnome/desktop/background', 'picture-uri']) { should eq "'file://#{navy}'" }
+      its(['org/gnome/desktop/background', 'picture-uri-dark']) { should eq "'file://#{navy}'" }
+    end
+    %w[standard administrator].each do |template|
+      describe ini("/etc/accountsservice/user-templates/#{template}") do
+        its(%w[User Icon]) { should eq avatar }
+      end
+    end
+    describe ini('/etc/dconf/db/local.d/10-safbox-terminal') do
+      its(['org/gnome/Ptyxis', 'default-profile-uuid']) { should eq "'#{terminal_profile}'" }
+      its(["org/gnome/Ptyxis/Profiles/#{terminal_profile}", 'palette']) { should eq "'saf'" }
+    end
+
+    # Defaults, not locks: a user may choose another wallpaper or palette.
+    describe command('grep -rhxE "/org/gnome/(desktop/background|Ptyxis)/.*" /etc/dconf/db/local.d/locks') do
+      its('stdout') { should be_empty }
+    end
+  else
+    describe package('gdm') do
+      it { should_not be_installed }
+    end
+    describe command('systemctl get-default') do
+      its('stdout.strip') { should eq 'multi-user.target' }
+    end
+  end
+end
+
+control 'safbox-disk-1' do
+  impact 0.5
+  title 'The disk is in use to its end, and /home, /var, /var/log and /var/log/audit hold their shares of it'
+  desc 'The volume group fills the disk. After the fixed-size volumes (/, /tmp, /var/tmp and swap), /home gets 40% of its space, /var 40%, /var/log 10% and /var/log/audit 10%, at install and again on the first boot of a clone whose disk was enlarged. A share may fall short by one percentage point for rounding.'
+  only_if('The host does not have the vg_safbox volume group', impact: 0.0) do
+    command('vgs vg_safbox').exit_status.zero?
+  end
+
+  pv_name, pv_bytes = command('pvs --noheadings --units b --nosuffix -o pv_name,dev_size -S vg_name=vg_safbox').stdout.split
+  disk = command("lsblk -dno PKNAME #{pv_name}").stdout.strip
+  lv_bytes = command('lvs --noheadings --units b --nosuffix -o lv_name,lv_size vg_safbox').stdout.split.each_slice(2).to_h
+  shared = pv_bytes.to_i - lv_bytes.values_at('root', 'tmp', 'var_tmp', 'swap').sum(&:to_i)
+
+  describe command("growpart --dry-run /dev/#{disk} #{pv_name.to_s[/\d+$/]}") do
+    its('stdout') { should match(/^NOCHANGE:/) }
+  end
+  { 'home' => 40, 'var' => 40, 'var_log' => 10, 'var_log_audit' => 10 }.each do |lv, share|
+    describe "Logical volume #{lv} (bytes)" do
+      subject { lv_bytes[lv].to_i }
+      it { should be >= shared * (share - 1) / 100 }
+    end
+  end
+end
+
 control 'safbox-secureboot-1' do
   impact 1.0
   title 'UEFI Secure Boot is enabled'
@@ -92,6 +184,18 @@ control 'safbox-system-3' do
 
   describe parse_config_file('/etc/systemd/journald.conf.d/10-safbox.conf') do
     its('Journal.Storage') { should eq 'persistent' }
+  end
+end
+
+control 'safbox-motd-1' do
+  impact 1.0
+  title 'Logins show the SAF greeting'
+  desc 'The message of the day shows the SAF shield and "Welcome to SAFBox!" after every console and SSH login. The login banner before it (/etc/issue) is separate.'
+
+  describe file('/etc/motd.d/safbox') do
+    it { should be_file }
+    its('mode') { should cmp '0644' }
+    its('content') { should include 'Welcome to SAFBox!' }
   end
 end
 

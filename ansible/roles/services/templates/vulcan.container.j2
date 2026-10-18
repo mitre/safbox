@@ -45,6 +45,14 @@ Environment=POSTGRES_USER=postgres
 {% for name, value in services_vulcan_settings | dictsort %}
 Environment={{ name }}={{ value }}
 {% endfor %}
+{% if services_keycloak_enabled | bool %}
+# Everyone but the administrator signs in through Keycloak; the client
+# secret is in vulcan-oidc.env, which Keycloak reads too.
+{% for name, value in services_vulcan_oidc_settings | dictsort %}
+Environment={{ name }}={{ value }}
+{% endfor %}
+EnvironmentFile={{ services_vulcan_oidc_env_file }}
+{% endif %}
 EnvironmentFile={{ services_vulcan_env_file }}
 HealthCmd=curl -f http://localhost:3000/up || exit 1
 HealthInterval=30s

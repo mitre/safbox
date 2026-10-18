@@ -1,0 +1,10 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Refresh the SAFBox start page's service status every minute
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=60s
+
+[Install]
+WantedBy=timers.target

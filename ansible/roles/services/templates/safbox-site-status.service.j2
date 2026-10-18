@@ -1,0 +1,9 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Write the SAFBox start page's service status (status.json)
+# Not on the build VM: like the proxy, only once first boot has made its key.
+ConditionPathExists={{ services_proxy_key }}
+
+[Service]
+Type=oneshot
+ExecStart={{ services_status_script }} {{ services_status_list }} {{ services_proxy_conf_dir }}/html/status.json

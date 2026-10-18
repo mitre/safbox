@@ -53,7 +53,7 @@ cat > "$tmp/bin/packer" <<'EOF'
 set -u
 [ "$1" = build ] || exit 0
 shift
-name="" key="" galaxy=""
+name="" key="" galaxy="" site=""
 while [ $# -gt 0 ]; do
   case "$1" in
     -var)
@@ -61,6 +61,7 @@ while [ $# -gt 0 ]; do
         vm_name=*) name=${2#vm_name=} ;;
         ssh_private_key_file=*) key=${2#ssh_private_key_file=} ;;
         galaxy_dir=*) galaxy=${2#galaxy_dir=} ;;
+        site_dir=*) site=${2#site_dir=} ;;
       esac
       shift 2 ;;
     *) shift ;;
@@ -72,6 +73,7 @@ d="$STUB_DIR/$name"; mkdir -p "$d"
 echo "$key" > "$d/key"
 echo "${PACKER_LOG_PATH:-}" > "$d/debuglog"
 echo "$galaxy" > "$d/galaxy"
+echo "$site" > "$d/site"
 # What ansible-galaxy would install there.
 mkdir -p "$galaxy/roles/RHEL10-STIG"
 sum() { cksum < "$1" 2>/dev/null || echo missing; }
@@ -96,6 +98,12 @@ echo "stub packer $name done"
 exit "${STUB_RC:-0}"
 EOF
 chmod +x "$tmp/bin/packer"
+# Stub npm: build.sh builds the documentation site before Packer.
+cat > "$tmp/bin/npm" <<'EOF'
+#!/bin/sh
+echo "$*" >> "$STUB_DIR/npm.calls"
+EOF
+chmod +x "$tmp/bin/npm"
 
 failures=0
 fail() { echo "FAIL: $*" >&2; failures=1; }
@@ -162,6 +170,8 @@ expect "run one's build log is in its run directory" "$(sed -n 's/^build log: //
 for n in one two; do
   g=$(cat "$STUB/$n/galaxy"); r=$run1; [ "$n" = two ] && r=$run2
   expect "run $n installs galaxy content in its run directory" "$g" "$R/$r/galaxy"
+  expect "run $n ships the site it built in its run directory" "$(cat "$STUB/$n/site")" "$R/$r/site"
+  check "run $n builds the site into its run directory" grep -qx -- "--prefix $R/site run build -- --outDir $R/$r/site" "$STUB/npm.calls"
 done
 # last.log goes through .build/runs/latest, so the two can never name
 # different runs, whatever order concurrent starts repoint them in.
@@ -182,6 +192,7 @@ expect "run two's debug log survived" "$(cat "$STUB/two/debuglog.kept")" yes
 expect "last.log still resolves to the newest run after the older one ends" \
   "$(cd -P "$(dirname "$R/$(readlink "$R/last.log")")" && pwd)/build.log" "$(cd -P "$R/$run2" && pwd)/build.log"
 check "run one's output is in its own build log" grep -q 'stub packer one done' "$R/$run1/build.log"
+check "build.sh installs the site's pinned packages" grep -qx -- "--prefix $R/site ci --no-audit --no-fund" "$STUB/npm.calls"
 check "run two's output is in its own build log" grep -q 'stub packer two done' "$R/$run2/build.log"
 check "run two's output is not in run one's build log" not grep -q 'stub packer two' "$R/$run1/build.log"
 # Without SAFBOX_DEV each run deletes its own key and galaxy install at the
@@ -299,7 +310,11 @@ expect "the newest run is now the SAFBOX_DEV run" "$(readlink "$R/.build/runs/la
 # that built it. With several runs' keys kept it offers each, newest first
 # (the template accepts only its own); SAFBOX_BUILD_KEY names one. Stub
 # curl answers the Proxmox API calls, stub ssh refuses every login and
-# records the build user's keys, stub sleep skips the waits.
+# records the build user's keys, stub sleep skips the waits. With
+# STUB_BOOT set, the clone's user logs in and the clone's boot ends in that
+# state (running; degraded: finished with a failed unit; hang: never
+# settles; sshfail: ssh itself fails); a stub validate.sh records whether
+# the release gate ran.
 cp "$ROOT/scripts/clone-and-ssh.sh" "$R/scripts/clone-and-ssh.sh"
 older="$R/.build/runs/20200101T000000Z-aaaaaa"
 mkdir -p "$older"; ssh-keygen -q -t rsa -b 2048 -N '' -C older -f "$older/build_key"
@@ -317,18 +332,40 @@ esac
 EOF
 cat > "$tmp/cbin/ssh" <<'EOF'
 #!/usr/bin/env bash
-keys=() target=""
+keys=() target="" cmd=""
 while [ $# -gt 0 ]; do
   case "$1" in
     -i) keys+=("$2"); shift 2 ;;
     -o) shift 2 ;;
-    *@*) target=$1; shift ;;
+    *@*) target=$1; shift; cmd="$*"; break ;;
     *) shift ;;
   esac
 done
 case "$target" in packer@*) printf '%s\n' "${keys[@]}" > "$STUB_DIR/build-user-keys" ;; esac
-exit 255
+[ -n "${STUB_BOOT:-}" ] || exit 255
+# admin (cloud-init's default user) and safuser, which first boot
+# gives the same key.
+case "$target" in admin@192.0.2.50|safuser@192.0.2.50) ;; *) exit 255 ;; esac
+# STUB_SAFUSER_REFUSED=1: first boot did not make safuser, so it never logs in.
+case "$target" in safuser@*) [ "${STUB_SAFUSER_REFUSED:-0}" = 1 ] && exit 255 ;; esac
+case "$cmd" in
+  *is-system-running*)
+    case "$STUB_BOOT" in
+      hang) exec /usr/bin/sleep 60 ;;
+      sshfail) exit 255 ;;
+      running) echo running ;;
+      *) echo "$STUB_BOOT"; exit 1 ;;
+    esac ;;
+  *--failed*) echo 'abc-123.service loaded failed failed [systemd-run] /usr/bin/podman healthcheck run abc' ;;
+  *list-jobs*) echo '42 vulcan.service start running' ;;
+  *) printf 'ok\nfips_enabled=1\nhostname=safbox-clone-9170\n' ;;
+esac
 EOF
+cat > "$R/scripts/validate.sh" <<'EOF'
+#!/bin/sh
+echo scanned > "$STUB_DIR/scanned"
+EOF
+chmod +x "$R/scripts/validate.sh"
 printf '#!/bin/sh\nexit 0\n' > "$tmp/cbin/sleep"
 chmod +x "$tmp/cbin/curl" "$tmp/cbin/ssh" "$tmp/cbin/sleep"
 clone() { # env...
@@ -341,6 +378,32 @@ expect "clone-and-ssh offers every kept run key, newest first" \
   "$(clone)" "$(printf '%s\n' "$R/$rund/build_key" "$older/build_key")"
 expect "SAFBOX_BUILD_KEY names the run's key" \
   "$(clone SAFBOX_BUILD_KEY="$older/build_key")" "$older/build_key"
+
+# The release gate runs only once the clone has finished booting. A finished
+# boot with failed units (degraded) is scanned, the units listed; a boot that
+# never settles within SAFBOX_READY_TIMEOUT fails, naming the queued jobs,
+# without a scan. The stub's hang lasts 60 s and each run here is cut at
+# 15 s (exit 124), so the hang case passes only if clone-and-ssh.sh
+# enforces its own timeout.
+boot() { # state [env...]: "<exit status> <scanned|not scanned>"
+  local state=$1 rc=0; shift
+  rm -f "$STUB/scanned"
+  env "$@" STUB_BOOT="$state" HOME="$tmp/home" PATH="$tmp/cbin:$PATH" STUB_DIR="$STUB" SAFBOX_PROXMOX_ENV="$tmp/packer.env" \
+    SAFBOX_NODE=node SAFBOX_POOL=pool timeout 15 "$R/scripts/clone-and-ssh.sh" 9000 9170 --keep >"$STUB/clone.out" 2>&1 || rc=$?
+  if [ -e "$STUB/scanned" ]; then echo "$rc scanned"; else echo "$rc not scanned"; fi
+}
+expect "a clone that finished booting is scanned" "$(boot running)" "0 scanned"
+check "safuser logs in with the deployer's key before the scan" grep -q 'PASS: safuser logs in' "$STUB/clone.out"
+expect "a clone whose boot ends degraded is scanned" "$(boot degraded)" "0 scanned"
+check "the failed units are listed" grep -q 'healthcheck' "$STUB/clone.out"
+expect "a clone whose boot never settles fails unscanned within SAFBOX_READY_TIMEOUT" "$(boot hang SAFBOX_READY_TIMEOUT=1)" "1 not scanned"
+check "the timeout message says it timed out" grep -q 'still booting after 1s' "$STUB/clone.out"
+check "the timeout message names the queued job" grep -q 'vulcan.service' "$STUB/clone.out"
+expect "a failed ssh while waiting fails unscanned" "$(boot sshfail)" "1 not scanned"
+check "the ssh failure is not reported as a timeout" grep -q 'ssh failed (exit 255)' "$STUB/clone.out"
+expect "a SAFBOX_READY_TIMEOUT that is not a positive number is refused" "$(boot running SAFBOX_READY_TIMEOUT=10m)" "2 not scanned"
+expect "a clone where safuser never logs in fails unscanned" "$(boot running STUB_SAFUSER_REFUSED=1)" "1 not scanned"
+check "the failure names safuser" grep -q 'SSH as safuser with the deployer.s key failed' "$STUB/clone.out"
 
 [ "$failures" -eq 0 ] || exit 1
 echo "PASS: concurrent build.sh runs keep their own keys, logs and galaxy installs; clone-and-ssh finds them"

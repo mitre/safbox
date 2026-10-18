@@ -29,3 +29,8 @@ platform_container_example_enabled: "{{ safbox_example_quadlet_enabled }}"
 platform_container_example_name: safbox-example
 platform_container_example_image: "{{ safbox_image_pause.name }}@{{ safbox_image_pause.digest }}"
 platform_container_example_memory_max: 64M
+
+# A GNOME desktop on the console, booting to the graphical login (task group
+# 7). Follows the project switch in group_vars/all/main.yml, which also
+# approves the GUI to the STIG hardening.
+platform_desktop_enabled: "{{ safbox_desktop_enabled }}"

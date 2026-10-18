@@ -5,6 +5,7 @@
 #
 #   scripts/build.sh                 # uses packer/*.auto.pkrvars.hcl
 #   scripts/build.sh -var vm_memory=4096
+#   scripts/build.sh -var vga=std      # standard VGA instead of the default qxl (SPICE)
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
@@ -117,10 +118,23 @@ export PATH="$HOME/.local/bin:$PATH"
 # The build validates the VM from this machine before sealing it.
 "$ROOT/scripts/check-tools.sh"
 
+# The documentation site the box serves (docs/, built with VitePress), built
+# here from its lockfile so the box needs neither npm nor the registry. It
+# goes into this run's own directory; npm and VitePress also write inside
+# site/ itself (node_modules, .vitepress/.temp), so concurrent runs take
+# turns there under a lock.
+SITE_DIR="$RUN_DIR/site"
+(
+  flock 9
+  npm --prefix "$ROOT/site" ci --no-audit --no-fund
+  npm --prefix "$ROOT/site" run build -- --outDir "$SITE_DIR"
+) 9>"$ROOT/.build/site.lock"
+
 packer init packer/
 packer build \
   -var "ssh_public_key=$(cat "$KEY.pub")" \
   -var "ssh_private_key_file=$KEY" \
   -var "galaxy_dir=$GALAXY_DIR" \
+  -var "site_dir=$SITE_DIR" \
   -var "git_revision=$REVISION" \
   "$@" packer/

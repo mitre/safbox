@@ -18,9 +18,26 @@
     - name: Vulcan and its PostgreSQL
       ansible.builtin.import_tasks: vulcan.yml
 
+- name: Keycloak
+  when: safbox_services_5 | default(true) | bool
+  tags: [safbox-services-5]
+  block:
+    - name: Keycloak and its PostgreSQL
+      ansible.builtin.import_tasks: keycloak.yml
+
 - name: TLS proxy
   when: safbox_services_3 | default(true) | bool
   tags: [safbox-services-3]
   block:
     - name: The nginx TLS proxy for the enabled applications
       ansible.builtin.import_tasks: proxy.yml
+
+# Desktop builds only (safbox_desktop_enabled).
+- name: Firefox bookmarks
+  when:
+    - safbox_services_4 | default(true) | bool
+    - safbox_desktop_enabled | default(false) | bool
+  tags: [safbox-services-4]
+  block:
+    - name: Firefox bookmarks for the services on a desktop build
+      ansible.builtin.import_tasks: firefox.yml

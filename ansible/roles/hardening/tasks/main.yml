@@ -24,6 +24,33 @@
           run 'ansible-galaxy install -r requirements.yml' in the ansible/ directory.
         quiet: true
 
+    # Account lockout. Lockdown puts pam_faillock in the PAM stacks
+    # (RHEL-10-600600, 600610) and holds a lock until an administrator
+    # releases it (RHEL-10-600425) only with rhel10stig_disruption_high,
+    # which SAFBox leaves off; without them no failed password locks any
+    # account. They are applied here, before Lockdown, the stacks through
+    # authselect, the distribution's tool for them. Lockdown sets the rest
+    # of /etc/security/faillock.conf (3 failures in 15 minutes, no
+    # even_deny_root: root's lockout is a deviation in the STIG overlay).
+    # admin, which logs in with a key and has passwordless sudo, runs no
+    # PAM authentication and so is never locked out; admin releases a
+    # locked account with faillock --reset.
+    - name: Read the authselect configuration
+      ansible.builtin.command: authselect current
+      changed_when: false
+      register: hardening_authselect
+
+    - name: Lock an account after failed passwords (pam_faillock)
+      when: "'with-faillock' not in hardening_authselect.stdout"
+      ansible.builtin.command: authselect enable-feature with-faillock
+      changed_when: true
+
+    - name: Hold an account lock until an administrator releases it
+      ansible.builtin.lineinfile:
+        path: /etc/security/faillock.conf
+        regexp: '^#?\s*unlock_time\s*='
+        line: unlock_time = 0
+
     - name: Apply the RHEL 10 STIG with the pinned Lockdown role
       ansible.builtin.include_role:
         name: "{{ safbox_hardening_lockdown.name }}"

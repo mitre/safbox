@@ -23,6 +23,27 @@ inputs:
       before the seal (verify/inputs/build.yml).
     type: Boolean
     value: true
+  - name: desktop
+    description: >-
+      True for an image built with the desktop (safbox_desktop_enabled):
+      GNOME and its login screen on the console. False, the default, for
+      the headless image.
+    type: Boolean
+    value: false
+  - name: admin_user
+    description: >-
+      admin, cloud-init's default user: the deployer's key-only account
+      for deploying and automation, the one account with passwordless
+      sudo. A site whose deployment names its cloud-init user otherwise
+      sets that name here; empty for a box deployed without one.
+    type: String
+    value: admin
+  - name: safuser
+    description: >-
+      True when first boot makes safuser (safbox_base_5 on, the default);
+      false for an image built with that group switched off.
+    type: Boolean
+    value: true
   - name: expected_tools
     description: Tools the image ships. Remove one a site switches off.
     type: Array
@@ -30,7 +51,14 @@ inputs:
   - name: expected_services
     description: Services the image ships. Remove one a site switches off.
     type: Array
-    value: [heimdall, vulcan, proxy]
+    value: [heimdall, vulcan, keycloak, proxy]
+  - name: domain
+    description: >-
+      The domain the TLS proxy serves (safbox_domain in group_vars): the
+      start page at the domain itself, each application at
+      <application>.<domain>.
+    type: String
+    value: safbox.internal
   - name: trusted_roots
     description: >-
       Labels of CA certificates that must be in the system trust store. The

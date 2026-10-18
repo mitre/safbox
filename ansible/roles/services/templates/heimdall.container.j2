@@ -10,7 +10,9 @@
 #                                           (DATABASE_PASSWORD, JWT_SECRET,
 #                                           API_KEY_SECRET); JWT_EXPIRE_TIME,
 #                                           which upstream's setup script asks
-#                                           for, is set here
+#                                           for, is set here, and EXTERNAL_URL
+#                                           (.env-example), the proxy's name
+#                                           for Heimdall
 #   ports "3000"                         -> published by the pod on 127.0.0.1
 #   depends_on database (healthy)        -> Requires and After heimdall-db.service
 #   cert_bundles volume at               -> the host's extracted trust store,
@@ -35,6 +37,20 @@ Pod=heimdall.pod
 Environment=NODE_ENV=production
 Environment=DATABASE_HOST=127.0.0.1
 Environment=JWT_EXPIRE_TIME={{ services_heimdall_jwt_expire_time }}
+Environment=EXTERNAL_URL=https://{{ services_heimdall_host }}
+# The one local account is the administrator, made on the first start
+# from ADMIN_PASSWORD (heimdall.env); nobody registers (.env-example).
+Environment=REGISTRATION_DISABLED=true
+Environment=ADMIN_EMAIL=admin@{{ safbox_domain }}
+{% if services_keycloak_enabled | bool %}
+# Everyone else signs in through Keycloak: Heimdall's custom OIDC provider
+# (.env-example, "Custom OIDC Service"), with PKCE; the client secret is in
+# heimdall-oidc.env, which Keycloak reads too.
+{% for name, value in services_heimdall_oidc_settings | dictsort %}
+Environment={{ name }}={{ value }}
+{% endfor %}
+EnvironmentFile={{ services_heimdall_oidc_env_file }}
+{% endif %}
 EnvironmentFile={{ services_heimdall_env_file }}
 Memory={{ services_heimdall_memory }}
 Volume={{ platform_container_trust_volume }}

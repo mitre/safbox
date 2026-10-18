@@ -23,3 +23,17 @@ platform_container_packages:
 # The host's extracted CA trust store, mounted read-only into the service
 # containers (Red Hat UBI images, which read it at the same path).
 platform_container_trust_volume: /etc/pki/ca-trust/extracted:/etc/pki/ca-trust/extracted:ro
+
+# Desktop (task group 7): the distribution's "Server with GUI" environment
+# group, the same set the kickstart's graphical-server-environment installs.
+platform_desktop_packages:
+  - "@graphical-server-environment"
+platform_desktop_display_manager: gdm
+
+# Packages the desktop's comps groups would install that the STIG removes:
+# @standard brings tuned, Lockdown removes it (RHEL-10-200040), and every
+# run would reinstall it. Excluded in dnf's configuration on desktop builds,
+# each with the STIG rule that removes it.
+platform_desktop_package_excludes:
+  - package: tuned
+    stig_id: RHEL-10-200040

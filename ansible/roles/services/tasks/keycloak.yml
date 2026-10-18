@@ -1,0 +1,129 @@
+---
+# Keycloak and its PostgreSQL as a podman pod of Quadlet units, the single
+# sign-on for Heimdall and Vulcan: task group safbox-services-5, imported
+# by tasks/main.yml, which applies the group's tag and its switch
+# safbox_services_5.
+
+# The image is built here, at image build, so a clone starts Keycloak
+# offline and fetches nothing.
+- name: Create Keycloak's configuration directory
+  ansible.builtin.file:
+    path: "{{ services_keycloak_conf_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Create the Keycloak image's build context
+  ansible.builtin.file:
+    path: "{{ services_keycloak_build_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+# get_url checks each jar against its pinned sha256: a changed upstream
+# file fails the build.
+- name: Download the Bouncy Castle FIPS jars and verify their checksums
+  ansible.builtin.get_url:
+    url: "{{ services_keycloak_jar_url }}/{{ item.name }}/{{ item.version }}/{{ item.name }}-{{ item.version }}.jar"
+    dest: "{{ services_keycloak_build_dir }}/{{ item.name }}-{{ item.version }}.jar"
+    checksum: "sha256:{{ item.sha256 }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop: "{{ safbox_keycloak_fips_jars }}"
+  loop_control:
+    label: "{{ item.name }}-{{ item.version }}"
+
+- name: Record the jars' checksums
+  ansible.builtin.template:
+    src: keycloak-providers.sha256.j2
+    dest: "{{ services_keycloak_conf_dir }}/providers.sha256"
+    owner: root
+    group: root
+    mode: '0644'
+  register: services_keycloak_sums
+
+- name: Install the Containerfile of Keycloak's FIPS image
+  ansible.builtin.template:
+    src: keycloak.Containerfile.j2
+    dest: "{{ services_keycloak_conf_dir }}/Containerfile"
+    owner: root
+    group: root
+    mode: '0644'
+  register: services_keycloak_containerfile
+
+# The tag is Keycloak's version, so new jars under the same Keycloak need
+# a rebuild: forced whenever the Containerfile or the sums change.
+- name: Build Keycloak's FIPS image
+  containers.podman.podman_image:
+    name: "{{ services_keycloak_image }}"
+    path: "{{ services_keycloak_build_dir }}"
+    build:
+      file: "{{ services_keycloak_conf_dir }}/Containerfile"
+      format: oci
+    force: "{{ services_keycloak_containerfile is changed or services_keycloak_sums is changed }}"
+    state: build
+
+# Pulled at build so a clone starts its pod offline.
+- name: Pull Keycloak's PostgreSQL image
+  containers.podman.podman_image:
+    name: "{{ services_keycloak_db_image }}"
+    state: present
+
+- name: Install the first-boot hook that generates Keycloak's secrets
+  ansible.builtin.copy:
+    src: 50-keycloak.sh
+    dest: "{{ services_keycloak_firstboot_hook }}"
+    owner: root
+    group: root
+    mode: '0755'
+
+# Read before the units are written, so the restart handler knows
+# whether this is a deployed box (secrets exist) or a build.
+- name: Check whether first boot has generated Keycloak's secrets
+  ansible.builtin.stat:
+    path: "{{ services_keycloak_env_file }}"
+  register: services_keycloak_secrets
+
+# Imported on Keycloak's first start only; a change here reaches a
+# deployed box's realm through Keycloak's admin console, not this file.
+- name: Install the safbox realm
+  ansible.builtin.template:
+    src: safbox-realm.json.j2
+    dest: "{{ services_keycloak_conf_dir }}/safbox-realm.json"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Install the Keycloak Quadlet units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "{{ platform_container_quadlet_dir }}/{{ item }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop:
+    - keycloak.network
+    - keycloak.pod
+    - keycloak-db.volume
+    - keycloak-db.container
+    - keycloak.container
+  notify:
+    - Reload systemd units
+    - Restart Keycloak
+
+- name: Generate the units from the Quadlet files
+  ansible.builtin.meta: flush_handlers
+
+# As for Heimdall: started, never enabled, and only on a deployed box.
+- name: Start Keycloak on a deployed box
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    state: started
+  loop:
+    - keycloak-pod.service
+    - keycloak-db.service
+    - keycloak.service
+  when: services_keycloak_secrets.stat.exists

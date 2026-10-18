@@ -14,10 +14,11 @@ cd "$ROOT"
 
 PATTERN='(^|[^[:alnum:]_])(proxmox|vsphere|vmware|aws|azure|gcp|hyper-v|virtualbox|qemu|kvm)([^[:alnum:]_]|$)'
 
-# Install layer and documentation, where naming the target is the point.
+# Install layer and documentation (docs/ and the site built from it), where
+# naming the target is the point.
 # The secret-scanning rules and their test name the install layer's own
 # credential (the hypervisor API token) so it can never be committed.
-ALLOW_DIRS=(packer tests/packer tests/kickstart tests/secrets scripts tests/scripts docs)
+ALLOW_DIRS=(packer tests/packer tests/kickstart tests/secrets scripts tests/scripts docs site)
 ALLOW_FILES=(README.md NOTICE tests/platform-discipline.sh .gitleaks.toml)
 # Tool and state directories that are not project content.
 SKIP_DIRS=(.git .beads .build .dolt .claude .codex .agents packer_cache collections)

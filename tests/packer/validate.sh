@@ -49,6 +49,12 @@ reject "an IPv6 address as proxmox_node" "proxmox_node must be the node's name" 
 reject "a Rocky Workstation-Lite live ISO" "iso_file must be an installer ISO" -var iso_file=local:iso/Rocky-10-Workstation-Lite-x86_64-latest.iso
 reject "an AlmaLinux Live-GNOME ISO" "iso_file must be an installer ISO" -var iso_file=local:iso/AlmaLinux-10-latest-x86_64-Live-GNOME.iso
 reject "a KDE live ISO" "iso_file must be an installer ISO" -var iso_file=local:iso/Rocky-10.2-KDE-x86_64-latest.iso
+# The display adapter: qxl (the default; SPICE) or std (standard VGA, noVNC
+# only). Anything else Proxmox accepts is out of scope and rejected.
+reject "vga virtio" "vga must be qxl (SPICE, the default) or std" -var vga=virtio
+reject "vga serial0" "vga must be qxl (SPICE, the default) or std" -var vga=serial0
+reject "vga QXL in capitals" "vga must be qxl (SPICE, the default) or std" -var vga=QXL
+reject "an empty vga" "vga must be qxl (SPICE, the default) or std" -var vga=
 
 # Legitimate values the checks must not mistake for those: node names, and
 # installer ISOs whose storage or file name merely contains a live-image word.
@@ -66,6 +72,8 @@ accept "storage 'nas-automated' with a DVD ISO" -var iso_file=nas-automated:iso/
 accept "a file name containing 'ultimate'" -var iso_file=local:iso/rocky-ultimate-minimal.iso
 accept "an AlmaLinux x86_64_v2 DVD" -var iso_file=local:iso/AlmaLinux-10.1-x86_64_v2-dvd.iso
 accept "a storage named 'live-nas'" -var iso_file=live-nas:iso/Rocky-10.2-x86_64-minimal.iso
+accept "vga std (standard VGA)" -var vga=std
+accept "vga qxl (SPICE, the default)" -var vga=qxl
 # galaxy_dir (scripts/build.sh passes one per run, so concurrent builds never
 # install into the same place) reaches every path Ansible reads: the galaxy
 # install paths and the ANSIBLE_* search paths, with ansible.cfg's paths

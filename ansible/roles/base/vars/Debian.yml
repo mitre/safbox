@@ -1,0 +1,17 @@
+---
+# Debian family (Debian, Ubuntu) names. Present per ADR-0001 but untested
+# until the Ubuntu source lands.
+
+# growpart, for the disk-growing first-boot hook.
+base_family_packages:
+  - cloud-guest-utils
+
+# jq reads cloud-init's configuration; pwmake and pwscore generate a password
+# that meets the password quality policy (the safuser hook).
+base_safuser_packages:
+  - jq
+  - libpwquality-tools
+
+# jq reads cloud-init's configuration (the admin hook).
+base_admin_packages:
+  - jq

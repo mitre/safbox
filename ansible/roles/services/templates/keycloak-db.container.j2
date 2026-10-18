@@ -1,0 +1,33 @@
+# {{ ansible_managed }}
+# Keycloak's PostgreSQL, in the shape of heimdall-db.container and from the
+# same pinned image (Keycloak's server guide names PostgreSQL among its
+# supported databases).
+[Unit]
+Description=Keycloak PostgreSQL
+After=safbox-firstboot.service
+ConditionPathExists={{ services_keycloak_db_env_file }}
+
+[Container]
+Image={{ services_keycloak_db_image }}
+ContainerName=keycloak-db
+Pod=keycloak.pod
+Volume=keycloak-db.volume:/var/lib/postgresql/data
+Environment=POSTGRES_DB=keycloak
+Environment=PGDATA=/var/lib/postgresql/data/pgdata
+EnvironmentFile={{ services_keycloak_db_env_file }}
+HealthCmd=pg_isready -U postgres
+HealthInterval=30s
+HealthTimeout=60s
+HealthRetries=5
+HealthStartPeriod=80s
+Notify=healthy
+Memory={{ services_keycloak_db_memory }}
+NoNewPrivileges=true
+
+[Service]
+Restart=always
+# The first start initialises the database and waits for a healthy check.
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target

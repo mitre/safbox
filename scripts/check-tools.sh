@@ -10,6 +10,7 @@
 #   Ansible       the ansible pin in tests/requirements.txt (exact)
 #   CINC Auditor  inspec_version in verify/profiles/*/inspec.yml (minimum)
 #   SAF CLI       SAF_CLI_VERSION in .github/workflows/static.yml (warn only)
+#   Node.js, npm  engines.node in site/package.json (minimum)
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 GUIDE="docs/guides/proxmox/build.md#prerequisites"
@@ -75,8 +76,19 @@ else
   [ "$v" = "$saf_ci" ] || warn "SAF CLI is ${v:-of unknown version}; the build is tested with $saf_ci"
 fi
 
+# Node.js and npm build the documentation site (site/package.json engines).
+node_min=$(sed -nE 's/.*"node": *">= *([0-9.]+)".*/\1/p' "$ROOT/site/package.json")
+if ! command -v node >/dev/null || ! command -v npm >/dev/null; then
+  problem "Node.js and npm not found; install Node.js $node_min or newer, see $GUIDE"
+else
+  v=$(node --version 2>/dev/null | semver || true)
+  if [ -z "$v" ] || ! at_least "$v" "$node_min"; then
+    problem "Node.js ${v:-of unknown version} found at $(command -v node); need $node_min or newer, see $GUIDE"
+  fi
+fi
+
 # Plain command-line tools: any version.
-for t in git "ssh:OpenSSH client (ssh)" "ssh-keygen:OpenSSH client (ssh-keygen)" curl jq; do
+for t in git "ssh:OpenSSH client (ssh)" "ssh-keygen:OpenSSH client (ssh-keygen)" curl jq flock; do
   command -v "${t%%:*}" >/dev/null || problem "${t#*:} not found; see $GUIDE"
 done
 

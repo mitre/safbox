@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Acceptance check for the install layer: clone the template, hand the clone
 # a cloud-init user and key, boot it, learn its IP from the guest agent, and
-# prove SSH works. Uses only the Proxmox API, so it runs with the same
-# least-privilege token as the build.
+# prove SSH works, as admin (the deployer's key-only account) and, once
+# first boot has made it, as safuser. Uses only the Proxmox API, so it runs
+# with the same least-privilege token as the build.
 #
 #   scripts/clone-and-ssh.sh <template-vmid> <clone-vmid> [--keep]
 #
@@ -17,7 +18,14 @@
 #      SAFBOX_SITE_INPUTS (optional: a site's inputs file for the release
 #      gate, validate.sh --site-inputs), SAFBOX_SSH_CONFIG
 #      (optional: the SSH client config CINC Auditor reads instead of its
-#      defaults, /dev/null for none; validate.sh --ssh-config).
+#      defaults, /dev/null for none; validate.sh --ssh-config),
+#      SAFBOX_READY_TIMEOUT (seconds to wait for the clone to finish
+#      booting before the release gate; default 600),
+#      SAFBOX_CLONE_USER (cloud-init's ciuser, its default user; default
+#      admin), SAFBOX_CLONE_PASSWORD (optional: cipassword, which first
+#      boot gives safuser, never admin; an 'openssl passwd -6' hash, since
+#      Proxmox hashes a plain one with SHA-256; without it first boot
+#      generates safuser's password).
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 TEMPLATE_ID=${1:?template vmid}
@@ -32,9 +40,13 @@ if [ -f "$ENV_FILE" ]; then
   set +a
 fi
 : "${PROXMOX_URL:?}" "${PROXMOX_USERNAME:?}" "${PROXMOX_TOKEN:?}" "${SAFBOX_NODE:?set SAFBOX_NODE}" "${SAFBOX_POOL:?set SAFBOX_POOL}"
+READY_TIMEOUT=${SAFBOX_READY_TIMEOUT:-600}
+case "$READY_TIMEOUT" in
+  '' | *[!0-9]* | 0*) echo "SAFBOX_READY_TIMEOUT must be a positive whole number of seconds, not '$READY_TIMEOUT'" >&2; exit 2 ;;
+esac
 NODE=$SAFBOX_NODE
 POOL=$SAFBOX_POOL
-USER_NAME=${SAFBOX_CLONE_USER:-safbox}
+USER_NAME=${SAFBOX_CLONE_USER:-admin}
 KEY=${SAFBOX_SSH_KEY:-$ROOT/.build/clone_key}
 if [ ! -f "$KEY" ]; then
   mkdir -p "$(dirname "$KEY")"
@@ -108,6 +120,10 @@ echo "configuring cloud-init"
   --data-urlencode "sshkeys=$(printf '%s' "$PUB" | jq -sRr @uri)" \
   --data-urlencode "ipconfig0=ip=dhcp" \
   --data-urlencode "ciupgrade=0" >/dev/null   # no first-boot dnf upgrade (qemu-server >= 8.1)
+if [ -n "${SAFBOX_CLONE_PASSWORD:-}" ]; then
+  "${CURL[@]}" -X PUT "$API/nodes/$NODE/qemu/$CLONE_ID/config" \
+    --data-urlencode "cipassword=$SAFBOX_CLONE_PASSWORD" >/dev/null
+fi
 
 echo "starting"
 upid=$("${CURL[@]}" -X POST "$API/nodes/$NODE/qemu/$CLONE_ID/status/start" | jq -r .data)
@@ -124,23 +140,55 @@ done
 [ -n "$ip" ] || { echo "no IP from guest agent" >&2; exit 1; }
 echo "clone IP: $ip"
 
+# LogLevel=ERROR keeps ssh's own warnings and the login banner out of the
+# output; only the remote commands' output is shown.
+SSH_OPTS=(-i "$KEY" -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 -o LogLevel=ERROR)
 echo "waiting for SSH as $USER_NAME (first boot runs cloud-init; allow several minutes on small hosts)"
 for _ in $(seq 1 72); do
-  if out=$(ssh -i "$KEY" -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 \
-        "$USER_NAME@$ip" 'echo ok; echo "fips_enabled=$(cat /proc/sys/crypto/fips_enabled)"; echo "hostname=$(hostnamectl --static)"; sudo -n cloud-init status 2>/dev/null || echo "cloud-init status unavailable to this user"' 2>/dev/null); then
+  if out=$(ssh "${SSH_OPTS[@]}" "$USER_NAME@$ip" 'echo ok; echo "fips_enabled=$(cat /proc/sys/crypto/fips_enabled)"; echo "hostname=$(hostnamectl --static)"; sudo -n cloud-init status 2>/dev/null || echo "cloud-init status unavailable to this user"' 2>/dev/null); then
     echo "$out"
     # SSH alone is not enough: the clone must be a FIPS system with cloud-init's hostname.
     echo "$out" | grep -q '^fips_enabled=1$' || { echo "FAIL: clone is not in FIPS mode" >&2; exit 1; }
     echo "$out" | grep -q "^hostname=safbox-clone-$CLONE_ID\$" || { echo "FAIL: cloud-init did not set the clone's hostname" >&2; exit 1; }
     echo "PASS: clone $CLONE_ID reachable over SSH with the cloud-init user, FIPS on"
+    if [ "${SAFBOX_SKIP_VALIDATE:-0}" = 1 ]; then exit 0; fi
+    # SSH answers before first boot has finished: the secrets, the pods and
+    # the proxy come later. Wait until the boot's job queue has settled; a
+    # switched-off service has no units, so it neither holds this up nor
+    # fails it. "degraded" is a finished boot too: a podman healthcheck that
+    # fails while its container is still starting leaves a failed transient
+    # unit. The scan judges the services; the failed units are listed here.
+    echo "waiting up to ${READY_TIMEOUT}s for the clone to finish booting (first boot, pods, proxy)"
+    rc=0
+    state=$(timeout "$READY_TIMEOUT" ssh "${SSH_OPTS[@]}" "$USER_NAME@$ip" 'systemctl is-system-running --wait' 2>/dev/null) || rc=$?
+    case "$state" in
+      running) echo "clone $CLONE_ID finished booting" ;;
+      degraded)
+        echo "clone $CLONE_ID finished booting with failed units:"
+        timeout 30 ssh "${SSH_OPTS[@]}" "$USER_NAME@$ip" 'systemctl --failed --plain --no-legend' 2>/dev/null || true ;;
+      *)
+        if [ "$rc" = 124 ]; then
+          echo "FAIL: clone $CLONE_ID still booting after ${READY_TIMEOUT}s (SAFBOX_READY_TIMEOUT); jobs still queued:" >&2
+        elif [ -z "$state" ]; then
+          echo "FAIL: clone $CLONE_ID: ssh failed (exit $rc) while waiting for the boot to finish; jobs still queued:" >&2
+        else
+          echo "FAIL: clone $CLONE_ID ended its boot in state '$state'; jobs still queued:" >&2
+        fi
+        timeout 30 ssh "${SSH_OPTS[@]}" "$USER_NAME@$ip" 'systemctl list-jobs --plain --no-legend' >&2 2>/dev/null || true
+        exit 1 ;;
+    esac
+    # First boot gives safuser the deployer's key.
+    if ! timeout 30 ssh "${SSH_OPTS[@]}" "safuser@$ip" true 2>/dev/null; then
+      echo "FAIL: clone $CLONE_ID: SSH as safuser with the deployer's key failed" >&2
+      exit 1
+    fi
+    echo "PASS: safuser logs in with the deployer's key"
     # Release gate: both profiles, from outside, against what a consumer
     # receives, after first boot.
-    if [ "${SAFBOX_SKIP_VALIDATE:-0}" != 1 ]; then
-      site=()
-      if [ -n "${SAFBOX_SITE_INPUTS:-}" ]; then site+=(--site-inputs "$SAFBOX_SITE_INPUTS"); fi
-      if [ -n "${SAFBOX_SSH_CONFIG:-}" ]; then site+=(--ssh-config "$SAFBOX_SSH_CONFIG"); fi
-      "$ROOT/scripts/validate.sh" ${site[@]+"${site[@]}"} "$USER_NAME@$ip" "$KEY" release "clone-$CLONE_ID"
-    fi
+    site=()
+    if [ -n "${SAFBOX_SITE_INPUTS:-}" ]; then site+=(--site-inputs "$SAFBOX_SITE_INPUTS"); fi
+    if [ -n "${SAFBOX_SSH_CONFIG:-}" ]; then site+=(--ssh-config "$SAFBOX_SSH_CONFIG"); fi
+    "$ROOT/scripts/validate.sh" ${site[@]+"${site[@]}"} "$USER_NAME@$ip" "$KEY" release "clone-$CLONE_ID"
     exit 0
   fi
   sleep 5

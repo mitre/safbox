@@ -42,6 +42,11 @@ source "proxmox-iso" "el10" {
   cores    = var.vm_cores
   memory   = var.vm_memory
 
+  # qxl (default) for SPICE; std for standard VGA. noVNC works with both.
+  vga {
+    type = var.vga
+  }
+
   scsi_controller = "virtio-scsi-single"
   disks {
     type         = "scsi"

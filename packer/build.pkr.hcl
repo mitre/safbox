@@ -51,7 +51,10 @@ locals {
     "ANSIBLE_COLLECTIONS_PATH=${local.galaxy_collections}:~/.ansible/collections:/usr/share/ansible/collections",
     "ANSIBLE_FORCE_COLOR=0",
   ]
-  ansible_extra = flatten([for v in var.ansible_extra_vars : ["-e", v]])
+  ansible_extra = concat(
+    flatten([for v in var.ansible_extra_vars : ["-e", v]]),
+    var.site_dir == null ? [] : ["-e", "services_site_src=${var.site_dir}/"],
+  )
 }
 
 build {

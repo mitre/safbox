@@ -21,9 +21,15 @@ firewall --enabled --service=ssh
 skipx
 firstboot --disable
 
-# Partition layout cannot change after install. Separate filesystems for the
-# paths the RHEL STIG requires (/home, /tmp, /var, /var/tmp, /var/log,
-# /var/log/audit); /var grows because podman images live there.
+# Separate filesystems for the paths the RHEL STIG requires (/home, /tmp,
+# /var, /var/tmp, /var/log, /var/log/audit). /boot, /boot/efi, /, /tmp,
+# /var/tmp and swap have small fixed sizes. The volume group's remaining
+# space is shared 40/40/10/10 between /home (automation content, rootless
+# container storage), /var (container images), /var/log and /var/log/audit:
+# --percent is a share of the space left after the fixed volumes (blivet
+# grow_lvm), and --size cannot be given with it. The first-boot hook
+# 10-grow-disk.sh (base role) hands a clone's enlarged disk out by the same
+# shares; keep the two in step.
 zerombr
 clearpart --all --initlabel --disklabel=gpt
 part /boot/efi --fstype=efi --size=600
@@ -31,13 +37,13 @@ part /boot --fstype=xfs --size=1024
 part pv.01 --size=1 --grow
 volgroup vg_safbox pv.01
 logvol /              --vgname=vg_safbox --name=root          --fstype=xfs  --size=12288
-logvol /home          --vgname=vg_safbox --name=home          --fstype=xfs  --size=2048
 logvol /tmp           --vgname=vg_safbox --name=tmp           --fstype=xfs  --size=2048
-logvol /var           --vgname=vg_safbox --name=var           --fstype=xfs  --size=8192 --grow
 logvol /var/tmp       --vgname=vg_safbox --name=var_tmp       --fstype=xfs  --size=2048
-logvol /var/log       --vgname=vg_safbox --name=var_log       --fstype=xfs  --size=4096
-logvol /var/log/audit --vgname=vg_safbox --name=var_log_audit --fstype=xfs  --size=2048
 logvol swap           --vgname=vg_safbox --name=swap          --fstype=swap --size=2048
+logvol /home          --vgname=vg_safbox --name=home          --fstype=xfs  --percent=40 --grow
+logvol /var           --vgname=vg_safbox --name=var           --fstype=xfs  --percent=40 --grow
+logvol /var/log       --vgname=vg_safbox --name=var_log       --fstype=xfs  --percent=10 --grow
+logvol /var/log/audit --vgname=vg_safbox --name=var_log_audit --fstype=xfs  --percent=10 --grow
 
 # fips=1 on the installer command line puts the installer in FIPS mode;
 # --append carries it onto the installed system. Both are required. Other
@@ -97,8 +103,44 @@ EOC
 
 # No distribution default user, even when the None datasource applies
 # defaults on the build VM's own boot. Users come only from the deploy-time
-# datasource.
+# datasource. A deployment that asks for the default user (Proxmox always
+# does, with users: [default]; its User field, when set, renames it) gets
+# admin: key login only, a locked password, passwordless sudo. The
+# set_passwords module is left out of the init stage (the package's
+# cloud_init_modules otherwise, in its order): the top-level password a
+# deployment supplies (Proxmox's Password field) is safuser's, which first
+# boot gives it, and cloud-init must not also set it on admin. Without
+# set_passwords cloud-init also ignores chpasswd and ssh_pwauth; a users
+# list still sets passwords through its own entries.
 cat > /etc/cloud/cloud.cfg.d/80-safbox-users.cfg <<'EOC'
 users: []
+system_info:
+  default_user:
+    name: admin
+    gecos: SAFBox administrator
+    lock_passwd: true
+cloud_init_modules:
+  - seed_random
+  - bootcmd
+  - write_files
+  - growpart
+  - resizefs
+  - disk_setup
+  - mounts
+  - set_hostname
+  - update_hostname
+  - update_etc_hosts
+  - ca_certs
+  - rsyslog
+  - users_groups
+  - ssh
+EOC
+
+# SSH takes keys only. The STIG does not require it; the distribution's
+# cloud.cfg (ssh_pwauth: false) had set_passwords write it, which no longer
+# runs, so SAFBox says it itself, ahead of any later drop-in.
+install -m 0600 /dev/null /etc/ssh/sshd_config.d/40-safbox.conf
+cat > /etc/ssh/sshd_config.d/40-safbox.conf <<'EOC'
+PasswordAuthentication no
 EOC
 %end

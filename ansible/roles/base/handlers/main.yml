@@ -2,3 +2,29 @@
 - name: Reload systemd units
   ansible.builtin.systemd_service:
     daemon_reload: true
+
+# The package update changed something: reboot only when it needs one.
+# dnf needs-restarting -r exits 1 when the kernel or a core library changed
+# since boot; apt leaves /var/run/reboot-required.
+- name: Check whether the update needs a reboot (RHEL family)
+  when: ansible_facts['os_family'] == 'RedHat'
+  ansible.builtin.command: dnf needs-restarting -r
+  register: base_update_needs_restarting
+  changed_when: false
+  failed_when: base_update_needs_restarting.rc not in [0, 1]
+  listen: Packages updated
+
+- name: Check whether the update needs a reboot (Debian family)
+  when: ansible_facts['os_family'] == 'Debian'
+  ansible.builtin.stat:
+    path: /var/run/reboot-required
+  register: base_update_reboot_required
+  listen: Packages updated
+
+- name: Reboot into the updated system
+  when: >-
+    base_update_needs_restarting.rc | default(0) == 1
+    or base_update_reboot_required.stat.exists | default(false)
+  ansible.builtin.reboot:
+    msg: SAFBox package update needs a reboot
+  listen: Packages updated

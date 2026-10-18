@@ -17,7 +17,7 @@ end
 control 'safbox-hardening-2' do
   impact 1.0
   title 'SSH key logins still work after hardening'
-  desc 'sshd accepts public keys through PAM, so the deploy account can log in and administer the box.'
+  desc 'sshd accepts public keys through PAM, so admin can log in and administer the box.'
 
   describe command('sshd -T') do
     its('stdout') { should match(/^pubkeyauthentication yes$/) }

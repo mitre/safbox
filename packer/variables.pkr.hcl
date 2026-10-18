@@ -108,7 +108,7 @@ variable "vm_memory" {
 
 variable "vm_disk_size" {
   type        = string
-  description = "OS disk size. Reference footprint is 60G; the development build uses 40G. Must hold the fixed partition layout in the kickstart (about 32G) plus growth."
+  description = "OS disk size, at least 60G (the reference footprint). The kickstart gives about 20G to fixed-size partitions and volumes and shares the rest 40/40/10/10 between /home, /var, /var/log and /var/log/audit; a clone given a larger disk grows them by the same shares on first boot."
   default     = "60G"
 }
 
@@ -116,6 +116,16 @@ variable "cpu_type" {
   type        = string
   description = "QEMU CPU model for the build VM, inherited by clones. A named model keeps clones migratable across a heterogeneous cluster; 'host' ties them to the build node. RHEL 10 and Rocky 10 require x86-64-v3."
   default     = "x86-64-v3"
+}
+
+variable "vga" {
+  type        = string
+  description = "Display adapter of the build VM, inherited by clones: qxl (the default; SPICE, the tested way to reach a SAFBox console on Proxmox, docs/guides/proxmox/desktop.md) or std (standard VGA, noVNC only). A clone can change it with qm set <vmid> --vga."
+  default     = "qxl"
+  validation {
+    condition     = contains(["std", "qxl"], var.vga)
+    error_message = "The vga must be qxl (SPICE, the default) or std (noVNC only) (docs/guides/proxmox/desktop.md)."
+  }
 }
 
 variable "disk_format" {
@@ -157,6 +167,12 @@ variable "ansible_dir" {
 variable "galaxy_dir" {
   type        = string
   description = "Directory ansible-galaxy installs ansible/requirements.yml into for this build: roles under roles/, collections under collections/, both searched first by the playbooks. scripts/build.sh passes one inside the run's own directory so concurrent builds never install into the same place. Null installs into ansible/galaxy_roles/ and ansible/collections/, the paths ansible.cfg names."
+  default     = null
+}
+
+variable "site_dir" {
+  type        = string
+  description = "The built documentation site (VitePress output) the services role copies to the box as its start page. scripts/build.sh builds it into the run's own directory so concurrent builds never share one. Null uses the role's default, site/.vitepress/dist in the checkout."
   default     = null
 }
 
@@ -232,7 +248,7 @@ variable "iso_label" {
 
 variable "kickstart_url" {
   type        = string
-  description = "Where the installer fetches the kickstart. Null uses Packer's temporary HTTP server on the runner, which the VM's network must be able to reach. In environments where the VM network cannot reach the runner, host the rendered kickstart on an internal web server and set this URL; see docs/rebuild.md."
+  description = "Where the installer fetches the kickstart. Null uses Packer's temporary HTTP server on the runner, which the VM's network must be able to reach. In environments where the VM network cannot reach the runner, host the rendered kickstart on an internal web server and set this URL; see docs/guides/proxmox/build.md, \"When the VM cannot reach your workstation\"."
   default     = null
 }
 

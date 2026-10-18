@@ -1,0 +1,19 @@
+# {{ ansible_managed }}
+# The keycloak pod: Keycloak and its PostgreSQL share one network
+# namespace. The pod publishes Keycloak's HTTP port on the loopback address
+# only, for the TLS proxy, like the heimdall and vulcan pods (ADR-0001
+# Quality Standards: services bind to the proxy, not to all interfaces).
+# The database is published nowhere. Starts only after first boot has
+# written Keycloak's secrets.
+[Unit]
+Description=Keycloak pod (Keycloak and its PostgreSQL)
+After=safbox-firstboot.service
+ConditionPathExists={{ services_keycloak_env_file }}
+
+[Pod]
+PodName=keycloak
+Network=keycloak.network
+PublishPort=127.0.0.1:{{ safbox_keycloak_loopback_port }}:8080
+
+[Install]
+WantedBy=multi-user.target

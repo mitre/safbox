@@ -7,7 +7,18 @@
 # setup-docker-secrets.sh (https://github.com/mitre/vulcan/blob/master/setup-docker-secrets.sh):
 #   /etc/safbox/vulcan.env     POSTGRES_PASSWORD (openssl rand -hex 33),
 #                              SECRET_KEY_BASE (-hex 64), CIPHER_PASSWORD
-#                              (-hex 64), CIPHER_SALT (-hex 32)
+#                              (-hex 64), CIPHER_SALT (-hex 32),
+#                              VULCAN_ADMIN_PASSWORD, the password of the one
+#                              local account, the administrator, which Vulcan
+#                              makes on its first start (lib/tasks/
+#                              admin_bootstrap.rake): -hex 24 and a fixed
+#                              run of two upper case letters, two lower case,
+#                              two digits and two symbols, as Vulcan's own
+#                              generator does, so it meets Vulcan's default
+#                              complexity rule whatever the random part holds
+#   /etc/safbox/vulcan-oidc.env VULCAN_OIDC_CLIENT_SECRET (-hex 32), Vulcan's
+#                              client secret in Keycloak, read by both;
+#                              unused while Keycloak is switched off
 #   /etc/safbox/vulcan-db.env  POSTGRES_PASSWORD, the same database password,
 #                              for the PostgreSQL container, which needs
 #                              nothing else
@@ -32,6 +43,10 @@ safbox_ensure_secret "$env_file" POSTGRES_PASSWORD 33
 safbox_ensure_secret "$env_file" SECRET_KEY_BASE 64
 safbox_ensure_secret "$env_file" CIPHER_PASSWORD 64
 safbox_ensure_secret "$env_file" CIPHER_SALT 32
+if ! grep -q '^VULCAN_ADMIN_PASSWORD=' "$env_file"; then
+  printf 'VULCAN_ADMIN_PASSWORD=%sAZaz09!@\n' "$(openssl rand -hex 24)" >> "$env_file"
+fi
+safbox_ensure_secret "${SAFBOX_ETC_DIR}/vulcan-oidc.env" VULCAN_OIDC_CLIENT_SECRET 32
 
 safbox_ensure_env_file "$db_env_file"
 if ! grep -q '^POSTGRES_PASSWORD=' "$db_env_file"; then

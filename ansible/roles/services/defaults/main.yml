@@ -5,6 +5,9 @@
 #   safbox-services-1  Heimdall (tasks/heimdall.yml)   safbox_services_1
 #   safbox-services-2  Vulcan (tasks/vulcan.yml)       safbox_services_2
 #   safbox-services-3  TLS proxy (tasks/proxy.yml)     safbox_services_3
+#   safbox-services-4  Firefox bookmarks, desktop      safbox_services_4
+#                      builds only (tasks/firefox.yml)
+#   safbox-services-5  Keycloak (tasks/keycloak.yml)   safbox_services_5
 # A site short of memory runs Heimdall alone by switching Vulcan off.
 
 # ---------------------------------------------------------------------------
@@ -27,10 +30,32 @@ services_heimdall_loopback_port: "{{ safbox_heimdall_loopback_port }}"
 services_heimdall_env_file: /etc/safbox/heimdall.env
 services_heimdall_db_env_file: /etc/safbox/heimdall-db.env
 services_heimdall_firstboot_hook: /etc/safbox/firstboot.d/20-heimdall.sh
+# Heimdall's Keycloak client secret, which Keycloak reads as well, in a file
+# of its own so that Keycloak sees nothing else of Heimdall's.
+services_heimdall_oidc_env_file: /etc/safbox/heimdall-oidc.env
 
 # Lifetime of the login token Heimdall issues. Upstream's setup script asks
 # for it ("ex. 1d or 25m") and Heimdall falls back to 60 seconds without it.
 services_heimdall_jwt_expire_time: 1d
+
+# The name the proxy serves Heimdall at. Heimdall's EXTERNAL_URL (upstream's
+# apps/backend/.env-example: "The external URL for your Heimdall
+# deployment") is https:// on this name; Heimdall builds the callback URLs
+# of its external login providers from it.
+services_heimdall_host: "heimdall.{{ safbox_domain }}"
+
+# Heimdall's OIDC settings when Keycloak is switched on (.env-example,
+# "Custom OIDC Service"): the safbox realm's endpoints at the issuer every
+# party uses, and PKCE S256.
+services_heimdall_oidc_issuer: "https://{{ services_keycloak_host }}/realms/safbox"
+services_heimdall_oidc_settings:
+  OIDC_NAME: SAFBox
+  OIDC_ISSUER: "{{ services_heimdall_oidc_issuer }}"
+  OIDC_AUTHORIZATION_URL: "{{ services_heimdall_oidc_issuer }}/protocol/openid-connect/auth"
+  OIDC_TOKEN_URL: "{{ services_heimdall_oidc_issuer }}/protocol/openid-connect/token"
+  OIDC_USER_INFO_URL: "{{ services_heimdall_oidc_issuer }}/protocol/openid-connect/userinfo"
+  OIDC_CLIENTID: heimdall
+  OIDC_USES_PKCE_S256: "true"
 
 # Container memory limits. The sum over every service stays inside the
 # reference 4 GiB appliance with room for the host and a scan. Heimdall
@@ -59,22 +84,48 @@ services_vulcan_loopback_port: "{{ safbox_vulcan_loopback_port }}"
 services_vulcan_env_file: /etc/safbox/vulcan.env
 services_vulcan_db_env_file: /etc/safbox/vulcan-db.env
 services_vulcan_firstboot_hook: /etc/safbox/firstboot.d/30-vulcan.sh
+# Vulcan's Keycloak client secret, which Keycloak reads as well, in a file of
+# its own so that Keycloak sees nothing else of Vulcan's.
+services_vulcan_oidc_env_file: /etc/safbox/vulcan-oidc.env
 
 # Vulcan's non-secret settings, passed to the container as environment
 # variables (the appliance's subset of upstream's .env.production.example;
-# every other setting keeps the image's default). Upstream's production
-# example turns local login, registration and first-user-admin off and
-# expects OIDC; the appliance has no identity provider, so (ADR-0001 Phase
-# 6) local login and registration are on and the first registered user is
-# admin. RAILS_FORCE_SSL stays on, as upstream recommends behind a proxy:
-# the TLS proxy terminates HTTPS and sends X-Forwarded-Proto. OIDC, LDAP and
-# SMTP are consumer settings: add VULCAN_ENABLE_OIDC and the rest here (see
-# upstream's .env.production.example) in ansible/local.yml.
+# every other setting keeps the image's default). As upstream's production
+# example advises, registration and first-user-admin are off and the
+# administrator is made from environment variables (its "Admin Bootstrap"):
+# the one local account, admin@<domain>, with the password first boot
+# writes (VULCAN_ADMIN_PASSWORD in vulcan.env), made on the first start.
+# Local login stays on for it, as the way in while Keycloak is down or
+# switched off. RAILS_FORCE_SSL stays on, as upstream recommends behind a
+# proxy: the TLS proxy terminates HTTPS and sends X-Forwarded-Proto. LDAP
+# and SMTP are consumer settings: add them here (see upstream's
+# .env.production.example) in ansible/local.yml.
 services_vulcan_settings:
   VULCAN_ENABLE_LOCAL_LOGIN: "true"
-  VULCAN_ENABLE_USER_REGISTRATION: "true"
-  VULCAN_FIRST_USER_ADMIN: "true"
+  VULCAN_ENABLE_USER_REGISTRATION: "false"
+  VULCAN_FIRST_USER_ADMIN: "false"
+  VULCAN_ADMIN_EMAIL: "admin@{{ safbox_domain }}"
   RAILS_FORCE_SSL: "true"
+  VULCAN_APP_URL: "https://{{ services_vulcan_host }}"
+
+# Vulcan's OIDC settings when Keycloak is switched on (.env.production.example,
+# "Option 1: OIDC/OAuth2"): the issuer every party uses, with discovery.
+# Not VULCAN_OIDC_HOST, which Vulcan 2.4.1 logs as deprecated ("Use
+# VULCAN_OIDC_ISSUER_URL instead"). The client secret is in vulcan-oidc.env,
+# which Keycloak reads too.
+services_vulcan_oidc_settings:
+  VULCAN_ENABLE_OIDC: "true"
+  VULCAN_OIDC_PROVIDER_TITLE: SAFBox
+  VULCAN_OIDC_ISSUER_URL: "https://{{ services_keycloak_host }}/realms/safbox"
+  VULCAN_OIDC_CLIENT_ID: vulcan
+  VULCAN_OIDC_REDIRECT_URI: "https://{{ services_vulcan_host }}/users/auth/oidc/callback"
+  VULCAN_OIDC_DISCOVERY: "true"
+
+# The name the proxy serves Vulcan at. VULCAN_APP_URL above is https:// on
+# it (upstream's .env.production.example, REQUIRED: Application Settings):
+# Vulcan takes the host of the links in the mail it sends from it, and
+# the address an identity provider returns to after sign-out.
+services_vulcan_host: "vulcan.{{ safbox_domain }}"
 
 # Container memory limits. The sum over every service stays inside the
 # reference 4 GiB appliance with room for the host and a scan.
@@ -82,33 +133,137 @@ services_vulcan_memory: 1g
 services_vulcan_db_memory: 512m
 
 # ---------------------------------------------------------------------------
+# Keycloak
+# ---------------------------------------------------------------------------
+# Keycloak and its PostgreSQL as a podman pod of Quadlet units: single
+# sign-on for Heimdall and Vulcan (spike: docs/spikes/keycloak-sso.md).
+# Keycloak runs in FIPS strict mode from an image built here at image
+# build: Keycloak's image, pinned by digest, plus the Bouncy Castle FIPS
+# jars, pinned by sha256 (group_vars), after the Containerfile in Keycloak's
+# FIPS guide (https://www.keycloak.org/server/fips). The built image is not
+# bit-for-bit reproducible (build timestamps), so its inputs are pinned,
+# not its digest.
+
+services_keycloak_base_image: "{{ safbox_image_keycloak.name }}@{{ safbox_image_keycloak.digest }}"
+services_keycloak_image: "localhost/safbox-keycloak-fips:{{ safbox_image_keycloak.tag }}"
+services_keycloak_jar_url: https://repo1.maven.org/maven2/org/bouncycastle
+
+# The Containerfile and the jars' sums the image was built from, kept on
+# the box as its record (and read by the validation profile), and the realm
+# file Keycloak imports.
+services_keycloak_conf_dir: /etc/safbox-keycloak
+# The build context, in /var/tmp, which the seal clears.
+services_keycloak_build_dir: /var/tmp/safbox-keycloak-build
+
+# Keycloak's database: the PostgreSQL image already pinned for Heimdall.
+services_keycloak_db_image: "{{ safbox_image_heimdall_db.name }}@{{ safbox_image_heimdall_db.digest }}"
+
+# Env files the first-boot hook writes (root, 0600).
+services_keycloak_env_file: /etc/safbox/keycloak.env
+services_keycloak_db_env_file: /etc/safbox/keycloak-db.env
+services_keycloak_firstboot_hook: /etc/safbox/firstboot.d/50-keycloak.sh
+
+# The name the proxy serves Keycloak at: the issuer every party uses is
+# https://<this>/realms/safbox.
+services_keycloak_host: "keycloak.{{ safbox_domain }}"
+
+# keycloak.network's fixed subnet; its gateway is the one address Keycloak
+# believes forwarded headers from (keycloak.network.j2).
+services_keycloak_subnet: 10.89.42.0/24
+services_keycloak_gateway: 10.89.42.1
+
+# Container memory limits. Keycloak sizes its Java heap from its limit
+# (kc.sh: 70% of the container's memory), so the limit sets its use; 768m
+# served 20 rounds of logins to both applications in the spike (owner
+# decision, 2026-10-17).
+services_keycloak_memory: 768m
+services_keycloak_db_memory: 512m
+
+# The applications that sign in through Keycloak, each a client in the
+# safbox realm when switched on: the callback path its OIDC library uses,
+# where Keycloak may send the browser after sign-out, whether it sends a
+# PKCE challenge, and the file (written by its own first-boot hook) and
+# variable holding its client secret, which both it and Keycloak read.
+services_keycloak_client_list:
+  - name: heimdall
+    title: Heimdall
+    enabled: "{{ safbox_services_1 | default(true) | bool }}"
+    host: "{{ services_heimdall_host }}"
+    redirect_path: /authn/oidc_callback
+    post_logout_path: /*
+    pkce: true
+    secret_var: OIDC_CLIENT_SECRET
+    oidc_env_file: "{{ services_heimdall_oidc_env_file }}"
+  - name: vulcan
+    title: Vulcan
+    enabled: "{{ safbox_services_2 | default(true) | bool }}"
+    host: "{{ services_vulcan_host }}"
+    redirect_path: /users/auth/oidc/callback
+    post_logout_path: /users/signed_out
+    pkce: false
+    secret_var: VULCAN_OIDC_CLIENT_SECRET
+    oidc_env_file: "{{ services_vulcan_oidc_env_file }}"
+services_keycloak_clients: "{{ services_keycloak_client_list | selectattr('enabled') | list }}"
+
+# Whether Keycloak is switched on, for the applications' OIDC settings.
+services_keycloak_enabled: "{{ safbox_services_5 | default(true) | bool }}"
+
+# ---------------------------------------------------------------------------
 # TLS proxy
 # ---------------------------------------------------------------------------
 # One nginx container (ADR-0001 §Decision: a single nginx reverse proxy
-# terminates TLS and fronts both applications on distinct ports) that serves
-# each enabled application over HTTPS on its own port, with a self-signed
-# certificate generated on first boot. 443 stays free for the landing page
-# (ADR-0001 Phase 8).
+# terminates TLS and fronts both applications) that serves each enabled
+# application over HTTPS on port 443 by name (name-based virtual hosts),
+# with a certificate first boot generates and signs with a local CA of the
+# box's own, which the box trusts (files/40-proxy.sh). Any other name,
+# or the bare address, gets a start page linking to the applications.
+# Port 80, and plain HTTP sent to 443, redirect to HTTPS.
 
 services_proxy_image: "{{ safbox_image_proxy.name }}@{{ safbox_image_proxy.digest }}"
 
 # The applications the proxy fronts, each enabled by its service's task
-# group switch. An application switched off gets no server block, and its
-# port is closed in the firewall. Body and buffer sizes follow each
-# application's upstream proxy configuration (see templates/nginx.conf.j2);
-# 100m is the largest upload either accepts.
+# group switch and served at its host name. An application switched off
+# gets no server block, no /etc/hosts entry, no certificate name and no
+# start-page link. Body and buffer sizes follow each application's
+# upstream proxy configuration (see templates/nginx.conf.j2); 100m is the
+# largest upload either accepts.
 services_proxy_apps:
   - name: heimdall
+    title: Heimdall
     enabled: "{{ safbox_services_1 | default(true) | bool }}"
-    https_port: "{{ safbox_heimdall_https_port }}"
+    host: "{{ services_heimdall_host }}"
     loopback_port: "{{ safbox_heimdall_loopback_port }}"
   - name: vulcan
+    title: Vulcan
     enabled: "{{ safbox_services_2 | default(true) | bool }}"
-    https_port: "{{ safbox_vulcan_https_port }}"
+    host: "{{ services_vulcan_host }}"
     loopback_port: "{{ safbox_vulcan_loopback_port }}"
+  # Keycloak's link opens the account page of the safbox realm, where a
+  # user changes their password; its bare name leads to the admin console.
+  - name: keycloak
+    title: Keycloak
+    enabled: "{{ safbox_services_5 | default(true) | bool }}"
+    host: "{{ services_keycloak_host }}"
+    loopback_port: "{{ safbox_keycloak_loopback_port }}"
+    path: /realms/safbox/account/
 
-# nginx configuration on the host, mounted read-only into the container.
+# The names the proxy serves: the domain (the start page) and each enabled
+# application's. /etc/hosts maps them to 127.0.0.1 and the first-boot
+# certificate names them (services_proxy_names_file).
+services_proxy_names: >-
+  {{ [safbox_domain] + (services_proxy_apps | selectattr('enabled') | map(attribute='host') | list) }}
+
+# nginx configuration and the start page on the host, mounted read-only
+# into the container.
 services_proxy_conf_dir: /etc/safbox-proxy
+
+# The start page is the documentation site (docs/, built with VitePress into
+# site/.vitepress/dist by scripts/build.sh on the workstation), copied from
+# the controller. A timer writes status.json beside it: each enabled service
+# up or down, which the site's welcome page shows.
+services_site_src: "{{ playbook_dir }}/../../site/.vitepress/dist/"
+services_status_script: /usr/local/libexec/safbox-site-status
+services_status_list: /etc/safbox/site-status.services
 
 # The certificate and key first boot generates (files/40-proxy.sh). To use
 # your own, replace both files (PEM, the key unencrypted, root-only) and
@@ -117,7 +272,36 @@ services_proxy_tls_dir: /etc/safbox/tls
 services_proxy_cert: "{{ services_proxy_tls_dir }}/safbox.crt"
 services_proxy_key: "{{ services_proxy_tls_dir }}/safbox.key"
 services_proxy_firstboot_hook: /etc/safbox/firstboot.d/40-proxy.sh
+# The served names, one per line, the domain first: the hook names exactly
+# these in the certificate and limits its local CA to the domain.
+services_proxy_names_file: /etc/safbox/proxy-names
+
+# Files that map the served names to 127.0.0.1, so a browser on the box
+# opens them. cloud-init rewrites /etc/hosts from its template on every
+# boot where its manage_etc_hosts is on (where the platform's user data
+# turns it on),
+# so the names go in that template as well, the place cloud-init's own
+# /etc/hosts header names for local changes; it is skipped where absent.
+services_proxy_hosts_files:
+  - /etc/hosts
+  - "/etc/cloud/templates/hosts.{{ ansible_facts['os_family'] | lower }}.tmpl"
 
 # Heimdall's upstream proxy buffers up to 160 MB of a response (32 x 5m)
 # so large evaluations stream through; the limit leaves room for that.
 services_proxy_memory: 512m
+
+# ---------------------------------------------------------------------------
+# Firefox bookmarks
+# ---------------------------------------------------------------------------
+# Bookmarks for Firefox on a desktop build, set through Firefox's
+# system-wide enterprise policy file, which Firefox on Linux reads from
+# /etc/firefox/policies (templates/policies.json.j2): the Bookmarks policy
+# puts each one on the bookmarks toolbar as its own button, beside the
+# user's own bookmarks, and DisplayBookmarksToolbar shows the toolbar at
+# first, which users can change. NoDefaultBookmarks drops the
+# distribution's default bookmarks, whose first-run import races the
+# Bookmarks policy and loses one of the box's. The applications' bookmarks
+# follow services_proxy_apps and, with the start page's, need the proxy;
+# SAF and SAF Training are always there. The task group runs only on a
+# desktop build (safbox_desktop_enabled).
+services_firefox_policies_file: /etc/firefox/policies/policies.json

@@ -3,8 +3,11 @@
 #
 # The service tests are clients of a deployed SAFBox over HTTPS, the way a
 # browser is: they run on this machine and reach the box only through the
-# TLS proxy's ports, never over SSH (checks that need a shell on the box
-# are InSpec controls in verify/profiles/safbox). Each test creates
+# TLS proxy on port 443, never over SSH (checks that need a shell on the box
+# are InSpec controls in verify/profiles/safbox). The proxy serves each
+# application by name; the tests send that name to the box's address
+# themselves (SNI and curl --resolve), as a DNS or hosts entry on a client
+# would, so this machine needs neither. Each test creates
 # accounts and data on the box it runs against, so point them at a clone,
 # never at an appliance in use.
 #
@@ -44,52 +47,57 @@ random_password() {
 }
 random_email() { printf 'safbox-test-%s@example.invalid' "$("$SERVICES_OPENSSL" rand -hex 4)"; }
 
-# tls_checks HOST PORT: the proxy's TLS on PORT. Saves the certificate it
-# serves to $WORK/cert.pem, which later requests use as their only trust
-# anchor, so they prove the certificate names HOST (trust on first use: the
-# certificate is self-signed per install). The FIPS policy's limits are
-# probed from this side, with a client that would accept more: TLS 1.0 and
-# 1.1 and a ChaCha20-only TLS 1.2 offer must all be refused.
+# tls_checks ADDRESS NAME: the proxy's TLS on ADDRESS port 443 for NAME
+# (SNI). Saves the certificate it serves to $WORK/cert.pem, which later
+# requests use as their only trust anchor, so they prove the certificate
+# names NAME (trust on first use: the certificate is signed by the box's
+# own local CA, which this machine does not trust), and records ADDRESS and
+# NAME for https. The FIPS policy's
+# limits are probed from this side, with a client that would accept more:
+# TLS 1.0 and 1.1 and a ChaCha20-only TLS 1.2 offer must all be refused.
 tls_checks() {
-  local host=$1 port=$2 out
-  out=$("$SERVICES_OPENSSL" s_client -connect "$host:$port" -servername "$host" -brief </dev/null 2>&1) || true
+  local out
+  SERVICES_ADDRESS=$1
+  SERVICES_NAME=$2
+  out=$("$SERVICES_OPENSSL" s_client -connect "$SERVICES_ADDRESS:443" -servername "$SERVICES_NAME" -brief </dev/null 2>&1) || true
   if grep -q '^Protocol version: TLSv1.3$' <<<"$out"; then
-    pass "port $port negotiates $(grep -m1 '^Protocol version:' <<<"$out" | cut -d' ' -f3), $(grep -m1 '^Ciphersuite:' <<<"$out" | cut -d' ' -f2)"
+    pass "$SERVICES_NAME negotiates $(grep -m1 '^Protocol version:' <<<"$out" | cut -d' ' -f3), $(grep -m1 '^Ciphersuite:' <<<"$out" | cut -d' ' -f2)"
   else
-    fail "port $port did not negotiate TLS 1.3: $(tr '\n' ' ' <<<"$out" | cut -c1-200)"
+    fail "$SERVICES_NAME did not negotiate TLS 1.3: $(tr '\n' ' ' <<<"$out" | cut -c1-200)"
   fi
-  "$SERVICES_OPENSSL" s_client -connect "$host:$port" -servername "$host" -showcerts </dev/null 2>/dev/null \
+  "$SERVICES_OPENSSL" s_client -connect "$SERVICES_ADDRESS:443" -servername "$SERVICES_NAME" -showcerts </dev/null 2>/dev/null \
     | "$SERVICES_OPENSSL" x509 -outform PEM > "$WORK/cert.pem" 2>/dev/null || true
   if [[ -s "$WORK/cert.pem" ]]; then
-    pass "port $port serves certificate $("$SERVICES_OPENSSL" x509 -in "$WORK/cert.pem" -noout -subject -ext subjectAltName 2>/dev/null | tr '\n' ' ')"
+    pass "$SERVICES_NAME serves certificate $("$SERVICES_OPENSSL" x509 -in "$WORK/cert.pem" -noout -subject -ext subjectAltName 2>/dev/null | tr '\n' ' ')"
   else
-    fail "port $port served no certificate"
+    fail "$SERVICES_NAME served no certificate"
   fi
-  refused "$host" "$port" "TLS 1.0" -tls1 -cipher 'ALL:@SECLEVEL=0'
-  refused "$host" "$port" "TLS 1.1" -tls1_1 -cipher 'ALL:@SECLEVEL=0'
-  refused "$host" "$port" "ChaCha20-Poly1305 (not FIPS-approved)" -tls1_2 \
+  refused "TLS 1.0" -tls1 -cipher 'ALL:@SECLEVEL=0'
+  refused "TLS 1.1" -tls1_1 -cipher 'ALL:@SECLEVEL=0'
+  refused "ChaCha20-Poly1305 (not FIPS-approved)" -tls1_2 \
     -cipher 'ECDHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-CHACHA20-POLY1305'
 }
 
-# refused HOST PORT LABEL S_CLIENT-ARGS...: the server must reject the offer
-# with a TLS alert. A refused connection, or a client that will not make the
-# offer at all, proves nothing and fails.
+# refused LABEL S_CLIENT-ARGS...: the server must reject the offer, made to
+# the address and name tls_checks recorded, with a TLS alert. A refused
+# connection, or a client that will not make the offer at all, proves
+# nothing and fails.
 refused() {
-  local host=$1 port=$2 label=$3 out rc=0
-  shift 3
-  out=$("$SERVICES_OPENSSL" s_client -connect "$host:$port" "$@" </dev/null 2>&1) || rc=$?
+  local label=$1 out rc=0
+  shift
+  out=$("$SERVICES_OPENSSL" s_client -connect "$SERVICES_ADDRESS:443" -servername "$SERVICES_NAME" "$@" </dev/null 2>&1) || rc=$?
   if (( rc == 0 )) && grep -qE '^(New|Reused), ' <<<"$out"; then
-    fail "port $port accepts $label"
+    fail "$SERVICES_NAME accepts $label"
   elif grep -qE 'alert (protocol version|handshake failure|insufficient security)|wrong version number' <<<"$out"; then
-    pass "port $port refuses $label ($(grep -oE 'alert [a-z ]+|wrong version number' <<<"$out" | head -1))"
+    pass "$SERVICES_NAME refuses $label ($(grep -oE 'alert [a-z ]+|wrong version number' <<<"$out" | head -1))"
   else
-    fail "port $port: no server verdict on $label: $(grep -m1 -iE 'error' <<<"$out" | cut -c1-160)"
+    fail "$SERVICES_NAME: no server verdict on $label: $(grep -m1 -iE 'error' <<<"$out" | cut -c1-160)"
   fi
 }
 
 # https CURL-ARGS...: curl over HTTPS trusting only the certificate
-# tls_checks saved.
-https() { curl -sS --cacert "$WORK/cert.pem" "$@"; }
+# tls_checks saved, with the recorded name resolved to the recorded address.
+https() { curl -sS --cacert "$WORK/cert.pem" --resolve "$SERVICES_NAME:443:$SERVICES_ADDRESS" "$@"; }
 
 # page_and_assets URL: fetch an HTML page and every script and stylesheet it
 # references from the same origin, each of which must answer 200.

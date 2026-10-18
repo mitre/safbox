@@ -1,0 +1,10 @@
+# {{ ansible_managed }}
+# AccountsService's "{{ item }}" user template: the distribution's
+# (/usr/share/accountsservice/user-templates/{{ item }}) with the SAF logo as
+# the profile picture of every user who has not chosen one.
+[Template]
+#EnvironmentFiles=/etc/os-release;
+
+[User]
+Session=
+Icon={{ platform_desktop_avatar.dest }}

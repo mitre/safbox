@@ -1,0 +1,6 @@
+# {{ ansible_managed }}
+# The services the start page's status.json reports: Title|unit|url.
+{% for app in services_proxy_apps if app.enabled | bool %}
+{{ app.title }}|{{ app.name }}.service|https://{{ app.host }}{{ app.path | default("/") }}
+{% endfor %}
+TLS proxy|safbox-proxy.service|

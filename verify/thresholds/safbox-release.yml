@@ -1,0 +1,11 @@
+---
+# The safbox profile on a deployed clone. Controls that do not apply (a tool
+# or service switched off) are Not Applicable and do not count.
+# 2: the controls that fail on every image today (the Heimdall and Vulcan
+# PostgreSQL images carry no OpenSSL FIPS provider); a third fails the gate.
+failed:
+  total:
+    max: 2
+error:
+  total:
+    max: 0

@@ -1,5 +1,7 @@
 ---
-# base role: SAFBox's own tooling on the box. The run-once first-boot
+# base role: the base OS and SAFBox's own tooling on the box. It first
+# brings every installed package up to date from the configured
+# repositories, rebooting when the update needs it. The run-once first-boot
 # framework owns every per-install secret (ADR-0001 §Decision: secrets are
 # generated on first boot, not at build); the `safbox` command and its
 # subcommand registry give operators one entry point. Task groups are tagged
@@ -25,3 +27,9 @@ base_cli_commands_dir: /usr/local/lib/safbox/commands
 # their own by installing an executable into base_cli_commands_dir.
 base_cli_commands:
   - status
+
+# The SAF logo and a pointer to `safbox status`, shown after every console
+# and SSH login. A drop-in in pam_motd's directory, so /etc/motd stays the
+# site's and the login banner before the password prompt (/etc/issue, a
+# STIG setting) is untouched.
+base_motd_file: /etc/motd.d/safbox

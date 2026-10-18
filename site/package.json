@@ -1,0 +1,16 @@
+{
+  "name": "safbox-site",
+  "private": true,
+  "description": "The SAFBox documentation and start page, built from docs/ with VitePress",
+  "scripts": {
+    "dev": "vitepress dev",
+    "build": "vitepress build",
+    "preview": "vitepress preview"
+  },
+  "devDependencies": {
+    "vitepress": "1.6.4"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

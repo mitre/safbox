@@ -1,0 +1,15 @@
+# {{ ansible_managed }}
+# Keycloak {{ safbox_image_keycloak.tag }} for FIPS strict mode, after the
+# container example in Keycloak's FIPS guide
+# (https://www.keycloak.org/server/fips): the Bouncy Castle FIPS jars in
+# providers/, and kc.sh build with the FIPS options so the server starts
+# with --optimized. The jars are owned and readable by the image's keycloak
+# user (uid 1000) whatever umask they were downloaded under (the STIG's 077
+# makes them 0600), which upstream's example, copying as that user, hides.
+FROM {{ services_keycloak_base_image }} AS builder
+COPY --chown=1000:0 --chmod=0644 {% for jar in safbox_keycloak_fips_jars %}{{ jar.name }}-{{ jar.version }}.jar {% endfor %}/opt/keycloak/providers/
+RUN /opt/keycloak/bin/kc.sh build --features=fips --fips-mode=strict --db=postgres --health-enabled=true
+
+FROM {{ services_keycloak_base_image }}
+COPY --from=builder /opt/keycloak/ /opt/keycloak/
+ENTRYPOINT ["/opt/keycloak/bin/kc.sh"]

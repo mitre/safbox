@@ -16,6 +16,13 @@ ConditionPathExists={{ services_vulcan_env_file }}
 PodName=vulcan
 Network=vulcan.network
 PublishPort=127.0.0.1:{{ services_vulcan_loopback_port }}:3000
+{% if services_keycloak_enabled | bool %}
+# Inside the pod 127.0.0.1 is the pod itself, where nothing serves
+# Keycloak's name: podman's host-gateway is the host's address on the
+# pod's network, where the TLS proxy answers on 443, so Vulcan reaches
+# Keycloak at the issuer URL the browser uses.
+AddHost={{ services_keycloak_host }}:host-gateway
+{% endif %}
 
 [Install]
 WantedBy=multi-user.target

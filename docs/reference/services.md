@@ -1,0 +1,301 @@
+# Services on the box
+
+The `services` role runs each application and its PostgreSQL as a podman
+pod of Quadlet units (`tasks/heimdall.yml`, `tasks/vulcan.yml`), in the
+service shape of the application's upstream `docker-compose.yml` (each unit
+file cites the compose service it reproduces), Keycloak and its PostgreSQL
+the same way (`tasks/keycloak.yml`), the single sign-on for both, and one
+nginx container that terminates TLS for all of them (`tasks/proxy.yml`).
+Images are pinned by digest in `ansible/group_vars/all/main.yml` and
+pulled at build, and Keycloak's FIPS image is built then, so a clone starts
+offline.
+
+| Service | Pod publishes (loopback only) | Browser URL |
+|---|---|---|
+| Heimdall | `127.0.0.1:3000` | `https://heimdall.safbox.internal/` |
+| Vulcan | `127.0.0.1:3001` | `https://vulcan.safbox.internal/` |
+| Keycloak | `127.0.0.1:3002` | `https://keycloak.safbox.internal/realms/safbox/account/` |
+| Start page | (served by nginx) | `https://safbox.internal/` |
+
+The proxy serves every application on port 443 by name (name-based
+virtual hosts). Any other name, and the box's bare address, get the start
+page: this documentation, built with VitePress on the build workstation
+(`site/`, by `scripts/build.sh`) and copied to the box. Its welcome page
+shows each service up or down and links to the applications, from a
+`status.json` the `safbox-site-status.timer` rewrites every minute. Port 80
+redirects every request to
+`https://` with the same name and path, and so does a plain `http://`
+request sent to port 443. The firewall opens `http` and `https` and no
+other port. The loopback ports are `safbox_<service>_loopback_port` in
+group_vars. Each pod has its own podman network, so no database is
+reachable from another pod or from the network.
+
+**Names.** The domain is `safbox_domain` in group_vars (default
+`safbox.internal`; `.internal` is reserved for private networks and never
+resolves on the internet). On the box, `/etc/hosts` maps the domain and
+each shipped application's name to 127.0.0.1, so the box's own browser
+opens them. Because cloud-init rewrites `/etc/hosts` at boot where its
+`manage_etc_hosts` is on (Proxmox turns it on), the same entries go in
+cloud-init's hosts template, `/etc/cloud/templates/hosts.redhat.tmpl`.
+The first-boot certificate names them too, and Heimdall's `EXTERNAL_URL`,
+Vulcan's `VULCAN_APP_URL` and Keycloak's `KC_HOSTNAME` are set to them. An application switched
+off loses its server, its name and its link.
+
+**Reaching the box from another machine.** Point the names at the box's
+address, in your DNS (for example an `A` record for `safbox.internal` and
+for `*.safbox.internal`) or, for a single workstation, in its hosts file
+(`/etc/hosts`, or `C:\Windows\System32\drivers\etc\hosts`):
+
+```
+192.0.2.10  safbox.internal heimdall.safbox.internal vulcan.safbox.internal
+```
+
+Then browse to `https://heimdall.safbox.internal/`. A site that sets its
+own `safbox_domain` uses those names instead, and sets the same value for
+the `domain` input of the safbox validation profile.
+
+**Certificate trust.** The box trusts its own certificate: first boot
+signs it with a local CA of the box's own and adds that CA to the system
+trust store, so curl, the service containers and Firefox on the box open
+the names without a warning. The certificate names only the box's names,
+not its addresses, so a browser opening the box by bare address
+(`https://192.0.2.10/`) warns; the start page is still served there, and
+`http://` to the address still redirects.
+
+Another machine's browser warns until it trusts the box. The better fix
+is a certificate from a CA your machines already trust (see "Your own
+certificate" below). You can instead import the box's CA (any user on the
+box can read it at
+`/etc/pki/ca-trust/source/anchors/local-ca-safbox-proxy.crt`). The CA can
+vouch only for TLS servers (its extended key usage is server
+authentication, so it cannot sign mail, code-signing or client
+certificates), and its critical name constraints limit those to names
+under `safbox_domain` (here `safbox.internal` and its subdomains) and no
+IP address. That is what makes importing it reasonably safe: a machine
+that trusts it accepts it for no other web site, and for nothing but web
+sites. Anyone with root on the box, or a copy of its CA key, can still
+issue certificates for names under the domain, which the importing
+machine will accept.
+
+**Firefox bookmarks.** On a desktop build (`safbox_desktop_enabled`), task
+group `safbox-services-4` writes Firefox's system-wide enterprise policy,
+`/etc/firefox/policies/policies.json`: its `Bookmarks` policy puts
+Heimdall, Vulcan, Keycloak (its account page), SAF (saf.mitre.org), SAF
+Training and SAFBox - Start Here on the bookmarks toolbar, one button each, and
+`DisplayBookmarksToolbar` shows the toolbar. `Homepage` makes the start
+page (`https://safbox.internal/`) the home page and the page Firefox
+opens with; users can change it. The applications' bookmarks follow
+their switches, and they and the start page's need the proxy. Users keep
+their own bookmarks beside them. The distribution's default bookmarks
+(Rocky Linux's links, for example) are dropped (`NoDefaultBookmarks`):
+Firefox imports them on first run at the same time as it creates the
+box's, and one of the box's was lost.
+
+**First boot.** The units are installed and enabled at build but start only
+once their secrets exist (`ConditionPathExists`, ordered after
+`safbox-firstboot.service`). First boot runs one hook per service, the only
+place its secrets are generated:
+
+- `20-heimdall.sh` writes `/etc/safbox/heimdall.env` (`DATABASE_PASSWORD`,
+  `JWT_SECRET`, `API_KEY_SECRET`, `ADMIN_PASSWORD`),
+  `/etc/safbox/heimdall-db.env`, and `/etc/safbox/heimdall-oidc.env`
+  (`OIDC_CLIENT_SECRET`, Heimdall's client secret in Keycloak, which
+  Keycloak reads too);
+- `30-vulcan.sh` writes `/etc/safbox/vulcan.env` (`POSTGRES_PASSWORD`,
+  `SECRET_KEY_BASE`, `CIPHER_PASSWORD`, `CIPHER_SALT`,
+  `VULCAN_ADMIN_PASSWORD`), `/etc/safbox/vulcan-db.env`, and
+  `/etc/safbox/vulcan-oidc.env` (`VULCAN_OIDC_CLIENT_SECRET`);
+- `50-keycloak.sh` writes `/etc/safbox/keycloak.env` (`KC_DB_PASSWORD`,
+  `KC_BOOTSTRAP_ADMIN_PASSWORD`, `SAFUSER_PASSWORD`) and
+  `/etc/safbox/keycloak-db.env`;
+- `40-proxy.sh` writes a local CA (`/etc/safbox/ca/ca.crt` and its key
+  `ca.key`, valid ten years, in a root-only directory the proxy container
+  does not mount, limited to names under `safbox_domain`) and a
+  certificate it signs for exactly the served names (listed in
+  `/etc/safbox/proxy-names`) to `/etc/safbox/tls/safbox.crt`, its
+  RSA 3072 key to `safbox.key` (root only), and adds the CA to the system
+  trust store (`/etc/pki/ca-trust/source/anchors/local-ca-safbox-proxy.crt`,
+  outside the `safbox-*` anchors the site_config role manages).
+
+All of them are root-owned and mode 0600 (the certificate 0644), use the
+same random strength as the upstream setup scripts, and never overwrite an
+existing value. The seal removes and then asserts the absence of every
+`/etc/safbox/*.env` file, of `/etc/safbox/tls` and `/etc/safbox/ca`, and
+of the local CA's trust anchor, so the template holds none.
+
+**Your own certificate.** Replace `safbox.crt` and `safbox.key` in
+`/etc/safbox/tls/` with your certificate (PEM, with any intermediates
+after it) and unencrypted key, owned by root, the key mode 0600, then
+`systemctl restart safbox-proxy.service`. Then retire the local CA, which
+nothing needs any more:
+
+```
+rm -f /etc/safbox/ca/ca.key /etc/safbox/ca/ca.crt /etc/pki/ca-trust/source/anchors/local-ca-safbox-proxy.crt
+(umask 022; update-ca-trust extract)
+```
+
+First boot's hook trusts the local CA only while the proxy's certificate
+is one it signed, so running it again with your certificate in place does
+not bring the CA back. To regenerate the box's own certificate after
+switching an application on later (the certificate names only the
+applications that were on at first boot), delete `safbox.crt` and
+`safbox.key`, run `/etc/safbox/firstboot.d/40-proxy.sh` as root, and
+restart the proxy. The local CA is kept, so machines that already trust
+it keep trusting the box. After changing `safbox_domain`, delete the
+local CA's two files in `/etc/safbox/ca/` as well, since it may sign only
+names under the old domain; the hook then makes and trusts a new one.
+
+**A box deployed from an older template** (one that served each
+application on its own port) keeps its old self-signed certificate,
+without the names and not trusted by the box, and its 8443 and 9443
+firewall entries after the roles are applied again. As root, regenerate
+the certificate as above (which also creates and trusts the local CA),
+then close the old ports:
+
+```
+firewall-cmd --permanent --remove-port=8443/tcp --remove-port=9443/tcp && firewall-cmd --reload
+```
+
+**Accounts.** Each application is made with one local account, its
+administrator, `admin@safbox.internal` (`admin@` the domain), made on its
+first start with the password first boot wrote, as the way in while
+Keycloak is down or switched off. Everyone else signs in through Keycloak
+(below) and gets a regular account in each application on their first
+sign-in. Registration is off in both, but only Heimdall refuses it
+(`REGISTRATION_DISABLED=true`). Vulcan 2.4.1 still accepts
+self-registration from anyone who can reach it, despite
+`VULCAN_ENABLE_USER_REGISTRATION=false`: the setting only hides the
+sign-up link, and a sign-up posted to `/users` makes a regular local
+account (not an administrator) and signs it in, because Vulcan's
+registration handler checks only that local login is on. This is an
+upstream defect, accepted and not worked around; local login stays on
+for the administrator. Read the administrators' passwords on the box:
+
+```
+sudo grep '^ADMIN_PASSWORD=' /etc/safbox/heimdall.env
+sudo grep '^VULCAN_ADMIN_PASSWORD=' /etc/safbox/vulcan.env
+```
+
+Heimdall asks its administrator for a new password at the first sign-in.
+It also prints the administrator's password in its log on the first start
+(`journalctl -u heimdall.service`), even when given one: upstream
+behaviour, so change it at that first sign-in. A box deployed before this
+change made its administrators the old way (Heimdall's
+`admin@heimdall.local` with a random password in its log; Vulcan's first
+registered user), and keeps them. LDAP and SMTP are site settings
+(`services_vulcan_settings` in the services role's defaults).
+
+**Single sign-on (Keycloak).** Keycloak 26.8.1, in FIPS strict mode, signs
+users in to both applications at `https://keycloak.safbox.internal/` (task
+group `safbox-services-5`, switch `safbox_services_5`). It runs from an
+image the build makes from Keycloak's image, pinned by digest, and the four
+Bouncy Castle FIPS jars its FIPS guide asks for, pinned by sha256; the
+Containerfile and the jars' sums stay on the box in `/etc/safbox-keycloak`.
+Its realm, `safbox`, is imported on Keycloak's first start from
+`/etc/safbox-keycloak/safbox-realm.json`: a client for each application
+switched on, and one user, `safuser`, whose Keycloak password is its own
+(not the OS account's), generated at first boot:
+
+```
+sudo grep '^SAFUSER_PASSWORD=' /etc/safbox/keycloak.env
+```
+
+`safuser` changes it at `https://keycloak.safbox.internal/realms/safbox/account/`
+(the Keycloak bookmark), after which the file holds the first password
+only. The realm refuses registration, locks an account briefly after quick
+wrong passwords, and asks for 15 characters; FIPS strict mode hashes
+passwords with PBKDF2-SHA512. Keycloak's administration console
+(`/admin/`) and its master realm answer to the box itself only: open them
+in the box's own browser and sign in as `temp-admin` with
+`KC_BOOTSTRAP_ADMIN_PASSWORD` from the same file, the temporary
+administrator Keycloak makes on its first start. Inside the Heimdall and
+Vulcan pods, Keycloak's name points at the host (`AddHost`), so they reach
+it at the issuer URL the browser uses. Changing the realm file later does
+not change a running box's realm: use the console. With Keycloak switched
+off, both applications keep local sign-in for their administrators (and
+Vulcan its self-registration, Accounts above).
+
+**Footprint.** Measured on a 2 vCPU, 4 GiB development clone with both
+applications idle after the service tests: about 750 MB in the containers
+(Heimdall 290 MB, Vulcan 280 MB, the databases 75 and 80 MB, nginx 25 MB),
+2.5 GiB of the host's memory still available (before Keycloak). The
+container memory limits (`services_heimdall_memory`,
+`services_vulcan_memory`, 1g; `services_keycloak_memory`, 768m; the three
+databases 512m each; nginx 512m) sum to about 4.8 GiB. Keycloak sizes its
+Java heap from its limit; at 768m it used about 0.6 GiB with its database
+under repeated sign-ins (docs/spikes/keycloak-sso.md, Finding 6).
+
+**Switching a service off applies at build time.** The services' switches
+(`safbox_services_1` to `safbox_services_5`) decide what a template is
+built with. Setting one to `false` and applying the roles again to a box
+that already has the service does not remove it: no task deletes its
+units, image or first-boot hook, so it keeps running, and nothing
+reconfigures the services left on to match. Keycloak switched off this
+way keeps its units, image and hook, and the proxy certificate keeps its
+name. To drop a service, build a new template without it.
+
+**Applying the roles to a box that has already booted.** The first-boot
+runner does nothing once `/var/lib/safbox/firstboot.done` exists, so on
+such a box run it over the new hooks with its marker in a scratch
+directory, which leaves the box's own marker alone, then start the
+services (or reboot):
+
+```
+sudo env SAFBOX_STATE_DIR="$(sudo mktemp -d)" /usr/local/sbin/safbox-firstboot
+sudo systemctl start heimdall.service vulcan.service safbox-proxy.service
+```
+
+**Testing.** The release gate's controls check the units, secrets,
+loopback-only ports, each name over HTTPS, the redirects, the start page,
+the certificate's names, `/etc/hosts` and the firewall from a shell on the
+box. Three tests act as a browser would, from your workstation over HTTPS
+only: they check the proxy's TLS (TLS 1.3 negotiated; TLS 1.0, 1.1 and
+ChaCha20 refused), load each application's page with its scripts and
+stylesheets, and drive the API. They send the application's name to the
+box's address themselves, so your workstation needs no DNS or hosts entry.
+They create data, so run them against a clone. Each takes a password from
+the box (Accounts and Single sign-on above) in the environment, never on
+the command line:
+
+```
+HEIMDALL_ADMIN_PASSWORD=... SAFBOX_HDF=<results.json> tests/services/heimdall-upload.sh <box-address>
+VULCAN_ADMIN_PASSWORD=... tests/services/vulcan-project.sh <box-address>
+KEYCLOAK_SAFUSER_PASSWORD=... tests/services/keycloak-login.sh <box-address>
+```
+
+The first two try a sign-up, sign in as the administrator, and upload an
+HDF file or create a project. Heimdall must refuse the sign-up; for
+Vulcan the test prints what happened, marked as the known upstream
+defect, and does not fail on it (Accounts above). The third
+checks Keycloak's discovery document, that its administration paths refuse
+your workstation, and that `safuser` signs in to both applications through
+Keycloak as a regular user. Pass the name (the domain, for the third) as a
+second argument when `safbox_domain` is not the default.
+
+They need curl, jq and OpenSSL 3 (`OPENSSL=/path/to/openssl` where the
+system `openssl` is LibreSSL, as on macOS).
+
+**FIPS.** Each container carries its own userspace crypto. Keycloak runs
+its own FIPS provider, Bouncy Castle FIPS in Approved Mode (FIPS strict
+mode), on Red Hat's OpenJDK 21 in UBI 9, which switches itself to its FIPS
+configuration on a FIPS host. Its bc-fips is 2.1.3, the version Keycloak
+26.8.1 requires: a patch release on the line NIST's CMVP certificate #4943
+validates, which lists 2.1.1 (accepted, 2026-10-17). Keycloak supports FIPS
+on RHEL 8 and 9 hosts; this EL10 host is outside that statement, though
+the container is UBI 9.
+Heimdall, Vulcan and the proxy are built on Red Hat UBI 9, whose OpenSSL loads its FIPS
+provider on a FIPS host (MD5 is refused inside them), and podman gives
+them the host's FIPS crypto policy, which the proxy's TLS follows. Their
+FIPS module is the RHEL 9 one inside each image, not the host's RHEL 10
+module; that is documented here rather than recorded as a finding, because
+the containers run a FIPS provider under the host's policy. The proxy uses
+`ubi9/nginx-126` rather than upstream Heimdall's `nginx:alpine` for this
+reason: Alpine's OpenSSL has no FIPS provider. Each application container
+mounts the host's CA trust store read-only, so it trusts the same CAs as the
+host, a site's own included (see [Site CA bundles](site-config.md)). Two weaknesses
+remain. Both upstream PostgreSQL images (Debian and Alpine) have no OpenSSL
+FIPS provider at all, so `safbox-heimdall-5` and `safbox-vulcan-4` fail.
+Heimdall hashes passwords and API keys with bcrypt in pure JavaScript,
+outside any FIPS provider (upstream
+[mitre/heimdall2#4145](https://github.com/mitre/heimdall2/issues/4145),
+draft fix [#4850](https://github.com/mitre/heimdall2/pull/4850)).

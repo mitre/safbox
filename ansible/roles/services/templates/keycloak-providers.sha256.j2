@@ -1,0 +1,3 @@
+{% for jar in safbox_keycloak_fips_jars %}
+{{ jar.sha256 }}  {{ jar.name }}-{{ jar.version }}.jar
+{% endfor %}

@@ -6,7 +6,8 @@
 #
 # The build runs this playbook, then checks the result from outside with the
 # validation profiles (verify/profiles/), then runs seal.yml. This playbook is
-# idempotent: a second run reports changed=0 (tests/ansible/idempotence.sh).
+# idempotent: a second run reports changed=0 (tests/ansible/idempotence.sh),
+# unless the repositories published newer packages in between.
 #
 # group_vars are loaded explicitly so the pins apply regardless of which
 # inventory the caller supplies (the image builder generates its own).

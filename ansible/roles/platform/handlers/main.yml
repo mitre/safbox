@@ -15,3 +15,10 @@
   ansible.builtin.command:
     argv: [journalctl, --flush]
   changed_when: true
+
+# Compiles /etc/dconf/db/<name>.d keyfiles into the binary databases that
+# sessions and the login screen read.
+- name: Update the dconf databases
+  ansible.builtin.command:
+    argv: [dconf, update]
+  changed_when: true

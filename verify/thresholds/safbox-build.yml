@@ -1,0 +1,10 @@
+---
+# The safbox profile on the build VM. Controls that do not apply there (a
+# tool or service switched off, a clone-only control) are Not Applicable and
+# do not count. Every control that applies must pass.
+failed:
+  total:
+    max: 0
+error:
+  total:
+    max: 0

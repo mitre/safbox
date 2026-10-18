@@ -1,11 +1,60 @@
 ---
+- name: Load OS family variables
+  tags: [always]
+  ansible.builtin.include_vars:
+    file: "{{ lookup('ansible.builtin.first_found', base_vars_lookup) }}"
+  vars:
+    base_vars_lookup:
+      files:
+        - "{{ ansible_facts['os_family'] }}.yml"
+      paths:
+        - "{{ role_path }}/vars"
+
+# Before the first-boot unit is enabled: a reboot after that would run first
+# boot inside the template.
+- name: Package updates
+  when: safbox_base_3 | default(true) | bool
+  tags: [safbox-base-3]
+  block:
+    # dnf needs-restarting (the reboot check) comes from dnf-plugins-core.
+    - name: Install the reboot check (RHEL family)
+      when: ansible_facts['os_family'] == 'RedHat'
+      ansible.builtin.dnf:
+        name: dnf-plugins-core
+        state: present
+
+    # An update can pull in new kernels and dependencies; packages the STIG
+    # removes stay out through excludepkgs in /etc/dnf/dnf.conf. update_only
+    # states the intent (update, don't install by name); with name '*' dnf
+    # upgrades everything either way.
+    - name: Update every installed package (RHEL family)
+      when: ansible_facts['os_family'] == 'RedHat'
+      ansible.builtin.dnf:
+        name: '*'
+        state: latest
+        update_only: true
+        update_cache: true
+      notify: Packages updated
+
+    - name: Update every installed package (Debian family)
+      when: ansible_facts['os_family'] == 'Debian'
+      ansible.builtin.apt:
+        update_cache: true
+        upgrade: dist
+      notify: Packages updated
+
+    # Reboot now, when the update needs it, so the rest of the play runs on
+    # the updated system.
+    - name: Reboot if the update needs it
+      ansible.builtin.meta: flush_handlers
+
 - name: First-boot framework
   when: safbox_base_1 | default(true) | bool
   tags: [safbox-base-1]
   block:
     - name: Install the packages the first-boot framework uses
       ansible.builtin.package:
-        name: "{{ base_packages }}"
+        name: "{{ base_packages + base_family_packages }}"
         state: present
 
     - name: Create the root-only first-boot directories
@@ -40,6 +89,14 @@
       ansible.builtin.copy:
         src: safbox-firstboot
         dest: "{{ base_firstboot_script }}"
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Install the first-boot hook that hands a larger disk to the growing volumes
+      ansible.builtin.copy:
+        src: 10-grow-disk.sh
+        dest: "{{ base_firstboot_hook_dir }}/10-grow-disk.sh"
         owner: root
         group: root
         mode: '0755'
@@ -91,3 +148,75 @@
         group: root
         mode: '0755'
       loop: "{{ base_cli_commands }}"
+
+- name: The SAF login greeting
+  when: safbox_base_4 | default(true) | bool
+  tags: [safbox-base-4]
+  block:
+    - name: Create the message of the day directory
+      ansible.builtin.file:
+        path: "{{ base_motd_file | dirname }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Install the SAF login greeting
+      ansible.builtin.copy:
+        src: motd
+        dest: "{{ base_motd_file }}"
+        owner: root
+        group: root
+        mode: '0644'
+
+# safuser, the account for using the tools day to day, is made on each
+# clone's first boot by the hook, never in the template. Its sudo rule is
+# installed here and asks for safuser's password; only admin, the account
+# cloud-init creates, has passwordless sudo.
+- name: The safuser account
+  when: safbox_base_5 | default(true) | bool
+  tags: [safbox-base-5]
+  block:
+    - name: Install the packages the safuser hook uses
+      ansible.builtin.package:
+        name: "{{ base_safuser_packages }}"
+        state: present
+
+    - name: Install the first-boot hook that creates safuser
+      ansible.builtin.copy:
+        src: 15-safuser.sh
+        dest: "{{ base_firstboot_hook_dir }}/15-safuser.sh"
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Give safuser sudo that asks for its password
+      ansible.builtin.copy:
+        content: "safuser ALL=(ALL) ALL\n"
+        dest: /etc/sudoers.d/50-safuser
+        owner: root
+        group: root
+        mode: '0440'
+        validate: /usr/sbin/visudo -cf %s
+
+# admin, cloud-init's default user, is the deployer's key-only account for
+# deploying and automation. cloud-init creates it with passwordless sudo
+# and a locked password; its first-boot hook exempts it from password
+# ageing (the STIG's 60 days would otherwise end its key login) and hides
+# it from the desktop login screen.
+- name: The admin account
+  when: safbox_base_6 | default(true) | bool
+  tags: [safbox-base-6]
+  block:
+    - name: Install the packages the admin hook uses
+      ansible.builtin.package:
+        name: "{{ base_admin_packages }}"
+        state: present
+
+    - name: Install the first-boot hook that settles admin
+      ansible.builtin.copy:
+        src: 12-admin.sh
+        dest: "{{ base_firstboot_hook_dir }}/12-admin.sh"
+        owner: root
+        group: root
+        mode: '0755'

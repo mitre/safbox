@@ -4,7 +4,11 @@
 # of them. Every baseline control is included; a requirement SAFBox
 # deliberately does not apply is set Not Applicable here: impact 0.0, a
 # justification, and a deliberate skip. The hardening role switches the
-# matching Lockdown rule off (rhel10stig_<n> in ansible/group_vars/all/main.yml).
+# matching Lockdown rule off (rhel10stig_<n> in ansible/group_vars/all/main.yml)
+# where that rule would undo the deviation. SV-281170's (RHEL-10-600110)
+# stays on: it changes accounts only under rhel10stig_disruption_high, and
+# then only those that exist at build time with an unlocked password, while
+# admin is made at first boot with a locked one.
 include_controls 'redhat-enterprise-linux-10-stig-baseline' do
   control 'SV-280935' do
     impact 0.0
@@ -20,19 +24,6 @@ include_controls 'redhat-enterprise-linux-10-stig-baseline' do
     end
   end
 
-  control 'SV-281197' do
-    impact 0.0
-    desc 'justification', <<~JUSTIFICATION
-      SAFBox is an appliance for operators who may be its only administrator.
-      A lock that only an administrator can release can leave nobody able to
-      log in. Where pam_faillock locks an account, the lock instead expires
-      after the pam_faillock default of 10 minutes.
-    JUSTIFICATION
-    describe 'An account lock that only an administrator can release' do
-      skip 'Not Applicable: a usability deviation for single-operator appliances; see the justification.'
-    end
-  end
-
   control 'SV-281195' do
     impact 0.0
     desc 'justification', <<~JUSTIFICATION
@@ -45,28 +36,18 @@ include_controls 'redhat-enterprise-linux-10-stig-baseline' do
     end
   end
 
-  control 'SV-281169' do
+  control 'SV-281170' do
     impact 0.0
     desc 'justification', <<~JUSTIFICATION
-      SAFBox deploy accounts are created at first boot, log in with an SSH key
-      and have no password. Tested: once such an account's password passed the
-      60-day maximum age, its key login was refused because a password change
-      was required that a locked password cannot make.
+      admin, the key-only account cloud-init creates for deploying and
+      automation, has no password and is exempt from password ageing
+      (chage -M -1), because sshd refuses even its key login once its
+      locked password passes the maximum age; every other account gets the
+      60-day maximum from /etc/login.defs (SV-281169), and the safbox
+      profile checks safuser's (safbox-accounts-3).
     JUSTIFICATION
-    describe '60-day maximum password lifetime for new users in /etc/login.defs' do
-      skip 'Not Applicable: a usability deviation; see the justification.'
-    end
-  end
-
-  control 'SV-281175' do
-    impact 0.0
-    desc 'justification', <<~JUSTIFICATION
-      SAFBox deploy accounts log in with an SSH key and have no password to
-      keep active. Tested: 35 days after such an account's password expired,
-      PAM disabled the account and refused its key login.
-    JUSTIFICATION
-    describe 'Disable accounts after 35 days of inactivity' do
-      skip 'Not Applicable: a usability deviation; see the justification.'
+    describe '60-day maximum password lifetime for existing passwords, admin excepted' do
+      skip 'Not Applicable: admin has no password to age; see the justification.'
     end
   end
 
@@ -221,6 +202,21 @@ include_controls 'redhat-enterprise-linux-10-stig-baseline' do
     JUSTIFICATION
     describe 'Require a unique boot loader superuser name' do
       skip 'Not Applicable: provided by the deploying site; see the justification.'
+    end
+  end
+
+  control 'SV-281211' do
+    impact 0.0
+    desc 'justification', <<~JUSTIFICATION
+      admin, the account cloud-init creates for the deployer, keeps
+      passwordless sudo: it logs in with an SSH key and has no password,
+      and Ansible and the outside-in checks escalate through it unattended.
+      No other account has it: safuser, the account for using the tools day
+      to day, has sudo that asks for its password. The safbox profile checks
+      that admin's rule is the only NOPASSWD rule (safbox-accounts-4).
+    JUSTIFICATION
+    describe 'Require a password for privilege escalation by admin' do
+      skip 'Not Applicable: admin alone keeps passwordless sudo; see the justification.'
     end
   end
 end

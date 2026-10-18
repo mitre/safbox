@@ -165,3 +165,161 @@
     # build's validation checks for it.
     - name: Apply the journal setting now
       ansible.builtin.meta: flush_handlers
+
+# Off unless the project opts in (safbox_desktop_enabled): the appliance's
+# services are reached from a browser elsewhere, and the STIG allows a GUI
+# only where one is documented as required. The display manager starts on
+# the next boot, not during the build.
+- name: Desktop
+  when:
+    - safbox_platform_7 | default(true) | bool
+    - platform_desktop_enabled | bool
+  tags: [safbox-platform-7]
+  block:
+    # Before the install, so the groups never bring these in. dnf's own
+    # configuration has no drop-in directory, so the exclusion is a marked
+    # block in /etc/dnf/dnf.conf, each package beside the STIG rule that
+    # removes it. Only dnf is handled: an exclusion elsewhere fails here
+    # rather than being silently ignored.
+    - name: Assert the package excludes have a package manager to go to
+      ansible.builtin.assert:
+        that: >-
+          platform_desktop_package_excludes | length == 0
+          or ansible_facts['pkg_mgr'] in ['dnf', 'dnf5']
+        fail_msg: "platform_desktop_package_excludes is only implemented for dnf (found {{ ansible_facts['pkg_mgr'] }})"
+        quiet: true
+
+    - name: Keep the package manager from installing packages the STIG removes
+      ansible.builtin.blockinfile:
+        path: /etc/dnf/dnf.conf
+        marker: "# {mark} SAFBox desktop: packages the STIG removes (platform group 7)"
+        block: |
+          {% for item in platform_desktop_package_excludes %}
+          # {{ item.package }}: {{ item.stig_id }}
+          {% endfor %}
+          excludepkgs={{ platform_desktop_package_excludes | map(attribute='package') | join(',') }}
+        owner: root
+        group: root
+        mode: "0644"
+      when: platform_desktop_package_excludes | length > 0
+
+    - name: Install the desktop packages
+      ansible.builtin.package:
+        name: "{{ platform_desktop_packages }}"
+        state: present
+
+    - name: Enable the display manager
+      ansible.builtin.systemd_service:
+        name: "{{ platform_desktop_display_manager }}"
+        enabled: true
+
+    - name: Read the default boot target
+      ansible.builtin.command:
+        argv: [systemctl, get-default]
+      register: platform_desktop_default_target
+      changed_when: false
+
+    - name: Boot to the graphical login
+      ansible.builtin.command:
+        argv: [systemctl, set-default, graphical.target]
+      when: platform_desktop_default_target.stdout != 'graphical.target'
+      changed_when: true
+
+    # SAF branding: the wallpapers, the login screen's logo, and for every
+    # account created afterwards a profile picture and a terminal palette.
+    # Each is a default the user may change, set through the desktop's own
+    # mechanisms (dconf system databases, AccountsService user templates,
+    # /etc/skel); GNOME's own theme files are left alone so distribution
+    # updates keep applying.
+    - name: Create the branding directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      loop:
+        - "{{ platform_desktop_background_dir }}"
+        - /etc/accountsservice/user-templates
+        - "/etc/dconf/db/{{ platform_desktop_dconf_user_db }}.d"
+        - "/etc/dconf/db/{{ platform_desktop_dconf_gdm_db }}.d"
+
+    # Private to the account it is copied into, as the desktop would create
+    # it (the STIG umask is 077).
+    - name: Create the terminal palette directory in /etc/skel
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+      loop:
+        - /etc/skel/.local
+        - /etc/skel/.local/share
+        - /etc/skel/.local/share/org.gnome.Ptyxis
+        - "{{ platform_desktop_palette.dest | dirname }}"
+
+    - name: Install the SAF wallpapers, logo, profile picture and terminal palette
+      ansible.builtin.copy:
+        src: "{{ item.file }}"
+        dest: "{{ item.dest }}"
+        owner: root
+        group: root
+        mode: "{{ item.mode | default('0644') }}"
+      loop: "{{ platform_desktop_assets }}"
+      loop_control:
+        label: "{{ item.dest }}"
+
+    - name: Read the installed branding files' checksums
+      ansible.builtin.stat:
+        path: "{{ item.dest }}"
+        checksum_algorithm: sha256
+      loop: "{{ platform_desktop_assets }}"
+      loop_control:
+        label: "{{ item.dest }}"
+      register: platform_desktop_asset_stats
+
+    - name: Check the branding files against their pinned sha256
+      ansible.builtin.assert:
+        that: item.stat.checksum == item.item.sha256
+        fail_msg: "{{ item.item.dest }} has sha256 {{ item.stat.checksum }}, pinned {{ item.item.sha256 }}"
+        quiet: true
+      loop: "{{ platform_desktop_asset_stats.results }}"
+      loop_control:
+        label: "{{ item.item.dest }}"
+
+    - name: List the SAF wallpapers in GNOME Settings
+      ansible.builtin.template:
+        src: safbox-backgrounds.xml.j2
+        dest: /usr/share/gnome-background-properties/safbox.xml
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Make the SAF logo a new user's profile picture
+      ansible.builtin.template:
+        src: accountsservice-user-template.j2
+        dest: "/etc/accountsservice/user-templates/{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop: "{{ platform_desktop_user_templates }}"
+
+    - name: Set a new user's desktop defaults (wallpaper, terminal palette)
+      ansible.builtin.template:
+        src: "dconf-safbox-{{ item }}.j2"
+        dest: "/etc/dconf/db/{{ platform_desktop_dconf_user_db }}.d/10-safbox-{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop: [background, terminal]
+      notify: Update the dconf databases
+
+    - name: Show the SAF logo on the login screen
+      ansible.builtin.template:
+        src: dconf-safbox-logo.j2
+        dest: "/etc/dconf/db/{{ platform_desktop_dconf_gdm_db }}.d/10-safbox-logo"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Update the dconf databases

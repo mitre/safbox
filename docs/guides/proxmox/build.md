@@ -1,10 +1,10 @@
 # Building SAFBox on Proxmox VE
 
-This is the operator's checklist for one Proxmox target: what you do by hand
-once, which variable each choice lands in, and the smallest set of
-permissions the build account needs. The generic build procedure lives in
-[docs/rebuild.md](../../rebuild.md); read that for the base image, partition
-layout, and troubleshooting.
+This is the operator's checklist for a Proxmox VE 8 or 9 cluster: what you
+do by hand once, which variable each choice lands in, and the smallest set of
+permissions the build account needs. It is the one build procedure; the
+[reference pages](../../reference/platform.md) describe what the image
+contains, how it is validated, and how to troubleshoot it.
 
 Everything below runs as root on a Proxmox node unless stated otherwise.
 Replace the angle-bracket placeholders with your own names; none of the
@@ -25,9 +25,11 @@ upstream pages linked below. The versions listed are the ones CI uses
 | Ansible | the `ansible` package, 14.5.0 (see below) | [Ansible installation guide](https://docs.ansible.com/ansible/latest/installation_guide/intro_installation.html) |
 | CINC Auditor | 7.2.1 (any 5.0 or newer runs the profiles) | [cinc.sh/docs/auditor](https://cinc.sh/docs/auditor/#install) |
 | SAF CLI | 1.7.0, on Node.js 22 | [SAF CLI installation](https://github.com/mitre/saf#installation) |
+| Node.js and npm | 18 or newer; the build uses them to build the documentation site the box serves (`site/`), from its lockfile | [nodejs.org](https://nodejs.org/en/download) |
 
 The scripts also use the usual command-line tools: git, the OpenSSH client
-(`ssh`, `ssh-keygen`), curl, and jq.
+(`ssh`, `ssh-keygen`), curl, jq, and flock (util-linux; on macOS, Homebrew's
+`flock` or `util-linux`).
 
 **Install the right Ansible.** Several different things are called Ansible,
 and it is easy to get the wrong one:
@@ -58,21 +60,20 @@ ansible-community --version   # Ansible community version 14.5.0
 
 The Ansible control node does not run natively on Windows; use WSL there.
 Contributors also need the development tools (pre-commit, pykickstart,
-the linters) listed under "Workstation prerequisites" in
-[docs/rebuild.md](../../rebuild.md#workstation-prerequisites).
+the linters) listed in [Developing SAFBox](../../reference/development.md).
 
 ## 1. Pick the node and check its CPU
 
-The release base, Rocky Linux 10, needs an x86-64-v3 CPU (AVX2). AlmaLinux
-10 ships an `x86_64_v2` build for older hardware. Check the node:
+Rocky Linux 10 and AlmaLinux 10 need an x86-64-v3 CPU (AVX2); AlmaLinux 10
+also ships an `x86_64_v2` build for older hardware. Check the node:
 
 ```
 /lib64/ld-linux-x86-64.so.2 --help | grep -A4 'Subdirectories of glibc-hwcaps'
 ```
 
-`x86-64-v3 (supported, searched)` means Rocky 10 will boot. If only
-`x86-64-v2` is supported, use the AlmaLinux `x86_64_v2` ISO for development
-builds; a Rocky 10 VM will not boot on that node.
+`x86-64-v3 (supported, searched)` means Rocky Linux 10 and AlmaLinux 10 will
+boot. If only `x86-64-v2` is supported, use the AlmaLinux `x86_64_v2` ISO;
+the x86-64-v3 builds will not boot on that node.
 
 | Fact | Variable |
 |---|---|
@@ -110,7 +111,10 @@ the ISO by its storage volume id:
 | Checksum | `iso_checksum` | `sha256:<hex from CHECKSUM>` |
 
 The minimal ISO installs a headless system from the media alone. A desktop
-build needs the DVD ISO or a reachable package mirror.
+is chosen by `safbox_desktop_enabled` in `ansible/local.yml`, not by the
+ISO, and needs the DVD ISO or a reachable package mirror; see
+[A desktop build](../../reference/appliance.md#a-desktop-build). Reach any
+SAFBox's console over SPICE, the default: see [desktop.md](desktop.md).
 
 Use an installer ISO (`minimal` or `dvd`), never a live image such as
 `Workstation` or `Workstation-Lite`. A live image boots to a desktop and
@@ -231,30 +235,135 @@ every variable from the tables above, plus:
 
 | Variable | Set it when |
 |---|---|
-| `vm_cores`, `vm_memory`, `vm_disk_size` | the node is smaller than the reference 4 vCPU, 8 GiB, 60G; the disk must be at least 40G |
+| `vm_cores`, `vm_memory`, `vm_disk_size` | the node is smaller than the reference 4 vCPU, 8 GiB, 60G; the disk must be at least 60G. Beyond the fixed 20 GiB, the disk is shared 40/40/10/10 between `/home`, `/var`, `/var/log` and `/var/log/audit` ([Partition layout](../../reference/platform.md#partition-layout)) |
 | `proxmox_insecure_skip_tls_verify = true` | a throwaway lab only, where you will not trust the cluster CA (step 6 explains why trusting it is better: with verification off, the token goes to whoever answers) |
 | `http_interface` | the workstation has several network interfaces |
 | `kickstart_url` | the VM's network cannot reach the workstation; host the rendered kickstart elsewhere |
 | `installer_ssh = true` | you want to SSH into a stuck installer while developing; `scripts/build.sh` refuses it unless `SAFBOX_DEV=1` |
-| `cpu_type` | the default `x86-64-v3` needs a v3 node; on older hardware see the rebuild guide's "Site overrides". Named models expose no hardware RNG, which is why the source attaches a virtio-rng device (`rng0` needs `VM.Config.HWType`, already in the role) |
+| `cpu_type` | the default `x86-64-v3` needs a v3 node; on older hardware see [Site overrides](#site-overrides) below. Named models expose no hardware RNG, which is why the source attaches a virtio-rng device (`rng0` needs `VM.Config.HWType`, already in the role) |
 | `disk_format = "qcow2"` | the disk storage is a directory, NFS, or CIFS storage |
 | `vlan_tag` | the build network is a tagged VLAN |
+| `vga = "std"` | only if SPICE cannot be used at all: the default `qxl` is what SPICE needs, and SPICE (Console → SPICE, `remote-viewer`) is the default, tested way to reach the console ([desktop.md](desktop.md)); noVNC works with either |
 | `http_bind_address` | the runner should offer the rendered kickstart on one address only |
-| `build_gate_ssh_config_file` | CINC Auditor cannot read or use the runner's SSH client config (the build gate fails with `Permission denied @ rb_sysopen - /etc/ssh/ssh_config`); `"/dev/null"` reads none. Set `SAFBOX_SSH_CONFIG` the same way for the clone test. See `scripts/validate.sh` in the rebuild guide |
+| `build_gate_ssh_config_file` | CINC Auditor cannot read or use the runner's SSH client config (the build gate fails with `Permission denied @ rb_sysopen - /etc/ssh/ssh_config`); `"/dev/null"` reads none. Set `SAFBOX_SSH_CONFIG` the same way for the clone test. See [`scripts/validate.sh`](../../reference/validation.md#scripts-validate-sh) |
+
+### Site overrides
+
+The repository describes the normal case. Anything particular to your site
+goes in two git-ignored files:
+
+- `packer/local.auto.pkrvars.hcl` for Packer variables (node, pool, storage,
+  ISO, CPU model, resources).
+- `ansible/local.yml` for Ansible variables. Pass it to every playbook by
+  adding `"@<absolute path>/ansible/local.yml"` to `ansible_extra_vars` in
+  the Packer file, or `-e @ansible/local.yml` when running a playbook by
+  hand. Values there replace the project's defaults in
+  `ansible/group_vars/all/main.yml`.
+
+Example: on x86-64-v2 hardware, set `cpu_type = "x86-64-v2-AES"` in the
+Packer file, and in `ansible/local.yml` replace `safbox_tool_cinc_auditor`
+with CINC's el9 build (its el10 build requires x86-64-v3).
 
 ## 8. Build and prove
 
 ```
 tests/packer/validate.sh
+tests/kickstart/ks-lint.sh
 scripts/build.sh
 SAFBOX_NODE=<node> SAFBOX_POOL=<pool> scripts/clone-and-ssh.sh <template-vmid> <clone-vmid>
 ```
 
+`scripts/build.sh` mints an ephemeral build key and runs Packer. The build
+types a short GRUB edit at the ISO menu, serves the kickstart, waits
+through the install and reboot, confirms FIPS, Secure Boot and the guest
+agent over SSH, runs the appliance playbook, validates the VM from this
+machine (`scripts/validate.sh`: CINC Auditor over SSH, then the SAF CLI
+thresholds), seals the image (deletes the build user, scrubs host identity
+and installer residue, asserts the seal's own post-conditions), and
+converts the VM to a template.
+
 Add `SAFBOX_CA_FILE=<cluster-ca.pem>` (or, for a throwaway lab,
-`SAFBOX_INSECURE_TLS=1`) to the clone command. The clone test only destroys
-a VM it created itself: each run writes a unique run ID into the clone's
-description and refuses to delete any VM whose description does not carry
-that ID, so a pre-existing VM with the same number is never touched.
+`SAFBOX_INSECURE_TLS=1`) to the clone command. Pass `--keep` as a third
+argument to leave the clone running. Set `SAFBOX_CLONE_PASSWORD` to an
+`openssl passwd -6` hash to give `safuser` its password (see
+[Accounts on a clone](#accounts-on-a-clone)); without it first boot
+generates `safuser`'s.
+
+The clone test (`scripts/clone-and-ssh.sh`) is the release gate. It clones
+the template through the API into the pool, injects a cloud-init user
+(`admin`, or `SAFBOX_CLONE_USER`, which a site inputs file must then name
+as `admin_user`) and an RSA key, boots it, learns its address from the
+guest agent, logs in as that user and checks FIPS mode and the clone's
+host name, waits for the boot to finish (below), logs in as `safuser` with
+the same key, then runs
+`scripts/validate.sh` against it. SSH
+answers well before first boot has finished: the secrets, the certificate,
+the Heimdall and Vulcan pods and the TLS proxy come later, and a scan that
+starts too early fails their controls. So the clone test first waits, over
+SSH, on `systemctl is-system-running --wait`, which returns once the boot's
+job queue has settled:
+
+- `running`: the scan starts.
+- `degraded`: the boot finished with failed units. They are listed, then
+  the scan starts and judges the services itself. A fresh clone usually
+  ends here: a podman healthcheck that fails while its container is still
+  starting leaves a failed transient unit (`podman healthcheck run`).
+- No answer within `SAFBOX_READY_TIMEOUT` seconds (a positive whole number;
+  default 600; raise it on a slow host): the run fails without a scan and
+  lists the jobs still queued. An SSH failure while waiting is reported as
+  such, not as a timeout.
+
+A switched-off service has no units, so it neither holds up the wait nor
+fails it. `SAFBOX_SKIP_VALIDATE=1` stops after the SSH check, before the
+wait.
+
+The clone test only destroys a VM it created itself: each run writes a
+unique run ID into the clone's description and refuses to delete any VM
+whose description does not carry that ID, so a pre-existing VM with the
+same number is never touched.
+
+### Accounts on a clone
+
+A clone has two accounts besides root: `admin`, the key-only account for
+deploying and automation (the release gate logs in as it), and `safuser`,
+the account people log in as day to day. On the clone's **Cloud-Init** tab
+(or through the API, as `scripts/clone-and-ssh.sh` does) set:
+
+- **User** (`ciuser`): leave it blank, and cloud-init makes `admin`; the
+  clone test sets `admin` explicitly. It gets the SSH key and passwordless
+  sudo, never a password.
+- **SSH public key** (`sshkeys`): your key, for `admin`. First boot gives
+  it to `safuser` as well.
+- **Password** (`cipassword`, optional): `safuser`'s password, and
+  `safuser`'s only; `admin` never gets it. Paste the output of `openssl
+  passwd -6`, not the plain password: Proxmox stores a plain one as a
+  SHA-256 hash, which the STIG flags, but keeps a `$6$` hash as given.
+  Leave it empty and first boot generates `safuser`'s password; read it
+  with `sudo cat /etc/safbox/safuser.env` as `admin`.
+
+`safuser`'s password follows the STIG: it expires 60 days after it is set,
+and three wrong passwords in 15 minutes lock the account until an
+administrator releases it. As `admin`, `sudo passwd safuser` sets a new
+password and `sudo faillock --user safuser --reset` releases a lock.
+`admin` itself cannot be locked out or expire. [Accounts](../../reference/accounts.md)
+says more, including a deployment's own cloud-init users list.
+
+### Giving a clone more disk
+
+A clone's disk starts at the template's `vm_disk_size`. To give it more,
+resize the disk after cloning and before the first start: the disk's
+**Resize** action in the GUI, or through the API (the token's
+`VM.Config.Disk` covers it):
+
+```
+curl -sS --cacert <cluster-ca.pem> -H "Authorization: PVEAPIToken=$PROXMOX_USERNAME=$PROXMOX_TOKEN" \
+  -X PUT --data-urlencode disk=scsi0 --data-urlencode size=+20G \
+  "$PROXMOX_URL/nodes/<node>/qemu/<clone-vmid>/resize"
+```
+
+First boot hands the new space out by share; [Partition
+layout](../../reference/platform.md#partition-layout) explains how, and how
+to grow a box that has already booted.
 
 Rebuilding reuses `vm_id`, and Packer never overwrites: delete the previous
 template first (through the API with the same token, which the pool grant
@@ -267,13 +376,13 @@ host keys, machine identity, and the installer's kickstart copies, and
 asserts its own result. A build with `seal = false` runs the development
 seal instead: machine identity, cloud-init state and installer residue are
 still scrubbed, but the build user, its key and sudo rule and the shared SSH
-host keys stay for inspection. Such a template is tagged `unsealed` and says
+host keys stay for inspection, with the build logs. Such a template is tagged `unsealed` and says
 so in its description, and nothing checks it for leftovers (the seal's
 post-conditions run only in a full seal); use it only to develop and test
 the appliance layer. The rendered kickstart is also served to the build VM
 over plain HTTP from the runner, so the build network segment is trusted;
-for release builds host it over HTTPS via `kickstart_url` or use the ISO
-route described in the rebuild guide.
+for release builds host it over HTTPS via `kickstart_url` or use one of
+the routes in [When the VM cannot reach your workstation](#when-the-vm-cannot-reach-your-workstation).
 
 ### Where a run keeps its files
 
@@ -343,6 +452,33 @@ scripts/build.sh -var vm_id=9004 -var vm_name=safbox-alma -var iso_file=<storage
   scan has filled the cache, for example one earlier build, or
   `cinc-auditor vendor verify/profiles/safbox-rhel10-stig-overlay` (as
   `tests/ansible/lint.sh` does).
+
+## When the VM cannot reach your workstation
+
+During the install the VM fetches its kickstart over plain HTTP. By default
+Packer runs a temporary, unauthenticated web server on the workstation and
+the kickstart URL points at it, so the **VM's network must be able to reach
+the workstation**, and anyone on that segment could answer in its place.
+Being able to reach the Proxmox API is not enough, and the segment is
+trusted. Set `http_bind_address` so the server listens on the build-facing
+address only. For release builds, host the rendered kickstart over HTTPS and
+set `kickstart_url` (Anaconda verifies the certificate), or use the ISO
+route below. In a segmented environment
+where the build VLAN cannot route back to wherever Packer runs, you have
+three options:
+
+1. **Run Packer from a host on the VM's network**, such as a jump host or a
+   self-hosted CI runner in that segment. No configuration change.
+2. **Host the kickstart yourself.** Render it, put it on any internal web
+   server the VM can reach, and set `kickstart_url` in your local vars. The
+   build then never relies on the workstation's HTTP server. The rendered
+   kickstart contains the build user's public key but no secret.
+3. **Kickstart on a second CD.** Anaconda loads `ks.cfg` from any volume
+   labelled `OEMDRV` without a kernel argument. Packer can build and attach
+   such an ISO, but on Proxmox that means uploading it to an ISO storage,
+   which needs the `Datastore.AllocateTemplate` privilege the least-privilege
+   token deliberately lacks. Grant it on a dedicated ISO storage if you take
+   this route. Not implemented in v1.
 
 ## What the account cannot do, on purpose
 

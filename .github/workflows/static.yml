@@ -110,3 +110,8 @@ jobs:
 
       - name: Platform discipline
         run: tests/platform-discipline.sh
+
+      # VitePress fails the build on a dead link, so this also checks every
+      # link between the docs.
+      - name: Documentation site
+        run: npm --prefix site ci --no-audit --no-fund && npm --prefix site run build

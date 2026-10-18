@@ -9,7 +9,7 @@
 # or cloud-final.service: those are ordered after multi-user.target, which
 # wants this unit, and systemd breaks that cycle by deleting this job.
 [Unit]
-Description=SAFBox first boot: per-install secrets and service enablement
+Description=SAFBox first boot: disk growth, per-install secrets and service enablement
 Documentation=file:{{ base_firstboot_script }}
 ConditionPathExists=!{{ base_firstboot_done_marker }}
 Wants=network-online.target

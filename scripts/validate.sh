@@ -92,6 +92,6 @@ scan() { # profile threshold
 }
 
 failed=0
-scan safbox safbox.yml
+scan safbox "safbox-$CONTEXT.yml"
 scan safbox-rhel10-stig-overlay "stig-$CONTEXT.yml"
 exit "$failed"

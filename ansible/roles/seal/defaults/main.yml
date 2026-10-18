@@ -40,12 +40,20 @@ seal_unpinned_packages:
 # boot fresh and no build-time secret can survive (none should exist).
 seal_firstboot_state:
   - /var/lib/safbox/firstboot.done
+# The start page's service status from the build VM (services role); a
+# clone's status timer writes its own within a minute of booting.
+seal_build_status_files:
+  - /etc/safbox-proxy/html/status.json
 seal_env_file_dir: /etc/safbox
 seal_env_file_pattern: '*.env'
-# The TLS proxy's certificate and key, which first boot generates (the
-# services role). The template must hold neither: a key baked in would be
-# shared by every clone.
-seal_tls_dir: /etc/safbox/tls
+# The TLS proxy's certificate and key, and the local CA that signs them,
+# which first boot generates (the services role), with the CA's copy in the
+# system trust store (seal_proxy_ca_anchor, vars/<os_family>.yml). The
+# template must hold none: a key baked in would be shared by every clone.
+seal_tls_paths:
+  - /etc/safbox/tls
+  - /etc/safbox/ca
+  - "{{ seal_proxy_ca_anchor }}"
 
 # Files cloud-init wrote for the build VM's own instance that `cloud-init
 # clean` leaves behind: root's authorized_keys (the users' keys behind a

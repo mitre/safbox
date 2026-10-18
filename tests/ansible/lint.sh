@@ -17,7 +17,10 @@ echo "== ansible-playbook --syntax-check"
   playbooks/safbox.yml playbooks/seal.yml)
 
 echo "== shellcheck"
-find ansible/roles -path '*/files/*' -type f -print0 | xargs -0 shellcheck --shell=bash --external-sources
+# The roles' files include images and text; only the shell scripts (a shell
+# shebang or a shellcheck shell directive on the first line) are checked.
+find ansible/roles -path '*/files/*' -type f -exec awk 'FNR == 1 && /^(#!.*sh|# shellcheck shell=)/ { printf "%s\0", FILENAME } { nextfile }' {} + \
+  | xargs -0 shellcheck --shell=bash --external-sources
 git ls-files -z -- '*.sh' | xargs -0 shellcheck --external-sources
 
 echo "== packer validate"

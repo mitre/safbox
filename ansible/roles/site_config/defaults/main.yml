@@ -8,7 +8,7 @@
 # mechanism, one anchor file per certificate. Certificates of a bundle no
 # longer listed are removed. Switched off by setting safbox_site_config_1
 # to false; the group runs at build (baked into the image) or against a
-# deployed box (--tags safbox-site-config-1, docs/rebuild.md).
+# deployed box (--tags safbox-site-config-1, docs/reference/site-config.md).
 
 # Downloads and archive members, in /var/tmp, which the seal clears.
 site_config_trust_work_dir: /var/tmp/safbox-trust

@@ -1,0 +1,16 @@
+---
+# RHEL 10 family (Rocky Linux 10, AlmaLinux 10) names.
+
+# growpart, for the disk-growing first-boot hook.
+base_family_packages:
+  - cloud-utils-growpart
+
+# jq reads cloud-init's configuration; pwmake and pwscore generate a password
+# that meets the password quality policy (the safuser hook).
+base_safuser_packages:
+  - jq
+  - libpwquality
+
+# jq reads cloud-init's configuration (the admin hook).
+base_admin_packages:
+  - jq

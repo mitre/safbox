@@ -2,6 +2,8 @@
 # Debian family names. Present per ADR-0001 but untested until the Ubuntu
 # source lands.
 seal_package_cache_clean_argv: [apt-get, clean]
+seal_proxy_ca_anchor: /usr/local/share/ca-certificates/local-ca-safbox-proxy.crt
+seal_trust_update_argv: [update-ca-certificates, --fresh]
 seal_installer_residue_find:
   paths: [/root]
   patterns: ['autoinstall-user-data']
