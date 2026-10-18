@@ -27,26 +27,43 @@ SV-281170 (admin is exempt from password ageing) has no switch, because
 its rule, RHEL-10-600110, cannot touch `admin`, which first boot makes
 with a locked password. A few lines there are not deviations: their
 Lockdown task fails on SAFBox, so the rule is off, and the baseline control
-still runs and reports what it finds. One is off because its task would
-damage SAFBox: RHEL-10-400290 (SV-281075, every file has a valid owner)
+still runs and reports what it finds. Two are off because their tasks
+would damage SAFBox. RHEL-10-400290 (SV-281075, every file has a valid owner)
 gives root every file whose owner is not in `/etc/passwd`, and on SAFBox
 those are the container image layers under `/var/lib/containers`, owned
 by users that exist only inside each image. Given root, the images break
 (PostgreSQL refuses a data directory it does not own), and the task takes
 hours, one file at a time. The requirement is applicable and is not a
 deviation; SAFBox has no hardening for it yet (safbox-m5f.63), and
-the baseline control still runs. To add a deviation, add the override
-to the overlay and the switch to group_vars; every new deviation is an
-owner decision.
+the baseline control still runs. RHEL-10-400285 (SV-281074, every file
+has a valid group owner) runs only with `rhel10stig_disruption_high` (see
+[Lockdown's disruptive changes](#lockdowns-disruptive-changes)). Its task
+looks for files whose group is not root (`find / -xdev -type f ! -group
+root`) rather than files whose group does not exist (`-nogroup`), and
+gives every one group root. Changing a file's group clears its setgid
+bit, so `write`, `postdrop`, `postqueue`, `postlog` and `utempter` lose
+the group they run as (`rpm -V` reports `.M....G..`), and the sssd
+helpers and `/etc/fapolicyd` files are regrouped. The requirement is
+applicable and is not a deviation: no file on SAFBox lacks a valid group,
+and the baseline control, which still runs, passes. To add a deviation,
+add the override to the overlay and the switch to group_vars; every new
+deviation is an owner decision.
 
 **Account lockout is applied by SAFBox.** Lockdown puts pam_faillock in
 the PAM stacks (RHEL-10-600600 and 600610) and holds a lock until an
 administrator releases it (RHEL-10-600425) only when
-`rhel10stig_disruption_high` is on, which SAFBox leaves off. The hardening
-role therefore applies those three itself, before Lockdown runs: it enables
-authselect's `with-faillock` feature and sets `unlock_time = 0` in
-`/etc/security/faillock.conf`; Lockdown sets the rest of that file (three
-failures in 15 minutes). Root is not locked (SV-281195, a deviation in the
+`rhel10stig_disruption_high` is on. The hardening role applies those three
+itself, before Lockdown runs, so they hold whichever way a site sets
+`rhel10stig_disruption_high`: it enables authselect's `with-faillock`
+feature and sets `unlock_time = 0` in `/etc/security/faillock.conf`;
+Lockdown sets the rest of that file (three failures in 15 minutes).
+`rhel10stig_uses_authselect: true` tells Lockdown that authselect makes
+the stacks, so RHEL-10-600600 and 600610 only check that `with-faillock`
+is enabled. Lockdown's default (`false`) would have them edit
+`/etc/pam.d/system-auth` and `password-auth`, which authselect made,
+directly, adding a second `pam_faillock.so preauth` line to each. Their
+baseline controls (SV-281212, SV-281213) pass on the stacks authselect
+writes. Root is not locked (SV-281195, a deviation in the
 overlay). `admin` logs in with a key and has passwordless sudo, neither of
 which checks a password, so a lock never shuts it out, and it releases a
 locked account with `sudo faillock --user <name> --reset`; see
@@ -110,8 +127,11 @@ STIG overlay's `banner_message_text_cli`, `_ral` and `_gui` inputs in its
 site inputs file.
 
 Remote logging is off by default: `safbox_remote_log_server` is empty, the
-hardening role switches off the forwarding rule (RHEL-10-200642), and the
-overlay marks SV-280985 Not Applicable as a deploy-time deviation. A site
+hardening role switches off the forwarding rules (RHEL-10-200642, and
+RHEL-10-200646, which writes the same forwarding file when
+`rhel10stig_disruption_high` is on), and the
+overlay marks SV-280985 (forwarding) and SV-280989 (forwarding over TLS)
+Not Applicable as deploy-time deviations. A site
 that has a log server sets `safbox_remote_log_server` (and, if needed,
 `safbox_remote_log_port` and `safbox_remote_log_protocol`, tcp or udp) in
 `ansible/local.yml`, and the overlay input `remote_log_server` to the same
@@ -121,6 +141,94 @@ evaluated.
 
 USBGuard is enabled with no rules, so USB devices are blocked until a site
 allows them.
+
+## Lockdown's disruptive changes
+
+Lockdown marks some of its rules as disruptive. With
+`rhel10stig_disruption_high: false` it only audits them and prints a
+warning; with `true` it applies them as well. The setting is in the
+Lockdown section of `ansible/group_vars/all/main.yml` and is on by
+default. A site turns it off with `rhel10stig_disruption_high: false` in
+`ansible/local.yml`; it must be a YAML boolean, so set it there, not with
+`-e rhel10stig_disruption_high=false`, which passes the string `"false"`
+and makes Lockdown's conditions fail. SAFBox switches off, or confines,
+the disruptive rules that damage a fresh build:
+
+| Rule | Switch | Why |
+|---|---|---|
+| RHEL-10-200646 (SV-280989) | on only with `safbox_remote_log_server`, like RHEL-10-200642 | with no log server it writes `/etc/rsyslog.d/99-forwarding.conf` with `target=""`; rsyslog suspends the action and `/var/log/messages` and `/var/log/secure` stop being written seconds after boot |
+| RHEL-10-400285 (SV-281074) | off | strips setgid from system binaries (above) |
+| RHEL-10-300010 (SV-281008) | follows `rhel10stig_disruption_high` | without it the task fails: it reads a fact it sets only with the setting on |
+
+RHEL-10-600600 and 600610 stay on: with `rhel10stig_uses_authselect:
+true` they only check authselect's `with-faillock` feature (above).
+
+The control `safbox-logging-1` in the safbox profile checks that local
+logging works: a message logged during the scan must reach
+`/var/log/messages`, an authpriv one `/var/log/secure`, and no rsyslog
+forwarding action may have an empty target.
+
+**What it closes.** On a SAFBox build, nine STIG controls pass with it
+that do not pass without it. Eight fail without it; SV-281223 is
+skipped, because the file it checks, `/etc/libuser.conf`, exists only
+once RHEL-10-600750 writes it:
+
+| Control | Rule | Requirement |
+|---|---|---|
+| SV-281084 | RHEL-10-400335 | systemd-tmpfiles initialization files mode 0600 or less |
+| SV-281097 | RHEL-10-500005 | auditing of processes that start before auditd (`audit=1`) |
+| SV-281100 | RHEL-10-500020 | the user name logged on failed logins (faillock `audit`) |
+| SV-281200 | RHEL-10-600455 | no blank or null passwords (`nullok` removed) |
+| SV-281209 | RHEL-10-600540 | reauthentication for sudo |
+| SV-281210 | RHEL-10-600550 | sudo asks for the invoking user's password |
+| SV-281217 | RHEL-10-600720 | FIPS hashing for `pam_unix` in `password-auth` |
+| SV-281222 | RHEL-10-600740 | the shadow file holds only encrypted passwords |
+| SV-281223 | RHEL-10-600750 | account tools store only encrypted passwords |
+
+**What it costs.**
+
+- `safuser` types its password at every `sudo`: RHEL-10-600540 sets
+  `Defaults timestamp_timeout=0`. `admin` is unaffected; its passwordless
+  sudo stays (RHEL-10-600560 is off, a deviation in the overlay).
+- A password can be changed at most once a day: RHEL-10-600210 sets
+  `PASS_MIN_DAYS 1` in `/etc/login.defs`, and RHEL-10-600270 gives every
+  existing account a one-day minimum. A user who has just changed a
+  password needs an administrator (`sudo passwd <name>`) to change it
+  again that day.
+- RHEL-10-400280 (SV-281073) sets the sticky bit on world-writable
+  directories. On SAFBox these are the four Vulcan gem directories
+  described above, inside the image layers under
+  `/var/lib/containers/storage`. Vulcan runs as before, so the rule stays
+  on, but the change is made to pulled layers behind podman's back, the
+  same caveat as changing their modes by hand. SV-281045, which checks
+  their owner, still fails.
+
+**On a later run against a deployed box.** The switches above make a
+build safe. Some rules that change nothing on a fresh build act when the
+playbook is run again against a box already in use, and stay on, because
+on a box in SAFBox's own state they change nothing and none of them
+touches `admin`:
+
+- RHEL-10-600730 locks (`passwd -l`) every account whose password hash
+  is not SHA-512 (`$6$`). It skips locked passwords (`!`, as `admin`'s
+  is), root and the account running the playbook. First boot sets
+  `safuser`'s password with SHA-512, whether generated or given plain,
+  and keeps a crypt hash as given; so `safuser` is locked only when the
+  deployer supplied another kind of hash, such as the `$5$` Proxmox makes
+  from a plain **Password** (`cipassword`), which first boot warns about
+  and SV-281221 already fails. `admin` then sets a new one with `sudo
+  passwd safuser`.
+- RHEL-10-600110 and 600270 set the ageing of existing accounts that have
+  a password (not `admin`'s, which is locked): at most 60 days, at least
+  one. `safuser` already has both from `/etc/login.defs` when first boot
+  creates it.
+- RHEL-10-400230 removes and reinstalls cronie when the permissions of
+  the cron files differ from the package's; on SAFBox they do not.
+- RHEL-10-200562 replaces `/etc/usbguard/rules.conf` with a policy
+  generated from the USB devices attached at that moment, once any rule
+  exists. SAFBox ships no rules; a site that writes its own sets
+  `rhel10stig_200562: false` in `ansible/local.yml` before running the
+  playbook again.
 
 ## The firewall zone
 

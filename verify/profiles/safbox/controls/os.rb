@@ -187,6 +187,30 @@ control 'safbox-system-3' do
   end
 end
 
+control 'safbox-logging-1' do
+  impact 1.0
+  title 'rsyslog writes the local log files'
+  desc 'rsyslog copies the journal into /var/log/messages, and authentication messages into /var/log/secure, the files the STIG and an administrator read. An rsyslog forwarding action with no target server (Lockdown RHEL-10-200646 applied without a remote log server) suspends rsyslog, and both files stop growing seconds after boot. The control logs a message of each kind, unique to this scan, and waits up to 20 seconds for it to arrive, three times with a fresh message. Rate limiting can also keep a message out of the files (journald per service, rsyslog imjournal for the whole journal); a failure prints the rate-limit messages journald and rsyslog logged since boot, so the two causes can be told apart.'
+
+  describe command(%q(grep -rlsE "target\s*=\s*(\"\"|'')" /etc/rsyslog.conf /etc/rsyslog.d)) do
+    its('stdout') { should be_empty }
+  end
+
+  marker = "safbox-logging-1-#{Time.now.utc.strftime('%Y%m%dT%H%M%S%NZ')}"
+  { 'user.info' => '/var/log/messages', 'authpriv.info' => '/var/log/secure' }.each do |priority, log|
+    # sh -c, so the whole command runs with the scan's sudo, not only logger.
+    script = "for try in 1 2 3; do m=#{marker}-#{priority}-$try; " \
+             "logger -t safbox-logging-1 -p #{priority} $m; " \
+             "for _ in $(seq 20); do grep -qF $m #{log} && exit 0; sleep 1; done; done; " \
+             "echo no #{priority} test message reached #{log} in 3 tries; " \
+             'journalctl -b --no-pager -o short-iso -u systemd-journald -u rsyslog --grep "Suppressed|rate-limit" | tail -n 5; exit 1'
+    describe command("sh -c '#{script}'") do
+      its('stdout') { should be_empty }
+      its('exit_status') { should eq 0 }
+    end
+  end
+end
+
 control 'safbox-motd-1' do
   impact 1.0
   title 'Logins show the SAF greeting'

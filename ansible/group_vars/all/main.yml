@@ -163,6 +163,28 @@ safbox_firewall_zone: "{{ 'drop' if safbox_hardening_1 | bool else 'public' }}"
 # own record of what was applied instead (/usr/local/share/safbox/hardening).
 create_benchmark_facts: false
 
+# Lockdown's disruptive changes. Off, Lockdown only audits and warns about
+# the rules it marks disruptive; on, it applies them as well. On SAFBox that
+# passes nine STIG controls that do not pass without it, but safuser then
+# types its password at every sudo (timestamp_timeout=0) and may change it
+# at most once a day (PASS_MIN_DAYS 1), and rules that change nothing on a
+# fresh build can lock, age, reinstall or replace things on a later run
+# against a deployed box. The switches below marked "under disruption_high"
+# keep it from damaging SAFBox at build. On by default (owner, 2026-10-17);
+# a site that does not want it sets it to false, a YAML boolean, in
+# ansible/local.yml (not -e rhel10stig_disruption_high=false, which passes
+# a string Lockdown's conditions reject). docs/reference/hardening.md
+# ("Lockdown's disruptive changes") lists what it adds and costs.
+rhel10stig_disruption_high: true
+
+# SAFBox's PAM stacks are made by authselect (the hardening role enables
+# its with-faillock feature). Told so, Lockdown's faillock rules
+# (RHEL-10-600600, 600610) only check that feature and enable it if
+# missing; left at Lockdown's default (false), they edit the
+# authselect-made stacks directly and add a second pam_faillock preauth
+# line to each.
+rhel10stig_uses_authselect: true
+
 # Lockdown's firewalld zone is the box's zone (safbox_firewall_zone above).
 rhel10stig_custom_firewall_zone: "{{ safbox_firewall_zone }}"
 
@@ -209,8 +231,10 @@ rhel10stig_200080: "{{ not (safbox_desktop_enabled | bool) }}"
 # "Lockdown task fails": the task errors or misapplies on SAFBox; the
 # baseline control still runs. "Lockdown task harmful": the task would
 # damage SAFBox; the control is applicable and its baseline control still
-# runs. A site that decides differently sets the switch in
-# ansible/local.yml.
+# runs. "Under disruption_high": the task does this only with
+# rhel10stig_disruption_high on, as it is by default; with it off the task
+# only audits and warns, and the switch skips that audit and warning too.
+# A site that decides differently sets the switch in ansible/local.yml.
 rhel10stig_000510: false  # RHEL-10-000510 SV-280935 disk encryption: N/A in the overlay
 rhel10stig_200601: false  # RHEL-10-200601 SV-280970 fapolicyd: N/A in the overlay
 rhel10stig_200602: false  # RHEL-10-200602 SV-280971 fapolicyd policy: N/A in the overlay
@@ -218,10 +242,17 @@ rhel10stig_200602: false  # RHEL-10-200602 SV-280971 fapolicyd policy: N/A in th
 rhel10stig_200642: "{{ safbox_remote_log_server | length > 0 }}"
 rhel10stig_200644: false  # RHEL-10-200644 SV-280987 log server authentication: N/A in the overlay
 rhel10stig_200645: false  # RHEL-10-200645 SV-280988 log offload encryption: N/A in the overlay
-# RHEL-10-300010 SV-281008 crypto policy: Lockdown task fails: reads a fact set only under disruption_high
-rhel10stig_300010: false
+# RHEL-10-200646 SV-280989 log offload via gtls: Lockdown task fails under disruption_high:
+# writes a forwarding action with an empty target, which stops local logging; on with a log server
+rhel10stig_200646: "{{ safbox_remote_log_server | length > 0 }}"
+# RHEL-10-300010 SV-281008 crypto policy: Lockdown task fails without disruption_high:
+# reads a fact set only under it, so the rule follows disruption_high
+rhel10stig_300010: "{{ rhel10stig_disruption_high | bool }}"
 # RHEL-10-300040 SV-281011 sshd ciphers: Lockdown task fails: unclosed parenthesis in its when
 rhel10stig_300040: false
+# RHEL-10-400285 SV-281074 file groups: Lockdown task harmful under disruption_high:
+# gives group root to every file not in group root, stripping setgid from write and postdrop
+rhel10stig_400285: false
 # RHEL-10-400290 SV-281075 file owners: Lockdown task harmful: chowns container image layers to root
 rhel10stig_400290: false
 rhel10stig_500035: false  # RHEL-10-500035 SV-281103 audit failure panic: N/A in the overlay

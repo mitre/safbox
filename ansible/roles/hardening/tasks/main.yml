@@ -27,9 +27,12 @@
     # Account lockout. Lockdown puts pam_faillock in the PAM stacks
     # (RHEL-10-600600, 600610) and holds a lock until an administrator
     # releases it (RHEL-10-600425) only with rhel10stig_disruption_high,
-    # which SAFBox leaves off; without them no failed password locks any
-    # account. They are applied here, before Lockdown, the stacks through
-    # authselect, the distribution's tool for them. Lockdown sets the rest
+    # which a site may turn off; without them no failed password locks any
+    # account. They are applied here, before Lockdown, whichever way that
+    # is set, the stacks through authselect, the distribution's tool for
+    # them; rhel10stig_uses_authselect tells Lockdown so, and 600600 and
+    # 600610 then only check the with-faillock feature
+    # (ansible/group_vars/all/main.yml). Lockdown sets the rest
     # of /etc/security/faillock.conf (3 failures in 15 minutes, no
     # even_deny_root: root's lockout is a deviation in the STIG overlay).
     # admin, which logs in with a key and has passwordless sudo, runs no

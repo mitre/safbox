@@ -117,6 +117,23 @@ include_controls 'redhat-enterprise-linux-10-stig-baseline' do
     end
   end
 
+  # Not Applicable only until a site names its remote log server, as
+  # SV-280985 above.
+  control 'SV-280989' do
+    unless input_object('remote_log_server').has_value?
+      impact 0.0
+      desc 'justification', <<~JUSTIFICATION
+        Remote log offload over TLS is provided by the deploying site's log
+        server. SAFBox forwards no logs until a site names its server
+        (safbox_remote_log_server); the rule is then applied and this
+        control evaluated.
+      JUSTIFICATION
+      describe 'Off-loading audit records over TLS (gtls) via rsyslog' do
+        skip 'Not Applicable: provided by the deploying site; see the justification.'
+      end
+    end
+  end
+
   control 'SV-280987' do
     impact 0.0
     desc 'justification', <<~JUSTIFICATION
