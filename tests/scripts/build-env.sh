@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # scripts/build.sh reads the Proxmox credentials only from a file only its
-# owner can read (ADR-0001 Quality Standards: no secrets in the repository;
-# the token file is 0600). The mode check must work with GNU stat (Linux)
-# and BSD stat (macOS): GNU stat accepts BSD's -f as "filesystem status" and
+# owner can read (the token file is 0600, and no secret is in the
+# repository). The mode check must work with GNU stat (Linux) and BSD stat
+# (macOS): GNU stat accepts BSD's -f as "filesystem status" and
 # prints a report before failing, so trying the BSD form first broke the
 # check on Linux (a correct 0600 file was refused). Each case stops before
 # build.sh logs, generates keys or runs Packer.

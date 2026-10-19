@@ -3,8 +3,7 @@
 # docker-compose.yml (https://github.com/mitre/heimdall2/blob/master/docker-compose.yml)
 # and the nginx profile of Vulcan's
 # (https://github.com/mitre/vulcan/blob/master/docker-compose.yml), as one
-# container for both applications (ADR-0001 §Decision: a single nginx
-# reverse proxy).
+# container for both applications, so TLS terminates in one place.
 #   image nginx:alpine                 -> Red Hat UBI 9 nginx, pinned by digest
 #                                         (safbox_image_proxy): its OpenSSL runs
 #                                         the FIPS provider on a FIPS host

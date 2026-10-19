@@ -41,9 +41,9 @@ The design is recorded in [docs/adrs/0001-safbox-appliance-pipeline.md](docs/adr
 
 ## Status
 
-Phases 1 and 2 of 8: the install layer builds a FIPS-enabled RHEL 10 family
-template on Proxmox, and the appliance foundation (platform, first-boot
-framework, seal, outside-in validation) turns it into a sealed SAFBox base.
+The install layer builds a FIPS-enabled RHEL 10 family template on Proxmox,
+and the appliance foundation (platform, first-boot framework, seal,
+outside-in validation) turns it into a sealed SAFBox base.
 Every push runs the static suite and secret scan in CI (see
 [Developing SAFBox](docs/reference/development.md)).
 
@@ -68,6 +68,7 @@ bundles keeps its own licences:
 | PostgreSQL | PostgreSQL Licence |
 | Rocky Linux / AlmaLinux | their distributions' licences |
 | Container base images of Heimdall, Vulcan, Keycloak and the TLS proxy | Red Hat Universal Base Image (UBI) 9 End User License Agreement, which allows redistribution |
+| Container image of the three databases (sclorg PostgreSQL 18 on CentOS Stream 9) | the free-software licences of its CentOS Stream packages (PostgreSQL Licence, OpenSSL's Apache License 2.0, GPL and others), which allow redistribution |
 
 **HashiCorp Packer is the one source-available component**, under the
 Business Source License 1.1 (licensor IBM). Its Additional Use Grant
@@ -86,4 +87,9 @@ carries its licence files in its install directory. Rocky Linux's
 cryptographic modules carry no FIPS 140-3 certificate of their own.
 Keycloak's FIPS provider is Bouncy Castle FIPS (bc-fips) 2.1.3, the version
 Keycloak 26.8.1 requires: a patch release on the line NIST's CMVP
-certificate #4943 validates, which lists 2.1.1.
+certificate #4943 validates, which lists 2.1.1. The databases' FIPS
+provider is the CentOS Stream 9 build of OpenSSL's, which is not
+validated. SAFBox makes the effort to run every component in FIPS mode;
+that is not the same as every component being FIPS-validated (its module
+carrying a CMVP certificate), and SAFBox does not claim it. See
+[Services](docs/reference/services.md), FIPS.

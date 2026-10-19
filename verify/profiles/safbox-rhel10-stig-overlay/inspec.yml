@@ -40,3 +40,72 @@ inputs:
   - name: banner_message_text_gui
     profile: redhat-enterprise-linux-10-stig-baseline
     value: "Welcome to SAFBox!"
+  # The accounts SAFBox creates: admin (cloud-init's default user, for the
+  # deployer) and safuser (first boot, for the tools). SV-281199.
+  - name: user_accounts
+    profile: redhat-enterprise-linux-10-stig-baseline
+    value:
+      - admin
+      - safuser
+  # The baseline's list, plus the system accounts that packages SAFBox
+  # installs create (sysusers.d): dhcpcd, fapolicyd, systemd-coredump
+  # (systemd-udev), systemd-oom (systemd), tss (tpm2-tss) and unbound
+  # (unbound-libs). SV-281199.
+  - name: known_system_accounts
+    profile: redhat-enterprise-linux-10-stig-baseline
+    value:
+      - adm
+      - bin
+      - chrony
+      - daemon
+      - dbus
+      - dhcpcd
+      - fapolicyd
+      - halt
+      - lp
+      - mail
+      - nobody
+      - ntp
+      - operator
+      - polkitd
+      - postfix
+      - root
+      - shutdown
+      - sshd
+      - sssd
+      - sync
+      - systemd-bus-proxy
+      - systemd-coredump
+      - systemd-network
+      - systemd-oom
+      - tss
+      - unbound
+  # Groups that system commands may belong to besides root: the groups the
+  # distribution's packages give their setgid and restricted helpers (tty:
+  # write; utmp: utempter; postdrop: postdrop, postlog, postqueue; sssd: the
+  # sssd helpers), as rpm -V verifies them. SV-281038.
+  - name: required_system_accounts
+    profile: redhat-enterprise-linux-10-stig-baseline
+    value:
+      - root
+      - tty
+      - utmp
+      - postdrop
+      - sssd
+  # nobody (uid 65534) is a system account, which the STIG excludes from the
+  # one-day minimum password age; the baseline selects accounts by uid >= 1000
+  # and so counts it. SV-281186.
+  - name: exempt_home_users
+    profile: redhat-enterprise-linux-10-stig-baseline
+    value:
+      - root
+      - nobody
+  # Audit rule keys as the STIG's fix text gives them (and the rules on the
+  # box carry), where the baseline's defaults differ. SV-281124, SV-281153,
+  # SV-281154.
+  - name: audit_rule_keynames_overrides
+    profile: redhat-enterprise-linux-10-stig-baseline
+    value:
+      /usr/sbin/setsebool: privileged
+      umount2: privileged-umount
+      /etc/sudoers: logins

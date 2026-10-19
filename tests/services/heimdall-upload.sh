@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Heimdall on a deployed SAFBox, through the TLS proxy (ADR-0001 Phase 5
-# verification: log in, upload an HDF file via the API).
+# Heimdall on a deployed SAFBox, through the TLS proxy: log in and
+# upload an HDF file via the API.
 #
 #   HEIMDALL_ADMIN_PASSWORD=... tests/services/heimdall-upload.sh <box-address> [name]
 #

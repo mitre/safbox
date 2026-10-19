@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 20-heimdall.sh: first-boot hook of Heimdall (services role). The one place
-# Heimdall's per-install secrets are generated (ADR-0001 §Decision: secrets
-# are generated on first boot, never at build).
+# Heimdall's per-install secrets are generated: on first boot, never at
+# build, so no two installs share them.
 #
 # Writes, root-only (0600), with the strength of upstream's
 # setup-docker-env.sh (https://github.com/mitre/heimdall2/blob/master/setup-docker-env.sh):
@@ -15,10 +15,12 @@
 #   /etc/safbox/heimdall-oidc.env OIDC_CLIENT_SECRET (-hex 32), Heimdall's
 #                                client secret in Keycloak, read by both;
 #                                unused while Keycloak is switched off
-#   /etc/safbox/heimdall-db.env  POSTGRES_PASSWORD, the same database password,
+#   /etc/safbox/heimdall-db.env  POSTGRESQL_PASSWORD, the same database password,
 #                                for the PostgreSQL container, which needs
-#                                nothing else (upstream's compose passes
-#                                POSTGRES_PASSWORD=${DATABASE_PASSWORD})
+#                                nothing else: the password of Heimdall's role,
+#                                which the image sets on every start (upstream's
+#                                compose passes POSTGRES_PASSWORD=${DATABASE_PASSWORD}
+#                                to the postgres image)
 # Idempotent: an existing value is kept, so a retried first boot leaves the
 # database password the database was initialised with. Run by
 # safbox-firstboot; as root it can also be run by hand.
@@ -41,6 +43,6 @@ safbox_ensure_secret "$env_file" ADMIN_PASSWORD 24
 safbox_ensure_secret "${SAFBOX_ETC_DIR}/heimdall-oidc.env" OIDC_CLIENT_SECRET 32
 
 safbox_ensure_env_file "$db_env_file"
-if ! grep -q '^POSTGRES_PASSWORD=' "$db_env_file"; then
-  printf 'POSTGRES_PASSWORD=%s\n' "$(safbox_env_get "$env_file" DATABASE_PASSWORD)" >> "$db_env_file"
+if ! grep -q '^POSTGRESQL_PASSWORD=' "$db_env_file"; then
+  printf 'POSTGRESQL_PASSWORD=%s\n' "$(safbox_env_get "$env_file" DATABASE_PASSWORD)" >> "$db_env_file"
 fi

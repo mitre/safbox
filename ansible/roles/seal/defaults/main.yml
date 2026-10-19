@@ -1,8 +1,7 @@
 ---
 # seal role: the last play of a build. Records what the image is, removes
 # every piece of per-instance identity and build-time residue so each clone
-# is unique, deletes the build user, and verifies its own result
-# (ADR-0001 §Decision: seal; Phase 2 acceptance).
+# is unique, deletes the build user, and verifies its own result.
 # After a full seal the build user does not exist; run nothing afterwards.
 
 # full: a release template. Every group runs, ending with the deletion of
@@ -40,6 +39,11 @@ seal_unpinned_packages:
 # boot fresh and no build-time secret can survive (none should exist).
 seal_firstboot_state:
   - /var/lib/safbox/firstboot.done
+  # An AIDE database describes the box it was made on; a clone makes its own
+  # after first boot (hardening role). None is made at build; any that is
+  # would describe the build VM.
+  - /var/lib/aide/aide.db.gz
+  - /var/lib/aide/aide.db.new.gz
 # The start page's service status from the build VM (services role); a
 # clone's status timer writes its own within a minute of booting.
 seal_build_status_files:

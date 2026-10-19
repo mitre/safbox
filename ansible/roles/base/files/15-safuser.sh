@@ -43,6 +43,14 @@ log() { printf '15-safuser: %s\n' "$*"; }
 
 cfg=$(cloud-init query combined_cloud_config)
 
+# Hash with the rounds the PAM stack uses (pam_unix rounds=, from the
+# hardening role's authselect profile), as passwd would; chpasswd's own
+# default is 5000, and SHA_CRYPT_*_ROUNDS in /etc/login.defs make it pick
+# rounds up to 999999999 on EL10.
+rounds=$(sed -n 's/^password.*pam_unix\.so.* rounds=\([0-9][0-9]*\).*/\1/p' /etc/pam.d/system-auth 2>/dev/null | head -1 || true)
+hash_args=(-c SHA512)
+if [[ -n "$rounds" ]]; then hash_args+=(-s "$rounds"); fi
+
 if ! getent passwd "$USER_NAME" >/dev/null; then
   useradd --create-home --comment 'SAFBox tools user' "$USER_NAME"
   log "created $USER_NAME"
@@ -82,7 +90,7 @@ if [[ -n "$supplied" ]]; then
       log "WARNING: the supplied password hash is not SHA-512 (\$6\$), which the STIG requires; supply one made with 'openssl passwd -6'"
     fi
   else
-    printf '%s:%s\n' "$USER_NAME" "$supplied" | chpasswd -c SHA512
+    printf '%s:%s\n' "$USER_NAME" "$supplied" | chpasswd "${hash_args[@]}"
   fi
   log "set the password the deployer supplied"
 else
@@ -99,6 +107,6 @@ else
     [[ -n "$password" ]] || { log "ERROR: no generated password met the password quality policy"; exit 1; }
     printf 'SAFUSER_PASSWORD=%s\n' "$password" >> "$ENV_FILE"
   fi
-  printf '%s:%s\n' "$USER_NAME" "$password" | chpasswd -c SHA512
+  printf '%s:%s\n' "$USER_NAME" "$password" | chpasswd "${hash_args[@]}"
   log "set a generated password, kept in $ENV_FILE"
 fi

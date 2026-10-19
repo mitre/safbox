@@ -1,8 +1,7 @@
 <!--
 Draft comment for mitre/heimdall2#4145 (https://github.com/mitre/heimdall2/issues/4145),
 prepared under safbox-m5f.29. The owner posts it; once posted, its URL goes into
-safbox-heimdall-4's desc (verify/el10-infrastructure/controls/heimdall.rb) and
-docs/rebuild.md. Everything below this comment is the text to paste.
+the FIPS notes in docs/reference/services.md. Everything below this comment is the text to paste.
 -->
 
 Reproduction of the bcrypt item on 2.14.0, and a request to revive #4850:

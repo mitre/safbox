@@ -14,14 +14,14 @@
   deprecates legacy BIOS installation.
 - **FIPS:** enabled at installation (`fips=1` on the installer command line
   and carried onto the installed bootloader). It cannot be turned on later on
-  RHEL 10, and it is never turned off. Use RSA or ECDSA SSH keys; Ed25519 may
-  be rejected under the FIPS policy.
+  RHEL 10, and it is never turned off. Use RSA (2048 bits or more) or ECDSA
+  SSH keys; sshd refuses Ed25519 under the FIPS policy.
 - **Headless by default.** The `environment_group` variable selects the
   kickstart environment. `minimal-environment` installs from the minimal ISO.
   A desktop (`graphical-server-environment`) needs the full DVD ISO or a
   reachable package mirror; the minimal ISO carries no GUI packages.
 - **Fallback:** if the RHEL 10 STIG content proves too immature, Rocky Linux 9
-  is the recorded fallback (ADR-0001, Alternative I). It is a different
+  is the fallback, for its mature RHEL 9 STIG content. It is a different
   kickstart version and different content pins, not a flag.
 
 ## Partition layout

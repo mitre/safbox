@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # The repository's gitleaks rules catch Proxmox API token secrets, which the
 # default rules miss (a bare UUID has no recognisable prefix), and leave the
-# repository's documented placeholders alone (ADR-0001 Quality Standards: no
-# secrets in the repository). Fake tokens are generated at run time so none
-# is ever committed.
+# repository's documented placeholders alone. Fake tokens are generated at
+# run time so none is ever committed.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 CONFIG="$ROOT/.gitleaks.toml"

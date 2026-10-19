@@ -1,0 +1,5 @@
+#!/bin/sh
+# Daily AIDE check (RHEL-10-200633), written by the SAFBox hardening role.
+# anacron runs it once a day (run-parts {{ hardening_aide_daily | dirname }}); the
+# report goes to root by mail, delivered locally.
+/usr/sbin/aide --check 2>&1 | /bin/mail -s "$(hostname): daily AIDE integrity check" root

@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Stub curl for tests/scripts/build-concurrency.sh: answers the Proxmox API
+# calls scripts/clone-and-ssh.sh makes (clone, start, task status, the guest
+# agent's interfaces), appends each call's URL to $STUB_DIR/curl.calls, and
+# writes the cloud-init sshkeys it was sent, URL-decoded, to
+# $STUB_DIR/sshkeys.
+url=""
+for a in "$@"; do
+  case "$a" in
+    http*) url=${a%%\?*} ;;
+    sshkeys=*) v=${a#sshkeys=}; printf '%b' "${v//%/\\x}" > "$STUB_DIR/sshkeys" ;;
+  esac
+done
+echo "$url" >> "$STUB_DIR/curl.calls"
+case "$url" in
+  */clone|*/status/start) echo '{"data":"UPID:stub"}' ;;
+  */tasks/*/status) echo '{"data":{"status":"stopped","exitstatus":"OK"}}' ;;
+  */agent/network-get-interfaces) echo '{"data":{"result":[{"name":"eth0","ip-addresses":[{"ip-address-type":"ipv4","ip-address":"192.0.2.50"}]}]}}' ;;
+  *) echo '{"data":null}' ;;
+esac

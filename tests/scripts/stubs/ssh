@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Stub ssh for tests/scripts/build-concurrency.sh: records the keys offered
+# to the build user (packer) in $STUB_DIR/build-user-keys and refuses every
+# login unless STUB_BOOT is set. With STUB_BOOT set, admin and safuser log
+# in and the clone's boot ends in that state (running; degraded: finished
+# with a failed unit; hang: never settles; sshfail: ssh itself fails).
+# STUB_SAFUSER_REFUSED=1 refuses safuser.
+keys=() target="" cmd=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -i) keys+=("$2"); shift 2 ;;
+    -o) shift 2 ;;
+    *@*) target=$1; shift; cmd="$*"; break ;;
+    *) shift ;;
+  esac
+done
+case "$target" in packer@*) printf '%s\n' "${keys[@]}" > "$STUB_DIR/build-user-keys" ;; esac
+[ -n "${STUB_BOOT:-}" ] || exit 255
+# admin (cloud-init's default user) and safuser, which first boot
+# gives the same key.
+case "$target" in admin@192.0.2.50|safuser@192.0.2.50) ;; *) exit 255 ;; esac
+# STUB_SAFUSER_REFUSED=1: first boot did not make safuser, so it never logs in.
+case "$target" in safuser@*) [ "${STUB_SAFUSER_REFUSED:-0}" = 1 ] && exit 255 ;; esac
+case "$cmd" in
+  *is-system-running*)
+    case "$STUB_BOOT" in
+      hang) exec /usr/bin/sleep 60 ;;
+      sshfail) exit 255 ;;
+      running) echo running ;;
+      *) echo "$STUB_BOOT"; exit 1 ;;
+    esac ;;
+  *--failed*) echo 'abc-123.service loaded failed failed [systemd-run] /usr/bin/podman healthcheck run abc' ;;
+  *list-jobs*) echo '42 vulcan.service start running' ;;
+  *) printf 'ok\nfips_enabled=1\nhostname=safbox-clone-9170\n' ;;
+esac

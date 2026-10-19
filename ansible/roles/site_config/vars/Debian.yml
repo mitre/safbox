@@ -1,6 +1,7 @@
 ---
-# Debian family: ca-certificates (update-ca-certificates(8)). Present per
-# ADR-0001 but untested until the Ubuntu source lands.
+# Debian family: ca-certificates (update-ca-certificates(8)), so the
+# appliance layer can run on a Debian family host; untested until the Ubuntu
+# source lands.
 
 # Local certificates; update-ca-certificates takes each *.crt here (one
 # certificate per file, so its hashed links cover every one) into

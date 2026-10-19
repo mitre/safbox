@@ -11,16 +11,40 @@
 # A site short of memory runs Heimdall alone by switching Vulcan off.
 
 # ---------------------------------------------------------------------------
+# PostgreSQL
+# ---------------------------------------------------------------------------
+# Each application's database is a PostgreSQL container in its pod, from
+# the one pinned PostgreSQL image (safbox_image_postgresql, group_vars),
+# whose OpenSSL runs its FIPS provider on a FIPS host. On the first start
+# the image makes the application's role and database from POSTGRESQL_USER
+# and POSTGRESQL_DATABASE (each unit) and POSTGRESQL_PASSWORD (the database
+# env file first boot writes); the role owns its database and is not a
+# superuser. Each container also reads two files from this directory
+# (templates/postgresql.conf.j2 and pg_hba.conf.j2): passwords stored as
+# SCRAM-SHA-256, and an access list that admits the application's role
+# over the pod's loopback with SCRAM-SHA-256 and the database's own
+# administrator over the container's socket (peer), and nobody else. The
+# image's own list would trust every connection over the socket and the
+# loopback, without a password.
+services_postgresql_conf_dir: /etc/safbox-postgresql
+
+# ---------------------------------------------------------------------------
 # Heimdall
 # ---------------------------------------------------------------------------
-# MITRE Heimdall and its PostgreSQL as a podman pod of Quadlet units
-# (ADR-0001 Phase 5), in the service shape of Heimdall's upstream
+# MITRE Heimdall and its PostgreSQL as a podman pod of Quadlet units, in the
+# service shape of Heimdall's upstream
 # docker-compose.yml (cited in each unit). Secrets come from first boot: the
 # hook files/20-heimdall.sh writes them, and the units start only once they
 # exist, so the template carries none.
 
 services_heimdall_image: "{{ safbox_image_heimdall.name }}@{{ safbox_image_heimdall.digest }}"
-services_heimdall_db_image: "{{ safbox_image_heimdall_db.name }}@{{ safbox_image_heimdall_db.digest }}"
+services_heimdall_db_image: "{{ safbox_image_postgresql.name }}@{{ safbox_image_postgresql.digest }}"
+# Heimdall's database and the role it signs in as (DATABASE_USERNAME). The
+# name is Heimdall's own default for NODE_ENV=production
+# (apps/backend/config/app_config.ts); the image cannot give its role the
+# name postgres, which upstream's compose signs in as.
+services_heimdall_db_name: heimdall-server-production
+services_heimdall_db_user: heimdall
 
 # Port the pod publishes on 127.0.0.1 for the TLS proxy (group_vars).
 services_heimdall_loopback_port: "{{ safbox_heimdall_loopback_port }}"
@@ -67,14 +91,20 @@ services_heimdall_db_memory: 512m
 # ---------------------------------------------------------------------------
 # Vulcan
 # ---------------------------------------------------------------------------
-# MITRE Vulcan and its PostgreSQL as a podman pod of Quadlet units (ADR-0001
-# Phase 6), in the service shape of Vulcan's upstream docker-compose.yml
+# MITRE Vulcan and its PostgreSQL as a podman pod of Quadlet units, in the
+# service shape of Vulcan's upstream docker-compose.yml
 # (cited in each unit). Secrets come from first boot: the hook
 # files/30-vulcan.sh writes them, and the units start only once they exist,
 # so the template carries none.
 
 services_vulcan_image: "{{ safbox_image_vulcan.name }}@{{ safbox_image_vulcan.digest }}"
-services_vulcan_db_image: "{{ safbox_image_vulcan_db.name }}@{{ safbox_image_vulcan_db.digest }}"
+services_vulcan_db_image: "{{ safbox_image_postgresql.name }}@{{ safbox_image_postgresql.digest }}"
+# Vulcan's database and the role it signs in as (POSTGRES_USER). The name
+# is Vulcan's own production default (config/database.yml); the image
+# cannot give its role the name postgres, which upstream's compose signs in
+# as.
+services_vulcan_db_name: vulcan_production
+services_vulcan_db_user: vulcan
 
 # Port the pod publishes on 127.0.0.1 for the TLS proxy (group_vars).
 services_vulcan_loopback_port: "{{ safbox_vulcan_loopback_port }}"
@@ -155,8 +185,11 @@ services_keycloak_conf_dir: /etc/safbox-keycloak
 # The build context, in /var/tmp, which the seal clears.
 services_keycloak_build_dir: /var/tmp/safbox-keycloak-build
 
-# Keycloak's database: the PostgreSQL image already pinned for Heimdall.
-services_keycloak_db_image: "{{ safbox_image_heimdall_db.name }}@{{ safbox_image_heimdall_db.digest }}"
+# Keycloak's database, from the PostgreSQL image of the other two.
+services_keycloak_db_image: "{{ safbox_image_postgresql.name }}@{{ safbox_image_postgresql.digest }}"
+# Keycloak's database and the role it signs in as (KC_DB_USERNAME).
+services_keycloak_db_name: keycloak
+services_keycloak_db_user: keycloak
 
 # Env files the first-boot hook writes (root, 0600).
 services_keycloak_env_file: /etc/safbox/keycloak.env
@@ -211,8 +244,7 @@ services_keycloak_enabled: "{{ safbox_services_5 | default(true) | bool }}"
 # ---------------------------------------------------------------------------
 # TLS proxy
 # ---------------------------------------------------------------------------
-# One nginx container (ADR-0001 §Decision: a single nginx reverse proxy
-# terminates TLS and fronts both applications) that serves each enabled
+# One nginx container, the one place TLS terminates, that serves each enabled
 # application over HTTPS on port 443 by name (name-based virtual hosts),
 # with a certificate first boot generates and signs with a local CA of the
 # box's own, which the box trusts (files/40-proxy.sh). Any other name,

@@ -1,10 +1,9 @@
 ---
-# tools role: the assessment and build tools a SAFBox ships (ADR-0001
-# Phase 3): CINC Auditor, the SAF CLI, Ansible with the collections the
-# Lockdown STIG role needs, and Packer. Pins live in
-# group_vars/all/main.yml and are overridable per site. Task groups are
-# tagged safbox-tools-<n> and switched off by setting safbox_tools_<n> to
-# false.
+# tools role: the assessment and build tools a SAFBox ships: CINC Auditor,
+# the SAF CLI, Ansible with the collections the Lockdown STIG role needs,
+# and Packer. Pins live in group_vars/all/main.yml and are overridable per
+# site. Task groups are tagged safbox-tools-<n> and switched off by setting
+# safbox_tools_<n> to false.
 
 # SAF CLI: a global npm install under npm's global prefix (/usr/local on
 # the RHEL family), which links the saf command into /usr/local/bin. The

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Two scripts/build.sh runs on one workstation at the same time must not share
 # a key, a Packer debug log, a build log or a galaxy install directory
-# (ADR-0001 Quality Standards: the build key stays ephemeral and per-run; the
-# token never reaches the debug log). build.sh runs from a scratch copy of
-# the repository layout with a stub packer and a stub prerequisite check, so
-# nothing here touches the checkout's .build/ or last.log, or a hypervisor.
+# (the build key stays ephemeral and per-run, and the token never reaches
+# the debug log). build.sh runs from a scratch copy of the repository
+# layout with a stub packer and a stub prerequisite check, so nothing here
+# touches the checkout's .build/ or last.log, or a hypervisor.
 #
 # The stub packer records what build.sh handed it (the private key file, the
 # debug log path, the galaxy directory), signals that it started, waits until
@@ -15,6 +15,7 @@
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 BUILD=${1:-$ROOT/scripts/build.sh}
+STUBS=$ROOT/tests/scripts/stubs   # the stub programs; each file says what it does
 
 tmp=$(mktemp -d)
 pids=()
@@ -29,81 +30,15 @@ R="$tmp/root"      # the scratch repository
 STUB="$tmp/stub"   # stub packer's records and signals
 mkdir -p "$R/scripts" "$R/packer" "$tmp/bin" "$tmp/home" "$STUB"
 cp "$BUILD" "$R/scripts/build.sh"
-printf '#!/bin/sh\nexit 0\n' > "$R/scripts/check-tools.sh"
-chmod +x "$R/scripts/build.sh" "$R/scripts/check-tools.sh"
+cp "$STUBS/check-tools.sh" "$R/scripts/check-tools.sh"
+chmod +x "$R/scripts/build.sh"
 
-TOKEN=00000000-1111-2222-3333-444444444444
 umask 077
-cat > "$tmp/packer.env" <<EOF
-PROXMOX_URL=https://pve.example.invalid:8006/api2/json
-PROXMOX_USERNAME=build@pve!test
-PROXMOX_TOKEN=$TOKEN
-EOF
+cp "$ROOT/tests/scripts/fixtures/packer.env" "$tmp/packer.env"
 chmod 600 "$tmp/packer.env"
 
-# packer init: nothing. packer build -var vm_name=<n> ...: record, signal
-# started.<n>, wait for release.<n>, then check that the key and the debug
-# log it was given are still there and still the ones it saw at the start.
-# STUB_LEAK=1 writes the token to the debug log; STUB_RO=1 leaves a
-# directory under the galaxy install that its owner cannot delete from;
-# STUB_RC=<n> is the exit status (default 0); STUB_UNREADABLE=1 leaves the
-# debug log unreadable.
-cat > "$tmp/bin/packer" <<'EOF'
-#!/usr/bin/env bash
-set -u
-[ "$1" = build ] || exit 0
-shift
-name="" key="" galaxy="" site=""
-while [ $# -gt 0 ]; do
-  case "$1" in
-    -var)
-      case "$2" in
-        vm_name=*) name=${2#vm_name=} ;;
-        ssh_private_key_file=*) key=${2#ssh_private_key_file=} ;;
-        galaxy_dir=*) galaxy=${2#galaxy_dir=} ;;
-        site_dir=*) site=${2#site_dir=} ;;
-      esac
-      shift 2 ;;
-    *) shift ;;
-  esac
-done
-# Like Packer: a signal cancels the build, which says so on its output.
-trap 'echo "stub packer $name cancelled"; exit 1' INT TERM HUP
-d="$STUB_DIR/$name"; mkdir -p "$d"
-echo "$key" > "$d/key"
-echo "${PACKER_LOG_PATH:-}" > "$d/debuglog"
-echo "$galaxy" > "$d/galaxy"
-echo "$site" > "$d/site"
-# What ansible-galaxy would install there.
-mkdir -p "$galaxy/roles/RHEL10-STIG"
-sum() { cksum < "$1" 2>/dev/null || echo missing; }
-sum "$key" > "$d/key.before"
-echo "stub packer $name debug line" >> "$PACKER_LOG_PATH"
-if [ -n "${STUB_LEAK:-}" ]; then echo "leaked $PROXMOX_TOKEN" >> "$PACKER_LOG_PATH"; fi
-# The signals the tee writing build.log ignores (SigIgn from /proc).
-tee_pid=$(pgrep -f -n "tee -a $(dirname "$PACKER_LOG_PATH")/build.log" || true)
-if [ -n "$tee_pid" ] && [ -r "/proc/$tee_pid/status" ]; then
-  awk '/^SigIgn:/ {print $2}' "/proc/$tee_pid/status" > "$d/tee.sigign"
-fi
-touch "$STUB_DIR/started.$name"
-for _ in $(seq 1 300); do [ -e "$STUB_DIR/release.$name" ] && break; sleep 0.1; done
-sum "$key" > "$d/key.after"
-grep -qx "stub packer $name debug line" "$PACKER_LOG_PATH" && echo yes > "$d/debuglog.kept" || echo no > "$d/debuglog.kept"
-if [ -n "${STUB_UNREADABLE:-}" ]; then chmod 000 "$PACKER_LOG_PATH"; fi
-if [ -n "${STUB_RO:-}" ]; then
-  mkdir -p "$galaxy/roles/RHEL10-STIG/ro"; : > "$galaxy/roles/RHEL10-STIG/ro/file"
-  chmod 555 "$galaxy/roles/RHEL10-STIG/ro"
-fi
-echo "stub packer $name done"
-exit "${STUB_RC:-0}"
-EOF
-chmod +x "$tmp/bin/packer"
-# Stub npm: build.sh builds the documentation site before Packer.
-cat > "$tmp/bin/npm" <<'EOF'
-#!/bin/sh
-echo "$*" >> "$STUB_DIR/npm.calls"
-EOF
-chmod +x "$tmp/bin/npm"
+# The stub packer and npm (see each file) go first on build.sh's PATH.
+cp "$STUBS/packer" "$STUBS/npm" "$tmp/bin/"
 
 failures=0
 fail() { echo "FAIL: $*" >&2; failures=1; }
@@ -319,55 +254,8 @@ cp "$ROOT/scripts/clone-and-ssh.sh" "$R/scripts/clone-and-ssh.sh"
 older="$R/.build/runs/20200101T000000Z-aaaaaa"
 mkdir -p "$older"; ssh-keygen -q -t rsa -b 2048 -N '' -C older -f "$older/build_key"
 mkdir -p "$tmp/cbin"
-cat > "$tmp/cbin/curl" <<'EOF'
-#!/usr/bin/env bash
-url=""
-for a in "$@"; do case "$a" in http*) url=${a%%\?*} ;; esac; done
-case "$url" in
-  */clone|*/status/start) echo '{"data":"UPID:stub"}' ;;
-  */tasks/*/status) echo '{"data":{"status":"stopped","exitstatus":"OK"}}' ;;
-  */agent/network-get-interfaces) echo '{"data":{"result":[{"name":"eth0","ip-addresses":[{"ip-address-type":"ipv4","ip-address":"192.0.2.50"}]}]}}' ;;
-  *) echo '{"data":null}' ;;
-esac
-EOF
-cat > "$tmp/cbin/ssh" <<'EOF'
-#!/usr/bin/env bash
-keys=() target="" cmd=""
-while [ $# -gt 0 ]; do
-  case "$1" in
-    -i) keys+=("$2"); shift 2 ;;
-    -o) shift 2 ;;
-    *@*) target=$1; shift; cmd="$*"; break ;;
-    *) shift ;;
-  esac
-done
-case "$target" in packer@*) printf '%s\n' "${keys[@]}" > "$STUB_DIR/build-user-keys" ;; esac
-[ -n "${STUB_BOOT:-}" ] || exit 255
-# admin (cloud-init's default user) and safuser, which first boot
-# gives the same key.
-case "$target" in admin@192.0.2.50|safuser@192.0.2.50) ;; *) exit 255 ;; esac
-# STUB_SAFUSER_REFUSED=1: first boot did not make safuser, so it never logs in.
-case "$target" in safuser@*) [ "${STUB_SAFUSER_REFUSED:-0}" = 1 ] && exit 255 ;; esac
-case "$cmd" in
-  *is-system-running*)
-    case "$STUB_BOOT" in
-      hang) exec /usr/bin/sleep 60 ;;
-      sshfail) exit 255 ;;
-      running) echo running ;;
-      *) echo "$STUB_BOOT"; exit 1 ;;
-    esac ;;
-  *--failed*) echo 'abc-123.service loaded failed failed [systemd-run] /usr/bin/podman healthcheck run abc' ;;
-  *list-jobs*) echo '42 vulcan.service start running' ;;
-  *) printf 'ok\nfips_enabled=1\nhostname=safbox-clone-9170\n' ;;
-esac
-EOF
-cat > "$R/scripts/validate.sh" <<'EOF'
-#!/bin/sh
-echo scanned > "$STUB_DIR/scanned"
-EOF
-chmod +x "$R/scripts/validate.sh"
-printf '#!/bin/sh\nexit 0\n' > "$tmp/cbin/sleep"
-chmod +x "$tmp/cbin/curl" "$tmp/cbin/ssh" "$tmp/cbin/sleep"
+cp "$STUBS/curl" "$STUBS/ssh" "$STUBS/sleep" "$tmp/cbin/"
+cp "$STUBS/validate.sh" "$R/scripts/validate.sh"
 clone() { # env...
   rm -f "$STUB/build-user-keys"
   env "$@" HOME="$tmp/home" PATH="$tmp/cbin:$PATH" STUB_DIR="$STUB" SAFBOX_PROXMOX_ENV="$tmp/packer.env" \
@@ -404,6 +292,70 @@ check "the ssh failure is not reported as a timeout" grep -q 'ssh failed (exit 2
 expect "a SAFBOX_READY_TIMEOUT that is not a positive number is refused" "$(boot running SAFBOX_READY_TIMEOUT=10m)" "2 not scanned"
 expect "a clone where safuser never logs in fails unscanned" "$(boot running STUB_SAFUSER_REFUSED=1)" "1 not scanned"
 check "the failure names safuser" grep -q 'SSH as safuser with the deployer.s key failed' "$STUB/clone.out"
+
+# clone-and-ssh.sh hands cloud-init the build key, then every *.pub in the
+# checkout's .build/keys/, then every file SAFBOX_EXTRA_SSH_KEYS names
+# (colon-separated). It refuses, before any API call, an extra key that
+# SAFBox's FIPS-mode sshd does not accept: its PubkeyAcceptedAlgorithms
+# are ECDSA (nistp256, nistp384, nistp521) and RSA, with RequiredRSASize
+# 2048; Ed25519 is refused. The keys are throwaways made here.
+kd="$tmp/keys"; mkdir -p "$kd"
+for spec in ecdsa:256 ecdsa:384 ecdsa:521 rsa:2048 rsa:3072 rsa:1024 ed25519:; do
+  t=${spec%%:*} b=${spec#*:}
+  ssh-keygen -q -t "$t" ${b:+-b "$b"} -N '' -C "$t$b" -f "$kd/$t$b"
+done
+grep -v '^-' "$kd/ecdsa384" | head -1 > "$kd/junk.pub"   # base64, not a key line
+cat "$kd/ecdsa256.pub" "$kd/ed25519.pub" > "$kd/mixed.pub"
+# extra_keys [env...]: clone-and-ssh.sh's exit status; the keys it sent are in
+# $STUB/sshkeys and its API calls in $STUB/curl.calls.
+extra_keys() {
+  local rc=0
+  rm -f "$STUB/sshkeys" "$STUB/curl.calls"
+  env "$@" STUB_BOOT=running SAFBOX_SKIP_VALIDATE=1 HOME="$tmp/home" PATH="$tmp/cbin:$PATH" STUB_DIR="$STUB" \
+    SAFBOX_PROXMOX_ENV="$tmp/packer.env" SAFBOX_NODE=node SAFBOX_POOL=pool \
+    "$R/scripts/clone-and-ssh.sh" 9000 9170 --keep >"$STUB/clone.out" 2>&1 || rc=$?
+  echo "$rc"
+}
+sent() { cat "$STUB/sshkeys" 2>/dev/null || echo "no sshkeys sent"; }
+build_pub=$(cat "$R/.build/clone_key.pub")
+expect "with no extra keys clone-and-ssh exits 0" "$(extra_keys)" 0
+expect "with no extra keys cloud-init gets the build key alone" "$(sent)" "$build_pub"
+mkdir -p "$R/.build/keys"
+cp "$kd/ecdsa384.pub" "$kd/rsa3072.pub" "$R/.build/keys/"
+cp "$kd/rsa2048" "$R/.build/keys/"   # a private key without .pub: not read
+expect "with keys in .build/keys clone-and-ssh exits 0" "$(extra_keys)" 0
+expect "cloud-init gets the build key, then every .pub in .build/keys" "$(sent)" \
+  "$(cat "$R/.build/clone_key.pub" "$R/.build/keys/ecdsa384.pub" "$R/.build/keys/rsa3072.pub")"
+expect "SAFBOX_EXTRA_SSH_KEYS adds its files after .build/keys" \
+  "$(extra_keys SAFBOX_EXTRA_SSH_KEYS="$kd/ecdsa256.pub:$kd/ecdsa521.pub:$kd/rsa2048.pub")" 0
+expect "cloud-init gets the build key, .build/keys, then SAFBOX_EXTRA_SSH_KEYS' keys" "$(sent)" \
+  "$(cat "$R/.build/clone_key.pub" "$R/.build/keys/ecdsa384.pub" "$R/.build/keys/rsa3072.pub" \
+    "$kd/ecdsa256.pub" "$kd/ecdsa521.pub" "$kd/rsa2048.pub")"
+{ echo '# the owner'; echo; echo "  $(cat "$kd/ecdsa256.pub")"; } > "$kd/commented.pub"
+expect "blank and comment lines in a key file are skipped" \
+  "$(extra_keys SAFBOX_EXTRA_SSH_KEYS="$kd/commented.pub")" 0
+expect "cloud-init gets only the key line, trimmed" "$(sent)" \
+  "$(cat "$R/.build/clone_key.pub" "$R/.build/keys/ecdsa384.pub" "$R/.build/keys/rsa3072.pub" "$kd/ecdsa256.pub")"
+# refused <description> <file named in the message> [env...]: exit 2, no API call.
+refused() {
+  local desc=$1 file=$2; shift 2
+  expect "$desc: exit status" "$(extra_keys "$@")" 2
+  check "$desc: no Proxmox API call" [ ! -s "$STUB/curl.calls" ]
+  check "$desc: the message names $file" grep -qF "$file" "$STUB/clone.out"
+  check "$desc: the message names the accepted types" grep -qF 'ECDSA (nistp256, nistp384, nistp521) or RSA of at least 2048 bits' "$STUB/clone.out"
+}
+cp "$kd/ed25519.pub" "$R/.build/keys/"
+refused "an Ed25519 key in .build/keys is refused" "$R/.build/keys/ed25519.pub"
+check "the Ed25519 refusal says it is Ed25519" grep -qF 'ED25519' "$STUB/clone.out"
+rm "$R/.build/keys/ed25519.pub"
+refused "an Ed25519 key in SAFBOX_EXTRA_SSH_KEYS is refused" "$kd/ed25519.pub" SAFBOX_EXTRA_SSH_KEYS="$kd/ed25519.pub"
+refused "a file with an accepted and an Ed25519 key is refused" "$kd/mixed.pub" SAFBOX_EXTRA_SSH_KEYS="$kd/mixed.pub"
+refused "an RSA key below 2048 bits is refused" "$kd/rsa1024.pub" SAFBOX_EXTRA_SSH_KEYS="$kd/rsa1024.pub"
+refused "a line that is not a public key is refused" "$kd/junk.pub" SAFBOX_EXTRA_SSH_KEYS="$kd/junk.pub"
+refused "a private key is refused" "$kd/ecdsa384" SAFBOX_EXTRA_SSH_KEYS="$kd/ecdsa384"
+check "the private key's contents are not printed" not grep -q 'PRIVATE KEY' "$STUB/clone.out"
+refused "a missing file is refused" "$kd/absent.pub" SAFBOX_EXTRA_SSH_KEYS="$kd/absent.pub"
+rm -r "$R/.build/keys"
 
 [ "$failures" -eq 0 ] || exit 1
 echo "PASS: concurrent build.sh runs keep their own keys, logs and galaxy installs; clone-and-ssh finds them"

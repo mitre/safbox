@@ -1,13 +1,16 @@
 ---
 # STIG overlay on the build VM before the seal and before the reboot that
 # applies the hardening's kernel and boot settings (build gate).
-# 71: the build scan of 2026-10-16T16:05Z, 274 of 385 applicable controls passed (71.2%), rounded down.
+# 78: the worse of the two build scans of 2026-10-19, headless template 9000:
+# 298 of 380 applicable controls passed (78.4%), rounded down. The desktop
+# template 9002 passed 301 of 383 (78.6%).
 compliance:
-  min: 71
-# 5: the CAT I (high) controls that fail on every image today; a new one fails the gate.
+  min: 78
+# 4: the CAT I (high) controls that fail on every image today (SV-280978,
+# SV-281009, SV-281268, SV-281298, on both variants); a new one fails the gate.
 failed:
   high:
-    max: 5
+    max: 4
 error:
   total:
     max: 0

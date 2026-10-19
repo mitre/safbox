@@ -236,4 +236,52 @@ include_controls 'redhat-enterprise-linux-10-stig-baseline' do
       skip 'Not Applicable: admin alone keeps passwordless sudo; see the justification.'
     end
   end
+  control 'SV-281353' do
+    impact 0.0
+    desc 'justification', <<~JUSTIFICATION
+      SAFBox runs Heimdall, Vulcan and Keycloak as podman pods on bridge
+      networks, and podman's network backend (netavark) enables IPv4
+      forwarding so that the containers can reach the box and the network
+      through the host. The box is not a router: it has one network
+      interface, and forwarding serves only its own containers. The
+      hardening role leaves Lockdown's rule RHEL-10-800210 off: applied to
+      a running box, its setting turns forwarding off under the pods until
+      the next boot.
+    JUSTIFICATION
+    describe 'IPv4 packet forwarding disabled' do
+      skip 'Not Applicable: the container network needs forwarding; see the justification.'
+    end
+  end
+
+  control 'SV-281250' do
+    impact 0.0
+    desc 'justification', <<~JUSTIFICATION
+      Elevating sudo into the SELinux sysadm_r role requires administrators
+      to log in as confined SELinux users (staff_u), with every
+      administrative path (Ansible through admin, the outside-in checks,
+      safuser's tools) tested under that confinement. That is a design
+      change SAFBox has not made: its accounts log in unconfined
+      (unconfined_u), with SELinux enforcing for the system's services.
+    JUSTIFICATION
+    describe 'Elevate the SELinux context when an administrator calls sudo' do
+      skip 'Not Applicable: confined administrator users are a design change; see the justification.'
+    end
+  end
+
+  # Not Applicable on the RHEL rebuilds (Rocky Linux, AlmaLinux) only; on
+  # Red Hat Enterprise Linux the baseline control runs unchanged.
+  control 'SV-280952' do
+    unless os.name == 'redhat'
+      impact 0.0
+      desc 'justification', <<~JUSTIFICATION
+        subscription-manager registers a system with Red Hat's subscription
+        service. On a RHEL rebuild such as Rocky Linux or AlmaLinux there is
+        no Red Hat subscription to register and the tool has no function;
+        packages come from the distribution's own signed repositories.
+      JUSTIFICATION
+      describe 'The subscription-manager package installed' do
+        skip 'Not Applicable: no Red Hat subscription on a RHEL rebuild; see the justification.'
+      end
+    end
+  end
 end

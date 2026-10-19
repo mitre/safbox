@@ -1,0 +1,5 @@
+#!/bin/sh
+# Stub npm for tests/scripts/build-concurrency.sh: build.sh builds the
+# documentation site before Packer; each call is recorded in
+# $STUB_DIR/npm.calls.
+echo "$*" >> "$STUB_DIR/npm.calls"

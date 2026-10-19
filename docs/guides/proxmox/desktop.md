@@ -15,6 +15,46 @@ quicker on a full GNOME desktop, and with the guest's SPICE agent
 (`spice-vdagent`, installed with the desktop) the desktop can follow the
 client window's size. A headless SAFBox's text console works the same way.
 
+## Build it with the desktop
+
+A SAFBox is headless unless its template was built with the desktop. The
+desktop is chosen at build time: switching it on in a clone of a headless
+template does not install GNOME, so build a desktop template and clone
+that.
+
+1. In `ansible/local.yml` (git-ignored; see
+   [Site configuration](../../reference/site-config.md)), set:
+
+   ```
+   ---
+   safbox_desktop_enabled: true
+   ```
+
+2. Tell the validation profiles to expect a desktop, in a site inputs file
+   such as `verify/local/inputs.yml` (git-ignored):
+
+   ```
+   ---
+   gdm_required: true
+   gui_required: true
+   desktop: true
+   ```
+
+   Name it to the build gate in `packer/local.auto.pkrvars.hcl`
+   (`build_gate_site_inputs_file = "verify/local/inputs.yml"`) and to the
+   release gate with `SAFBOX_SITE_INPUTS` (see
+   [Site inputs](../../reference/validation.md#site-inputs)). Without it
+   the gates judge the box as headless and fail it for having gdm.
+
+3. Leave the Packer variable `vga` at its default, `qxl`, which SPICE
+   needs (section 1).
+4. Build as in [the build guide](build.md), with `scripts/build.sh`.
+
+The template then boots to the GNOME login screen, and every clone of it
+does too. What the desktop adds, and what the switch changes in the
+hardening, is in
+[A desktop build](../../reference/appliance.md#a-desktop-build).
+
 ## 1. The VM's SPICE display
 
 The Packer variable `vga` defaults to `qxl` (SPICE), so nothing needs

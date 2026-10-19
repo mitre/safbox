@@ -3,10 +3,9 @@
 # as the server and database services of upstream's docker-compose.yml
 # (https://github.com/mitre/heimdall2/blob/master/docker-compose.yml) share
 # a network. Upstream's server publishes "3000"; here the pod publishes it
-# on the loopback address only, for the TLS proxy (ADR-0001 Quality
-# Standards: services bind to the proxy, not to all interfaces). The
-# database is published nowhere. Starts only after first boot has written
-# Heimdall's secrets.
+# on the loopback address only, so it is reachable only through the TLS
+# proxy. The database is published nowhere. Starts only after first boot
+# has written Heimdall's secrets.
 [Unit]
 Description=Heimdall pod (Heimdall and its PostgreSQL)
 After=safbox-firstboot.service

@@ -97,6 +97,32 @@
     group: root
     mode: '0644'
 
+# The PostgreSQL settings and access list the database container mounts
+# (defaults/main.yml, PostgreSQL).
+- name: Create the directory of the PostgreSQL configuration
+  ansible.builtin.file:
+    path: "{{ services_postgresql_conf_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Install the configuration of Keycloak's PostgreSQL
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "{{ services_postgresql_conf_dir }}/keycloak-{{ item }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop:
+    - postgresql.conf
+    - pg_hba.conf
+  vars:
+    services_postgresql_app: Keycloak
+    services_postgresql_user: "{{ services_keycloak_db_user }}"
+  notify:
+    - Restart Keycloak
+
 - name: Install the Keycloak Quadlet units
   ansible.builtin.template:
     src: "{{ item }}.j2"

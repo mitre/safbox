@@ -50,15 +50,6 @@ export default defineConfig({
           { text: 'Developing SAFBox', link: '/reference/development' },
         ],
       },
-      {
-        text: 'Design record',
-        items: [
-          {
-            text: 'ADR-0001: the appliance pipeline',
-            link: 'https://github.com/mitre/safbox/blob/main/docs/adrs/0001-safbox-appliance-pipeline.md',
-          },
-        ],
-      },
     ],
     search: { provider: 'local' },
     outline: [2, 3],

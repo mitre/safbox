@@ -6,6 +6,8 @@
 #   NODE_ENV=production                  -> the same
 #   DATABASE_HOST=database               -> 127.0.0.1: the pod shares one network
 #                                           namespace with the database
+#   (DATABASE_USERNAME unset: postgres)  -> DATABASE_USERNAME, Heimdall's own role
+#                                           in its database (heimdall-db.container)
 #   DATABASE_PASSWORD, env_file .env     -> heimdall.env, written by first boot
 #                                           (DATABASE_PASSWORD, JWT_SECRET,
 #                                           API_KEY_SECRET); JWT_EXPIRE_TIME,
@@ -23,6 +25,10 @@
 #                                           included, instead of the sidecar
 # The nginx service is the TLS proxy's safbox-proxy unit. In production
 # mode Heimdall trusts the proxy's X-Forwarded-* headers itself.
+# Upstream has no healthcheck for the server. Here one fetches its page on
+# the pod address, and the unit is ready only once it answers
+# (Notify=healthy), so units ordered after it, and the end of boot, wait
+# for a Heimdall that serves.
 [Unit]
 Description=Heimdall
 Documentation=https://github.com/mitre/heimdall2
@@ -36,6 +42,7 @@ ContainerName=heimdall
 Pod=heimdall.pod
 Environment=NODE_ENV=production
 Environment=DATABASE_HOST=127.0.0.1
+Environment=DATABASE_USERNAME={{ services_heimdall_db_user }}
 Environment=JWT_EXPIRE_TIME={{ services_heimdall_jwt_expire_time }}
 Environment=EXTERNAL_URL=https://{{ services_heimdall_host }}
 # The one local account is the administrator, made on the first start
@@ -52,6 +59,12 @@ Environment={{ name }}={{ value }}
 EnvironmentFile={{ services_heimdall_oidc_env_file }}
 {% endif %}
 EnvironmentFile={{ services_heimdall_env_file }}
+HealthCmd=curl -fsS -o /dev/null http://localhost:3000/
+HealthInterval=30s
+HealthTimeout=10s
+HealthRetries=3
+HealthStartPeriod=60s
+Notify=healthy
 Memory={{ services_heimdall_memory }}
 Volume={{ platform_container_trust_volume }}
 NoNewPrivileges=true
@@ -59,6 +72,8 @@ DropCapability=all
 
 [Service]
 Restart=always
+# The first start migrates the database before it answers.
+TimeoutStartSec=300
 
 [Install]
 WantedBy=multi-user.target

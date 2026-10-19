@@ -1,0 +1,4 @@
+#!/bin/sh
+# Stub sleep for tests/scripts/build-concurrency.sh: scripts/clone-and-ssh.sh's
+# waits return at once.
+exit 0

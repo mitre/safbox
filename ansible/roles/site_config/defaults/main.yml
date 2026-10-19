@@ -1,7 +1,7 @@
 ---
 # site_config role: fits a SAFBox into the network of the site that deploys
-# it (ADR-0001 §Phase 9 and later). Today one task group, the site's trusted
-# CA bundles (safbox-site-config-1): each entry of safbox_trust_bundles in
+# it. Today one task group, the site's trusted CA bundles
+# (safbox-site-config-1): each entry of safbox_trust_bundles in
 # group_vars (the DoD PKI bundle by default) is fetched or copied, checked
 # against its sha256, read as certificates, checked against the system
 # crypto policy, and installed with the distribution's own trust store

@@ -62,9 +62,8 @@
            != safbox_tool_saf_cli.version | string
       block:
         # Pinned at the root dependency: the SAF CLI version is exact and npm
-        # resolves its dependencies (ADR-0001 Quality Standards). The global
-        # install links the saf command onto the default PATH. No package
-        # scripts run as root.
+        # resolves its dependencies. The global install links the saf command
+        # onto the default PATH. No package scripts run as root.
         - name: Install the SAF CLI from the npm registry
           ansible.builtin.command:
             argv:
@@ -102,9 +101,9 @@
         mode: '0755'
 
     # Pinned at the root: each collection at its exact version, with Galaxy
-    # resolving any dependencies (ADR-0001 Quality Standards). A collection
-    # at another version is replaced; when every one is already in place
-    # ansible-galaxy reports nothing to do. Its API cache goes in /var/tmp,
+    # resolving any dependencies. A collection at another version is
+    # replaced; when every one is already in place ansible-galaxy reports
+    # nothing to do. Its API cache goes in /var/tmp,
     # which the seal clears.
     - name: Install the pinned collections system-wide
       ansible.builtin.command:

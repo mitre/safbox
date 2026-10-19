@@ -11,7 +11,17 @@
 #      SAFBOX_NODE (node holding the template), SAFBOX_POOL (resource pool the
 #      clone joins; authorizes the clone via VM.Allocate on /pool/<name>, which
 #      survives VM destruction, unlike an ACL on /vms/<id>), SAFBOX_SSH_KEY
-#      (private key; default .build/clone_key, RSA because the clone is FIPS),
+#      (private key; default .build/clone_key, RSA because the clone is FIPS;
+#      made if missing),
+#      SAFBOX_EXTRA_SSH_KEYS (optional: public key files, colon-separated,
+#      whose keys admin also gets, after the build key and every *.pub in
+#      .build/keys/; ECDSA or RSA of at least 2048 bits, since the clone's
+#      FIPS-mode sshd refuses Ed25519; any other key fails the run with 2
+#      before the clone is made). .build/ is the one in the checkout this
+#      script runs from: run from a worktree, it makes and uses that
+#      worktree's own clone_key and reads no keys from the main checkout's
+#      .build/keys/; point SAFBOX_SSH_KEY and SAFBOX_EXTRA_SSH_KEYS there
+#      to use them.
 #      SAFBOX_BUILD_KEY (optional: when SSH fails on a development template,
 #      the build key of the run that built it, .build/runs/<run id>/build_key,
 #      kept by SAFBOX_DEV=1; default: every kept run key, newest first),
@@ -53,6 +63,49 @@ if [ ! -f "$KEY" ]; then
   ssh-keygen -q -t rsa -b 4096 -N '' -C safbox-clone -f "$KEY"
 fi
 PUB=$(cat "$KEY.pub")
+# Extra public keys for the clone's admin (first boot gives safuser the
+# same keys): every *.pub in this checkout's .build/keys/, then every file
+# SAFBOX_EXTRA_SSH_KEYS names, colon-separated. SAFBox's FIPS-mode sshd
+# accepts only ECDSA and RSA keys (sshd -T on a clone: PubkeyAcceptedAlgorithms
+# ecdsa-sha2-nistp256/384/521 and rsa-sha2-256/512, RequiredRSASize 2048),
+# so any other key, Ed25519 included, stops the run before any API call:
+# the clone would never accept it.
+ACCEPTED='ECDSA (nistp256, nistp384, nistp521) or RSA of at least 2048 bits'
+refuse_key() { # file reason
+  echo "refusing extra SSH key file $1: $2. SAFBox's FIPS-mode sshd accepts only these keys: $ACCEPTED; make one with 'ssh-keygen -t ecdsa -b 384' or 'ssh-keygen -t rsa -b 4096'" >&2
+  exit 2
+}
+EXTRA_FILES=()
+for f in "$ROOT"/.build/keys/*.pub; do
+  if [ -e "$f" ]; then EXTRA_FILES+=("$f"); fi
+done
+IFS=: read -r -a NAMED <<<"${SAFBOX_EXTRA_SSH_KEYS:-}"
+for f in ${NAMED[@]+"${NAMED[@]}"}; do
+  if [ -n "$f" ]; then EXTRA_FILES+=("$f"); fi
+done
+for f in ${EXTRA_FILES[@]+"${EXTRA_FILES[@]}"}; do
+  if [ ! -f "$f" ] || [ ! -r "$f" ]; then refuse_key "$f" "not a readable file"; fi
+  n=0 keys=0
+  # One key per line, as in authorized_keys; blank and # lines are skipped.
+  # A line that is not a public key (a private key's, say) is never printed.
+  mapfile -t LINES < "$f"
+  for raw in ${LINES[@]+"${LINES[@]}"}; do
+    n=$((n + 1))
+    read -r line <<<"$raw" || true   # trims surrounding blanks
+    case "$line" in '' | '#'*) continue ;; esac
+    fp=$(ssh-keygen -l -f - <<<"$line" 2>/dev/null) || refuse_key "$f" "line $n is not a public key"
+    bits=${fp%% *} type=${fp##* }
+    case "$type" in
+      '(ECDSA)') ;;
+      '(RSA)') [ "$bits" -ge 2048 ] || refuse_key "$f" "line $n is an RSA key of $bits bits" ;;
+      *) type=${type#(}; refuse_key "$f" "line $n holds a key of type ${type%)}" ;;
+    esac
+    PUB+=$'\n'"$line"
+    keys=$((keys + 1))
+  done
+  [ "$keys" -gt 0 ] || refuse_key "$f" "it holds no public key"
+  echo "extra SSH key for $USER_NAME: $f"
+done
 # TLS verification stays on unless the caller opts out for a self-signed lab
 # API certificate (mirrors Packer's proxmox_insecure_skip_tls_verify).
 # The token never appears on a command line (visible in ps and /proc); curl

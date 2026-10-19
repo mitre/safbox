@@ -22,7 +22,13 @@ virtual hosts). Any other name, and the box's bare address, get the start
 page: this documentation, built with VitePress on the build workstation
 (`site/`, by `scripts/build.sh`) and copied to the box. Its welcome page
 shows each service up or down and links to the applications, from a
-`status.json` the `safbox-site-status.timer` rewrites every minute. Port 80
+`status.json` that `safbox-site-status.service` rewrites after each
+listed service starts (at the end of boot and after a restart) and its
+timer rewrites every minute, so a service that stops shows as down
+within a minute. Each application's unit counts as started only once
+its container's healthcheck passes (Heimdall's page, Vulcan's `/up`,
+Keycloak's `/health/ready`), so the end of boot waits for applications
+that answer, and "up" means one does. Port 80
 redirects every request to
 `https://` with the same name and path, and so does a plain `http://`
 request sent to port 443. The firewall opens `http` and `https` and no
@@ -47,7 +53,7 @@ for `*.safbox.internal`) or, for a single workstation, in its hosts file
 (`/etc/hosts`, or `C:\Windows\System32\drivers\etc\hosts`):
 
 ```
-192.0.2.10  safbox.internal heimdall.safbox.internal vulcan.safbox.internal
+192.0.2.10  safbox.internal heimdall.safbox.internal vulcan.safbox.internal keycloak.safbox.internal
 ```
 
 Then browse to `https://heimdall.safbox.internal/`. A site that sets its
@@ -245,6 +251,27 @@ sudo env SAFBOX_STATE_DIR="$(sudo mktemp -d)" /usr/local/sbin/safbox-firstboot
 sudo systemctl start heimdall.service vulcan.service safbox-proxy.service
 ```
 
+**A box built before the databases moved to the sclorg PostgreSQL image
+loses their data.** The new image keeps its data in another layout, owned
+by another user, at PostgreSQL 18 (Heimdall's and Keycloak's were 17), and
+takes its password from another variable, so it cannot start on the old
+volumes. There is no migration: like the switches, the change is meant
+for a new template. To apply it to such a box anyway, accept that
+Heimdall's evaluations, Vulcan's projects and Keycloak's realm and users
+are lost (each application starts again as on first boot, with the same
+secrets), and remove the old databases and their password files before
+applying the roles, then run first boot over the new hooks as above and
+restart the pods:
+
+```
+sudo systemctl stop heimdall-pod.service vulcan-pod.service keycloak-pod.service \
+  heimdall-db-volume.service vulcan-db-volume.service keycloak-db-volume.service
+sudo podman volume rm heimdall-db vulcan-db keycloak-db
+sudo rm /etc/safbox/heimdall-db.env /etc/safbox/vulcan-db.env /etc/safbox/keycloak-db.env
+# apply the roles, run first boot as above, then:
+sudo systemctl restart heimdall-pod.service vulcan-pod.service keycloak-pod.service
+```
+
 **Testing.** The release gate's controls check the units, secrets,
 loopback-only ports, each name over HTTPS, the redirects, the start page,
 the certificate's names, `/etc/hosts` and the firewall from a shell on the
@@ -275,7 +302,12 @@ second argument when `safbox_domain` is not the default.
 They need curl, jq and OpenSSL 3 (`OPENSSL=/path/to/openssl` where the
 system `openssl` is LibreSSL, as on macOS).
 
-**FIPS.** Each container carries its own userspace crypto. Keycloak runs
+**FIPS.** SAFBox makes the effort to run every component in FIPS mode:
+each one's crypto is meant to go through a FIPS provider, under the
+host's FIPS crypto policy, except where noted below. That is not the same as every component being
+FIPS-validated, its crypto module carrying a NIST CMVP certificate, and
+SAFBox does not claim it: some of the modules below are validated, some
+are not. Each container carries its own userspace crypto. Keycloak runs
 its own FIPS provider, Bouncy Castle FIPS in Approved Mode (FIPS strict
 mode), on Red Hat's OpenJDK 21 in UBI 9, which switches itself to its FIPS
 configuration on a FIPS host. Its bc-fips is 2.1.3, the version Keycloak
@@ -292,9 +324,23 @@ the containers run a FIPS provider under the host's policy. The proxy uses
 `ubi9/nginx-126` rather than upstream Heimdall's `nginx:alpine` for this
 reason: Alpine's OpenSSL has no FIPS provider. Each application container
 mounts the host's CA trust store read-only, so it trusts the same CAs as the
-host, a site's own included (see [Site CA bundles](site-config.md)). Two weaknesses
-remain. Both upstream PostgreSQL images (Debian and Alpine) have no OpenSSL
-FIPS provider at all, so `safbox-heimdall-5` and `safbox-vulcan-4` fail.
+host, a site's own included (see [Site CA bundles](site-config.md)).
+The three databases run the sclorg PostgreSQL 18 image built on CentOS
+Stream 9 (`quay.io/sclorg/postgresql-18-c9s`), in place of the upstream
+compose files' `postgres:17` (Heimdall) and `postgres:18-alpine` (Vulcan),
+whose OpenSSL has no FIPS provider at all. Its OpenSSL runs its FIPS
+provider on a FIPS host under the host's policy, so PostgreSQL refuses
+MD5 and computes its SCRAM-SHA-256 password hashes and its digest
+functions in FIPS mode (`safbox-heimdall-5`, `safbox-vulcan-4`,
+`safbox-keycloak-6`). That provider is an unvalidated CentOS Stream build
+of the RHEL 9 module: it runs in FIPS mode, and it carries no CMVP
+certificate. Red Hat's own PostgreSQL images, whose module is RHEL's,
+need a Red Hat account to pull and may not be redistributed in a
+template, so SAFBox does not use them. Each application signs in to its
+database as a role of its own that owns that database, with its password
+and SCRAM-SHA-256 only, over the pod's loopback; the image's own access
+list, which trusts every connection over the socket and the loopback, is
+replaced (`templates/pg_hba.conf.j2`). One weakness remains.
 Heimdall hashes passwords and API keys with bcrypt in pure JavaScript,
 outside any FIPS provider (upstream
 [mitre/heimdall2#4145](https://github.com/mitre/heimdall2/issues/4145),

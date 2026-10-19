@@ -1,8 +1,9 @@
 ---
-# Debian family. Present per ADR-0001 but untested: the pinned CINC Auditor
-# artifact is an RPM, and the distribution's ansible-core and Node.js
-# versions differ from the RHEL family's, so a Debian site overrides the
-# CINC Auditor and ansible-core pins in its local vars file.
+# Debian family, so the appliance layer can run on a Debian family host;
+# untested: the pinned CINC Auditor artifact is an RPM, and the
+# distribution's ansible-core and Node.js versions differ from the RHEL
+# family's, so a Debian site overrides the CINC Auditor and ansible-core
+# pins in its local vars file.
 
 # Node.js from the distribution, linked against the system OpenSSL; npm is
 # packaged separately.

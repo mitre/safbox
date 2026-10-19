@@ -1,6 +1,5 @@
 # Shared build: one provisioner chain for every source. Assert the installed
-# state, run the appliance layer, check it from outside, then seal
-# (ADR-0001 §Decision: two-layer pipeline).
+# state, run the appliance layer, check it from outside, then seal.
 
 packer {
   required_version = ">= 1.12.0"
@@ -80,9 +79,9 @@ build {
     ]
   }
 
-  # Appliance layer (ADR-0001 two-layer pipeline): the same playbooks any
-  # operator can run against an existing host. Packer connects as the build
-  # user with the ephemeral key; group_vars load from the playbooks.
+  # Appliance layer: the same playbooks any operator can run against an
+  # existing host. Packer connects as the build user with the ephemeral key;
+  # group_vars load from the playbooks.
   provisioner "ansible" {
     playbook_file    = "${local.ansible_dir}/playbooks/safbox.yml"
     galaxy_file      = "${local.ansible_dir}/requirements.yml"

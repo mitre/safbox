@@ -24,7 +24,7 @@ Two InSpec profiles live in `verify/profiles/`:
 
 | Profile | Checks |
 |---|---|
-| `verify/profiles/safbox` | the appliance itself: OS, FIPS mode, Secure Boot, accounts, the hardening record, the tools at their pinned versions, Heimdall, Vulcan and the TLS proxy, and on a clone the seal and first boot |
+| `verify/profiles/safbox` | the appliance itself: OS, FIPS mode, Secure Boot, accounts, the hardening record and the settings SAFBox applies itself (AIDE, Ctrl-Alt-Delete), the tools at their pinned versions, Heimdall, Vulcan and the TLS proxy, and on a clone the seal and first boot |
 | `verify/profiles/safbox-rhel10-stig-overlay` | the pinned MITRE RHEL 10 STIG baseline, with SAFBox's deviations marked Not Applicable |
 
 `verify/profiles/safbox` is plain InSpec: `package`, `service`, `port`,
@@ -61,11 +61,9 @@ config it cannot use.
 `verify/thresholds/` holds four short SAF CLI threshold files, written by
 hand, one per profile and context:
 
-- `safbox-build.yml` and `safbox-release.yml`, for the safbox profile: a
-  cap on failed controls and no errors. Every control that applies on the
-  build VM must pass. A deployed clone may fail at most 2, the two that
-  fail on every image today (the Heimdall and Vulcan PostgreSQL images
-  carry no OpenSSL FIPS provider), so a third failure fails the gate.
+- `safbox-build.yml` and `safbox-release.yml`, for the safbox profile: no
+  failed controls and no errors. Every control that applies, on the build
+  VM or on a deployed clone, must pass.
 - `stig-build.yml` and `stig-release.yml`, for the overlay: a compliance
   percentage taken from a real scan in that context, rounded down, at most
   5 failed CAT I (high) controls, the five that fail today, and no errors.

@@ -1,7 +1,7 @@
 # {{ ansible_managed }}
 # Trivial Quadlet unit: proves the container runtime starts a unit on boot.
-# Shape follows ADR-0001 Quality Standards: memory limit, no added
-# capabilities, no network, read-only root.
+# Least privilege: a memory limit, no added capabilities, no network, a
+# read-only root.
 [Unit]
 Description=SAFBox container runtime smoke test
 After=safbox-firstboot.service

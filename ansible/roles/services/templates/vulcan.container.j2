@@ -8,7 +8,9 @@
 #                                         shares one network namespace with the
 #                                         database), POSTGRES_USER and
 #                                         POSTGRES_PASSWORD, which Vulcan's
-#                                         config/database.yml reads
+#                                         config/database.yml reads; the user
+#                                         is Vulcan's own role in its database
+#                                         (vulcan-db.container), not postgres
 #   NODE_ENV=production                -> the same
 #   RAILS_FORCE_SSL                    -> true: the TLS proxy terminates HTTPS
 #                                         and sends X-Forwarded-Proto, as
@@ -27,6 +29,11 @@
 #   healthcheck curl /up, every 30s,   -> the same; with RAILS_FORCE_SSL /up
 #     timeout 10s, 3 retries, start       answers plain HTTP with a redirect,
 #     period 60s                          which curl -f accepts
+#   (no equivalent)                    -> Notify=healthy: the unit is ready
+#                                         once the healthcheck passes, so
+#                                         units ordered after it, and the end
+#                                         of boot, wait for a Vulcan that
+#                                         serves
 # The caddy and nginx profiles are the TLS proxy's safbox-proxy unit.
 [Unit]
 Description=Vulcan
@@ -41,7 +48,7 @@ ContainerName=vulcan
 Pod=vulcan.pod
 Environment=NODE_ENV=production
 Environment=DATABASE_HOST=127.0.0.1
-Environment=POSTGRES_USER=postgres
+Environment=POSTGRES_USER={{ services_vulcan_db_user }}
 {% for name, value in services_vulcan_settings | dictsort %}
 Environment={{ name }}={{ value }}
 {% endfor %}
@@ -59,6 +66,7 @@ HealthInterval=30s
 HealthTimeout=10s
 HealthRetries=3
 HealthStartPeriod=60s
+Notify=healthy
 Memory={{ services_vulcan_memory }}
 Volume={{ platform_container_trust_volume }}
 NoNewPrivileges=true
@@ -66,6 +74,8 @@ DropCapability=all
 
 [Service]
 Restart=always
+# The first start prepares the database before it answers.
+TimeoutStartSec=300
 
 [Install]
 WantedBy=multi-user.target

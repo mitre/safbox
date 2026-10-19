@@ -1,6 +1,6 @@
 ---
-# Debian family (Debian, Ubuntu) names. Present per ADR-0001 but untested
-# until the Ubuntu source lands.
+# Debian family (Debian, Ubuntu) names, so the appliance layer can run on a
+# Debian family host; untested until the Ubuntu source lands.
 
 # growpart, for the disk-growing first-boot hook.
 base_family_packages:

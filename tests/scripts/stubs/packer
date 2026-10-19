@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# Stub packer for tests/scripts/build-concurrency.sh. packer init: nothing.
+# packer build -var vm_name=<n> ...: record what build.sh handed it under
+# $STUB_DIR/<n>/, signal $STUB_DIR/started.<n>, wait for
+# $STUB_DIR/release.<n>, then check that the key and the debug log it was
+# given are still there and still the ones it saw at the start.
+# STUB_LEAK=1 writes the token to the debug log; STUB_RO=1 leaves a
+# directory under the galaxy install that its owner cannot delete from;
+# STUB_RC=<n> is the exit status (default 0); STUB_UNREADABLE=1 leaves the
+# debug log unreadable.
+set -u
+[ "$1" = build ] || exit 0
+shift
+name="" key="" galaxy="" site=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -var)
+      case "$2" in
+        vm_name=*) name=${2#vm_name=} ;;
+        ssh_private_key_file=*) key=${2#ssh_private_key_file=} ;;
+        galaxy_dir=*) galaxy=${2#galaxy_dir=} ;;
+        site_dir=*) site=${2#site_dir=} ;;
+      esac
+      shift 2 ;;
+    *) shift ;;
+  esac
+done
+# Like Packer: a signal cancels the build, which says so on its output.
+trap 'echo "stub packer $name cancelled"; exit 1' INT TERM HUP
+d="$STUB_DIR/$name"; mkdir -p "$d"
+echo "$key" > "$d/key"
+echo "${PACKER_LOG_PATH:-}" > "$d/debuglog"
+echo "$galaxy" > "$d/galaxy"
+echo "$site" > "$d/site"
+# What ansible-galaxy would install there.
+mkdir -p "$galaxy/roles/RHEL10-STIG"
+sum() { cksum < "$1" 2>/dev/null || echo missing; }
+sum "$key" > "$d/key.before"
+echo "stub packer $name debug line" >> "$PACKER_LOG_PATH"
+if [ -n "${STUB_LEAK:-}" ]; then echo "leaked $PROXMOX_TOKEN" >> "$PACKER_LOG_PATH"; fi
+# The signals the tee writing build.log ignores (SigIgn from /proc).
+tee_pid=$(pgrep -f -n "tee -a $(dirname "$PACKER_LOG_PATH")/build.log" || true)
+if [ -n "$tee_pid" ] && [ -r "/proc/$tee_pid/status" ]; then
+  awk '/^SigIgn:/ {print $2}' "/proc/$tee_pid/status" > "$d/tee.sigign"
+fi
+touch "$STUB_DIR/started.$name"
+for _ in $(seq 1 300); do [ -e "$STUB_DIR/release.$name" ] && break; sleep 0.1; done
+sum "$key" > "$d/key.after"
+grep -qx "stub packer $name debug line" "$PACKER_LOG_PATH" && echo yes > "$d/debuglog.kept" || echo no > "$d/debuglog.kept"
+if [ -n "${STUB_UNREADABLE:-}" ]; then chmod 000 "$PACKER_LOG_PATH"; fi
+if [ -n "${STUB_RO:-}" ]; then
+  mkdir -p "$galaxy/roles/RHEL10-STIG/ro"; : > "$galaxy/roles/RHEL10-STIG/ro/file"
+  chmod 555 "$galaxy/roles/RHEL10-STIG/ro"
+fi
+echo "stub packer $name done"
+exit "${STUB_RC:-0}"

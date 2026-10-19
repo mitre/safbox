@@ -1,12 +1,15 @@
 ---
 # STIG overlay on a deployed clone (release gate).
-# 76: the release scan of clone 9190 on 2026-10-16, 292 of 383 applicable controls passed (76.2%), rounded down.
+# 84: the worse of the two release scans of 2026-10-19, desktop clone 9102:
+# 324 of 383 applicable controls passed (84.6%), rounded down. The headless
+# clone 9101 passed 322 of 380 (84.7%).
 compliance:
-  min: 76
-# 5: the CAT I (high) controls that fail on every image today; a new one fails the gate.
+  min: 84
+# 4: the CAT I (high) controls that fail on every image today (SV-280978,
+# SV-281009, SV-281268, SV-281298, on both variants); a new one fails the gate.
 failed:
   high:
-    max: 5
+    max: 4
 error:
   total:
     max: 0

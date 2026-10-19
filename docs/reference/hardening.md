@@ -54,8 +54,9 @@ the PAM stacks (RHEL-10-600600 and 600610) and holds a lock until an
 administrator releases it (RHEL-10-600425) only when
 `rhel10stig_disruption_high` is on. The hardening role applies those three
 itself, before Lockdown runs, so they hold whichever way a site sets
-`rhel10stig_disruption_high`: it enables authselect's `with-faillock`
-feature and sets `unlock_time = 0` in `/etc/security/faillock.conf`;
+`rhel10stig_disruption_high`: it selects its authselect profile with the
+`with-faillock` feature (see [Settings SAFBox applies
+itself](#settings-safbox-applies-itself)) and sets `unlock_time = 0` in `/etc/security/faillock.conf`;
 Lockdown sets the rest of that file (three failures in 15 minutes).
 `rhel10stig_uses_authselect: true` tells Lockdown that authselect makes
 the stacks, so RHEL-10-600600 and 600610 only check that `with-faillock`
@@ -71,10 +72,16 @@ locked account with `sudo faillock --user <name> --reset`; see
 
 Lockdown's own variables are the knobs for everything else: set any
 `rhel10stig_*` value in `ansible/local.yml` (a rule switch to `false`, a
-banner text, a time server). Hardening does not reboot the build VM,
-because a reboot would run the first-boot unit inside the template; kernel
-arguments and some other settings take effect when a clone first boots, so
-the build STIG threshold is lower than the release one.
+banner text, a time server). Two of them SAFBox sets to describe the box:
+`rhel10stig_system_uses_ipv6: true`, because the box runs the IPv6 stack
+and Lockdown applies its IPv6 network rules (RHEL-10-800230 to 800280)
+only when told so, and `rhel10stig_pam_rounds: '100000'`, the STIG's
+minimum hashing rounds for `pam_unix` (RHEL-10-600720, and SAFBox's
+authselect profile below), where Lockdown's default is 5000. Hardening
+does not reboot the build VM, because a reboot would run the first-boot
+unit inside the template; kernel arguments and some other settings take
+effect when a clone first boots, so the build STIG threshold is lower than
+the release one.
 
 Known upstream defect: the pinned Lockdown release ends every run with
 `POST | Warning a reboot required but skip option set`, a task marked
@@ -139,8 +146,9 @@ server in its site inputs file. The hardening then writes
 `/etc/rsyslog.d/99-forwarding.conf` for that server and SV-280985 is
 evaluated.
 
-USBGuard is enabled with no rules, so USB devices are blocked until a site
-allows them.
+USBGuard allows USB hubs and nothing else, so USB devices are blocked
+until a site allows them (see [Settings SAFBox applies
+itself](#settings-safbox-applies-itself)).
 
 ## Lockdown's disruptive changes
 
@@ -205,30 +213,108 @@ once RHEL-10-600750 writes it:
 
 **On a later run against a deployed box.** The switches above make a
 build safe. Some rules that change nothing on a fresh build act when the
-playbook is run again against a box already in use, and stay on, because
-on a box in SAFBox's own state they change nothing and none of them
-touches `admin`:
+playbook is run again against a box already in use. Three are off for that
+reason:
 
-- RHEL-10-600730 locks (`passwd -l`) every account whose password hash
-  is not SHA-512 (`$6$`). It skips locked passwords (`!`, as `admin`'s
-  is), root and the account running the playbook. First boot sets
-  `safuser`'s password with SHA-512, whether generated or given plain,
-  and keeps a crypt hash as given; so `safuser` is locked only when the
-  deployer supplied another kind of hash, such as the `$5$` Proxmox makes
-  from a plain **Password** (`cipassword`), which first boot warns about
-  and SV-281221 already fails. `admin` then sets a new one with `sudo
-  passwd safuser`.
+- RHEL-10-600730 (SV-281221) is meant to lock every account whose
+  password hash is not SHA-512 (`$6$`), but its filter, `grep -v '$6$'`,
+  excludes nothing (a `$` that ends a pattern anchors it), so it locks
+  every account with a usable password, SHA-512 or not: a run against a
+  deployed box locked `safuser`. It is off, as "Lockdown task harmful";
+  the baseline control still checks the stored hashes.
+- RHEL-10-200562 (SV-280964) replaces the USBGuard rules with a policy
+  generated from the USB devices attached at that moment once any rule
+  exists, and SAFBox writes one (below), so it is off too.
+- RHEL-10-800210 (SV-281353) sets IPv4 forwarding off; reloaded on a
+  running box it turns forwarding off under the pods until the next boot.
+  podman needs forwarding, so the rule is off and the control is Not
+  Applicable in the overlay.
+
+These stay on, because on a box in SAFBox's own state they change
+nothing and none of them touches `admin`:
+
 - RHEL-10-600110 and 600270 set the ageing of existing accounts that have
   a password (not `admin`'s, which is locked): at most 60 days, at least
   one. `safuser` already has both from `/etc/login.defs` when first boot
   creates it.
 - RHEL-10-400230 removes and reinstalls cronie when the permissions of
   the cron files differ from the package's; on SAFBox they do not.
-- RHEL-10-200562 replaces `/etc/usbguard/rules.conf` with a policy
-  generated from the USB devices attached at that moment, once any rule
-  exists. SAFBox ships no rules; a site that writes its own sets
-  `rhel10stig_200562: false` in `ansible/local.yml` before running the
-  playbook again.
+
+## Settings SAFBox applies itself
+
+Where a Lockdown task fails or would do harm, its rule is switched off in
+group_vars ("Lockdown task fails" or "harmful") and the hardening role
+applies the requirement itself, after Lockdown, so the baseline control
+still runs and checks the result:
+
+- **Password hashing** (RHEL-10-600700, 600710, 600720; SV-281218 to
+  SV-281220). The distribution's `local` authselect profile hashes with
+  yescrypt. The role creates its own copy, `custom/safbox`, whose
+  `pam_unix` password lines in `system-auth` and `password-auth` read
+  `sha512 rounds=<rhel10stig_pam_rounds>` (100000), and selects it with
+  the features already enabled plus `with-faillock`. First boot hashes
+  the password it sets for `safuser` with the same rounds, read from
+  `system-auth` (`chpasswd -s`); `SHA_CRYPT_MAX_ROUNDS` in
+  `/etc/login.defs` is left unset, because with it `chpasswd` on EL10
+  picks rounds up to 999999999, a hash that takes minutes to check.
+  Existing hashes are untouched and still verify; each password is
+  rehashed when it is next changed.
+- **AIDE** (RHEL-10-200631 to 200635). Lockdown's `aide.conf` starts with
+  `@define`, which AIDE rejects, so AIDE could not run at all. The role
+  writes `/etc/aide.conf` (Lockdown's selection list, corrected, every
+  group with acl, xattrs and sha512) and `/etc/cron.daily/aide`, an
+  executable script anacron runs once a day that mails the report to
+  root. The database must describe the deployed box, not the template:
+  `safbox-aide-init.service` makes it once, after the first boot has
+  configured the box, and the seal removes any database the build left.
+  The safbox profile's `safbox-hardening-3` checks the configuration,
+  the daily job and, on a clone, the database.
+- **Ctrl-Alt-Delete** (RHEL-10-700950). Lockdown's drop-in has no `.conf`
+  suffix, so systemd ignored it and pressing the keys seven times in two
+  seconds still rebooted the box. The role writes
+  `/etc/systemd/system.conf.d/55-safbox-ctrl-alt-del-burst.conf`;
+  `safbox-hardening-4` checks the running setting, because the baseline
+  control's check cannot match any file.
+- **Bluetooth** (RHEL-10-700860). Lockdown's task blacklists
+  `firewire-core` instead; the role writes
+  `/etc/modprobe.d/safbox-bluetooth.conf`.
+- **USBGuard** (RHEL-10-200562). Its implicit policy blocks every device
+  that no rule allows. The role adds one rule,
+  `/etc/usbguard/rules.d/50-safbox-hubs.conf`, allowing USB hubs alone
+  (a single interface of class 09), so the rule list is not empty and
+  keyboards, mice and storage stay blocked. The rule allows more than
+  before, never less. On a clone of the headless template USBGuard lists
+  only the USB host controllers and blocks nothing
+  (`usbguard list-devices --blocked` is empty); a desktop build has not
+  been checked here. A device the hypervisor presents over USB, such as
+  a USB tablet for the console pointer, or one a site attaches, is
+  blocked as it was before this rule, and a site allows it with its own
+  rule in `/etc/usbguard/rules.d/`.
+- **Immutable audit rules** (RHEL-10-900100). Lockdown writes `-e 2`
+  commented out. The role writes `/etc/audit/rules.d/99-safbox-immutable.rules`
+  (`-e 2`, which augenrules places last), loaded at boot by
+  `audit-rules.service`. From then on the kernel refuses any change to
+  the audit rules until the box reboots: a later playbook run that changes
+  an audit rule writes it to `/etc/audit/rules.d/`, and it takes effect
+  only at the next reboot (Lockdown reports that a reboot is required).
+  Lockdown loads its rules during its own run (its audit tasks flush
+  their handlers); the hardening role writes this file after that and does
+  not load it, and the build VM is not rebooted, so the rules stay
+  changeable through the build and the seal and become immutable at the
+  clone's first boot.
+- **Unneeded accounts** (RHEL-10-600450). The role removes `games` and
+  `ftp`, which the distribution's `setup` package creates and SAFBox does
+  not use; no file on the box belongs to either. The package declares
+  them in `/usr/lib/sysusers.d/20-setup-users.conf`, and
+  `systemd-sysusers` (on a boot after an update) and rpm (when it
+  installs or updates `setup`) would create them again, so the role also
+  writes `/etc/sysusers.d/20-setup-users.conf`, the package's file
+  without those two entries, which replaces it. Their groups stay.
+- **Dotfile modes of the first-boot accounts** (RHEL-10-400235). Lockdown
+  applies the rule at build, before first boot makes `admin` and
+  `safuser` from `/etc/skel`, whose files are 0644. A first-boot hook,
+  `18-init-file-modes.sh`, gives the dotfiles of every interactive
+  account 0740 or less once those accounts exist.
 
 ## The firewall zone
 

@@ -3,9 +3,19 @@
 # (keycloak.Containerfile.j2), after Keycloak's server guides:
 #   start --optimized       production mode, with the options the image was
 #                           built with (FIPS strict, PostgreSQL, health)
+#   HealthCmd               readiness (/health/ready) on the management
+#                           port, 9000, inside the pod; the image has no
+#                           curl, so bash sends the request, as Keycloak's
+#                           health guide shows; Notify=healthy makes the
+#                           unit ready only then, so units ordered after
+#                           it, and the end of boot, wait for a Keycloak
+#                           that serves
 #   --import-realm          imports the safbox realm on the first start
 #                           only (an existing realm is left alone), its
 #                           ${...} placeholders filled from this environment
+#   KC_DB_*                 its database in the pod, as a role of its own
+#                           (keycloak-db.container); the password is in
+#                           keycloak.env (first boot)
 #   KC_CACHE=local          one node: no cluster stack (JGroups) listening
 #   KC_HOSTNAME             the name the proxy serves Keycloak at, so every
 #                           party (the browser, both applications) sees one
@@ -31,8 +41,8 @@ Image={{ services_keycloak_image }}
 ContainerName=keycloak
 Pod=keycloak.pod
 Exec=start --optimized --import-realm
-Environment=KC_DB_URL=jdbc:postgresql://127.0.0.1:5432/keycloak
-Environment=KC_DB_USERNAME=postgres
+Environment=KC_DB_URL=jdbc:postgresql://127.0.0.1:5432/{{ services_keycloak_db_name }}
+Environment=KC_DB_USERNAME={{ services_keycloak_db_user }}
 Environment=KC_CACHE=local
 Environment=KC_HOSTNAME=https://{{ services_keycloak_host }}
 Environment=KC_HTTP_ENABLED=true
@@ -44,6 +54,12 @@ EnvironmentFile={{ services_keycloak_env_file }}
 EnvironmentFile={{ app.oidc_env_file }}
 {% endfor %}
 Volume={{ services_keycloak_conf_dir }}/safbox-realm.json:/opt/keycloak/data/import/safbox-realm.json:ro,Z
+HealthCmd={ printf 'HEAD /health/ready HTTP/1.0\r\n\r\n' >&0; grep -q 'HTTP/1.0 200'; } 0<>/dev/tcp/localhost/9000
+HealthInterval=30s
+HealthTimeout=10s
+HealthRetries=3
+HealthStartPeriod=60s
+Notify=healthy
 Memory={{ services_keycloak_memory }}
 NoNewPrivileges=true
 DropCapability=all

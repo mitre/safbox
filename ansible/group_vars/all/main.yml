@@ -2,9 +2,9 @@
 # Project-wide variables for the SAFBox appliance layer, applied to every
 # host the playbooks touch. One file, sectioned. Role-level knobs with
 # sensible defaults live in each role's defaults/main.yml; this file is where
-# the project overrides them and where every version pin lives
-# (ADR-0001 Quality Standards: pinned inputs). Later phases add their pins
-# here when they first use them; nothing is pinned ahead of use.
+# the project overrides them and where every version pin lives, so builds
+# are reproducible. Pins are added here when they are first used; nothing is
+# pinned ahead of use.
 #
 # Precedence reminder: role defaults < this file < play vars < -e extra vars.
 
@@ -30,8 +30,8 @@ safbox_distro_default_users:
   - debian
 
 # Install a trivial Quadlet unit that proves the container runtime starts a
-# unit on boot (Phase 2 acceptance). The acceptance build sets it true; the
-# validation profile checks the unit whenever it is installed.
+# unit on boot. The acceptance build sets it true; the validation profile
+# checks the unit whenever it is installed.
 safbox_example_quadlet_enabled: false
 
 # A GNOME desktop on the box's console (platform group 7). Off by default:
@@ -91,10 +91,10 @@ safbox_services_3: true   # nginx TLS proxy for the enabled applications, certif
 safbox_services_4: true   # Firefox bookmarks (desktop builds only: also needs safbox_desktop_enabled)
 safbox_services_5: true   # Keycloak (FIPS strict mode) and its PostgreSQL: single sign-on for Heimdall and Vulcan
 
-# hardening (the last role; ADR-0001 §Decision: hardened with documented
-# deviations). Which STIG rules it applies is set by the Lockdown role's own
-# variables (rhel10stig_*), and the rules it switches off are listed in the
-# Lockdown section below.
+# hardening (the last role, so the STIG covers everything installed before
+# it). Which STIG rules it applies is set by the Lockdown role's own variables
+# (rhel10stig_*), and the rules it switches off are listed in the Lockdown
+# section below.
 safbox_hardening_1: true  # apply the RHEL 10 STIG with the pinned Ansible Lockdown role
 
 # ---------------------------------------------------------------------------
@@ -185,6 +185,16 @@ rhel10stig_disruption_high: true
 # line to each.
 rhel10stig_uses_authselect: true
 
+# The box runs the IPv6 stack (the kernel's default, and the STIG baseline
+# checks it as enabled). Lockdown applies its IPv6 network rules
+# (RHEL-10-800230 to 800280: no source routing, forwarding or router
+# advertisements) only when told so; its default is false.
+rhel10stig_system_uses_ipv6: true
+
+# Hashing rounds for pam_unix in password-auth (RHEL-10-600720). The STIG
+# requires at least 100000; Lockdown's default is 5000.
+rhel10stig_pam_rounds: '100000'
+
 # Lockdown's firewalld zone is the box's zone (safbox_firewall_zone above).
 rhel10stig_custom_firewall_zone: "{{ safbox_firewall_zone }}"
 
@@ -236,8 +246,21 @@ rhel10stig_200080: "{{ not (safbox_desktop_enabled | bool) }}"
 # only audits and warns, and the switch skips that audit and warning too.
 # A site that decides differently sets the switch in ansible/local.yml.
 rhel10stig_000510: false  # RHEL-10-000510 SV-280935 disk encryption: N/A in the overlay
+# RHEL-10-200562 SV-280964 USBGuard policy: Lockdown task harmful: once any rule exists it replaces
+# the rules with a policy of the devices attached at that moment (its condition is inverted);
+# the hardening role writes a hub-only rule
+rhel10stig_200562: false
 rhel10stig_200601: false  # RHEL-10-200601 SV-280970 fapolicyd: N/A in the overlay
 rhel10stig_200602: false  # RHEL-10-200602 SV-280971 fapolicyd policy: N/A in the overlay
+# RHEL-10-200631, 200632, 200634, 200635 SV-280978, 280979, 280981, 280982 AIDE configuration:
+# Lockdown task fails: its aide.conf is not valid AIDE syntax (@define); the hardening role writes aide.conf
+rhel10stig_200631: false
+rhel10stig_200632: false
+rhel10stig_200634: false
+rhel10stig_200635: false
+# RHEL-10-200633 SV-280980 daily AIDE check: Lockdown task fails: writes a crontab line into
+# /etc/cron.daily, which runs scripts; the hardening role writes the daily check
+rhel10stig_200633: false
 # RHEL-10-200642 SV-280985 log forwarding: N/A in the overlay until a site sets safbox_remote_log_server
 rhel10stig_200642: "{{ safbox_remote_log_server | length > 0 }}"
 rhel10stig_200644: false  # RHEL-10-200644 SV-280987 log server authentication: N/A in the overlay
@@ -255,13 +278,33 @@ rhel10stig_300040: false
 rhel10stig_400285: false
 # RHEL-10-400290 SV-281075 file owners: Lockdown task harmful: chowns container image layers to root
 rhel10stig_400290: false
+# RHEL-10-400140 SV-281045 world-writable directory owners and RHEL-10-400280
+# SV-281073 sticky bit on public directories: Lockdown task fails under
+# disruption_high on desktop builds only: its find over every local mount
+# exits non-zero on the greeter's document-portal mount, which root cannot
+# read. Off on desktop builds; headless builds keep them.
+rhel10stig_400140: "{{ not (safbox_desktop_enabled | bool) }}"
+rhel10stig_400280: "{{ not (safbox_desktop_enabled | bool) }}"
 rhel10stig_500035: false  # RHEL-10-500035 SV-281103 audit failure panic: N/A in the overlay
 rhel10stig_600000: false  # RHEL-10-600000 SV-281166 boot loader password: N/A in the overlay
 rhel10stig_600010: false  # RHEL-10-600010 SV-281167 boot loader superuser: N/A in the overlay
 rhel10stig_600415: false  # RHEL-10-600415 SV-281195 root lockout: N/A in the overlay
 rhel10stig_600560: false  # RHEL-10-600560 SV-281211 sudo NOPASSWD: admin keeps it, N/A in the overlay
+# RHEL-10-600710 SV-281219 pam_unix SHA-512: Lockdown task fails: rewrites only lines that already
+# have sha512, adding a space on every run; the hardening role's authselect profile hashes with SHA-512
+rhel10stig_600710: false
+# RHEL-10-600730 SV-281221 stored password hashes: Lockdown task harmful: its grep -v '$6$' excludes
+# nothing, so a later run locks every account with a SHA-512 password
+rhel10stig_600730: false
 # RHEL-10-700020 SV-281225 GUI banner: Lockdown task fails: validate without %s (desktop only, safbox-m5f.49)
 rhel10stig_700020: false
+rhel10stig_700410: false  # RHEL-10-700410 SV-281250 sudo SELinux context: N/A in the overlay
+# RHEL-10-700860 SV-281289 Bluetooth: Lockdown task fails: blacklists firewire-core, not bluetooth;
+# the hardening role blacklists bluetooth
+rhel10stig_700860: false
+# RHEL-10-700950 SV-281298 Ctrl-Alt-Delete burst: Lockdown task fails: its drop-in has no .conf
+# suffix, so systemd ignores it; the hardening role writes its own
+rhel10stig_700950: false
 # RHEL-10-701150 SV-281317 core dump size: Lockdown task fails: writes coredump.conf outside its section
 rhel10stig_701150: false
 # RHEL-10-701160 SV-281318 core dump storage: Lockdown task fails: writes coredump.conf outside its section
@@ -270,6 +313,7 @@ rhel10stig_701230: false  # RHEL-10-701230 SV-281325 MFA certificate status: N/A
 rhel10stig_701270: false  # RHEL-10-701270 SV-281329 PKI trust anchor: N/A in the overlay
 rhel10stig_701280: false  # RHEL-10-701280 SV-281330 PKI identity mapping: N/A in the overlay
 rhel10stig_800060: false  # RHEL-10-800060 SV-281338 two name servers: N/A in the overlay
+rhel10stig_800210: false  # RHEL-10-800210 SV-281353 IPv4 forwarding: N/A in the overlay
 
 # ---------------------------------------------------------------------------
 # Pins: container images
@@ -281,7 +325,7 @@ rhel10stig_800060: false  # RHEL-10-800060 SV-281338 two name servers: N/A in th
 #   curl -sI -H 'Accept: application/vnd.docker.distribution.manifest.list.v2+json' \
 #     https://<registry>/v2/<name>/manifests/<tag>
 
-# Container runtime smoke test image (Phase 2).
+# Container runtime smoke test image (the example Quadlet unit).
 safbox_image_pause:
   name: registry.k8s.io/pause
   tag: 3.10.2
@@ -298,12 +342,6 @@ safbox_image_heimdall:
   tag: 2.14.0
   digest: sha256:06f6e72d416a71e8939da341f78681891aa531765a9d4c62dcc224d3044d0347
 
-# Heimdall's database (heimdall2 compose: database, postgres:17).
-safbox_image_heimdall_db:
-  name: docker.io/library/postgres
-  tag: '17.11'
-  digest: sha256:2d2b8998d31037bf721cfdf764d76ba74171b4fab3431b7f72c27c56ddbdf9e3
-
 # Vulcan (mitre/vulcan docker-compose.yml: web; its compose builds the image,
 # so this is the published release image, mitre/vulcan:release-latest, which
 # is 2.4.1).
@@ -312,11 +350,22 @@ safbox_image_vulcan:
   tag: 2.4.1
   digest: sha256:f2087e590a48c921542bf403aba7238ba0a4d1e0b81f16d844fab4c70eac135e
 
-# Vulcan's database (vulcan compose: db, postgres:18-alpine).
-safbox_image_vulcan_db:
-  name: docker.io/library/postgres
-  tag: 18.6-alpine
-  digest: sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+# The databases of Heimdall, Vulcan and Keycloak, in place of the upstream
+# compose files' postgres:17 (Heimdall) and postgres:18-alpine (Vulcan),
+# whose OpenSSL has no FIPS provider: the sclorg PostgreSQL image built on
+# CentOS Stream 9 (https://github.com/sclorg/postgresql-container), freely
+# pullable and redistributable, which runs on x86-64-v2. Its OpenSSL runs
+# its FIPS provider on a FIPS host, so PostgreSQL's own crypto (SCRAM-SHA-256
+# passwords, digest functions) is in FIPS mode; that provider is a CentOS
+# Stream build and carries no CMVP certificate. PostgreSQL 18 for all three:
+# Vulcan 2.4.1's compose names 18, Heimdall 2.14.0's CI tests the latest
+# release and Keycloak 26.8.1's database guide lists 18. sclorg publishes no
+# multi-architecture index for it, so the digest is that of its one
+# (x86_64) manifest. The tag is the weekly build's date.
+safbox_image_postgresql:
+  name: quay.io/sclorg/postgresql-18-c9s
+  tag: '20261014'
+  digest: sha256:130f30a4966d04e7573f863790219152755c0706600437ce7005a68ed5780349
 
 # Keycloak (quay.io/keycloak/keycloak:26.8.1), the base of the FIPS image
 # the services role builds at image build (safbox-services-5): Keycloak's
@@ -350,9 +399,9 @@ safbox_keycloak_fips_jars:
 # The TLS proxy. Both upstream compose files use nginx:alpine, whose OpenSSL
 # has no FIPS provider. Red Hat's UBI 9 nginx image links the image's
 # OpenSSL, which runs its FIPS provider on a FIPS host and follows the FIPS
-# system crypto policy podman maps into the container (ADR-0001 Reverse
-# proxy: nginx chosen for its FIPS path). UBI 9, not UBI 10: UBI 10 images
-# need an x86-64-v3 CPU, and AlmaLinux's x86_64_v2 build runs on x86-64-v2.
+# system crypto policy podman maps into the container. UBI 9, not UBI 10:
+# UBI 10 images need an x86-64-v3 CPU, and AlmaLinux's x86_64_v2 build runs
+# on x86-64-v2.
 safbox_image_proxy:
   name: registry.access.redhat.com/ubi9/nginx-126
   tag: 9.8-1791881018
@@ -405,7 +454,7 @@ safbox_tool_cinc_auditor:
 # The SAF CLI (tools group 2), installed from the npm registry and run by
 # the distribution's Node.js so its crypto is the system OpenSSL. Pinned at
 # the root dependency: this version is exact and npm resolves the SAF CLI's
-# own dependencies at build time (ADR-0001 Quality Standards).
+# own dependencies at build time.
 safbox_tool_saf_cli:
   version: 1.7.0
 

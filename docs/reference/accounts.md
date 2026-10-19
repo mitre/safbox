@@ -14,6 +14,54 @@ SSH never accepts passwords (`PasswordAuthentication no` in
 `/etc/ssh/sshd_config.d/40-safbox.conf`, written at install); a password is
 for the console and the desktop.
 
+## Deploying a clone
+
+Set two fields in the clone's cloud-init before its first boot: on
+Proxmox, the clone's **Cloud-Init** tab; with Terraform or a cloud, the
+equivalent cloud-init settings (its provider's cloud-init SSH keys and
+password, or `ssh_authorized_keys` and `password` in user data).
+
+- **SSH public key(s)** go to `admin`. Key login is the only way in for
+  `admin`: it has no password and passwordless sudo. First boot gives
+  `safuser` the same keys.
+- **Password** goes to `safuser`, and only to it: first boot applies it,
+  and SAFBox keeps it from reaching `admin`. Give an `openssl passwd -6`
+  hash (see [safuser](#safuser)).
+
+With no password, first boot generates one and keeps it in
+`/etc/safbox/safuser.env`, readable by root only. Read it as `admin`:
+
+```
+sudo cat /etc/safbox/safuser.env      # SAFUSER_PASSWORD=...
+```
+
+**After first boot.** Changing a cloud-init field later gives the clone a
+new cloud-init instance ID. At the next boot cloud-init applies the keys
+to `admin` again and regenerates the host keys, so SSH clients see a new
+host key. SAFBox's first boot does not run again: a changed password does
+not reach `safuser`, and changed keys do not reach `safuser`. Set or
+change `safuser`'s password as `admin` with `sudo passwd safuser`.
+
+**Key types.** The box runs in FIPS mode, and its sshd accepts only ECDSA
+(nistp256, nistp384, nistp521) and RSA keys of at least 2048 bits
+(`PubkeyAcceptedAlgorithms` and `RequiredRSASize` in `sshd -T`). It
+refuses Ed25519 keys ("Ed25519 keys are not allowed in FIPS mode"), so a
+deployer with only an Ed25519 key cannot log in. Make an accepted key:
+
+```
+ssh-keygen -t ecdsa -b 384        # or: ssh-keygen -t rsa -b 4096
+```
+
+**Clones made by `scripts/clone-and-ssh.sh`.** The script gives `admin`
+its build key (`.build/clone_key`, or `SAFBOX_SSH_KEY`), then every `*.pub`
+file in `.build/keys/`, then every file named in `SAFBOX_EXTRA_SSH_KEYS`
+(colon-separated). Put your own public key in `.build/keys/` to log in to
+the clones it makes; `.build/` is ignored by git. It refuses a key the box
+would not accept, before it makes the clone. `.build/` is the one in the
+checkout the script runs from: run from a git worktree, it uses that
+worktree's `.build/`, and makes a new build key there, so point
+`SAFBOX_SSH_KEY` and `SAFBOX_EXTRA_SSH_KEYS` at the main checkout's files.
+
 ## admin
 
 `admin` is the account the deployer's automation uses, and the one that
@@ -107,8 +155,8 @@ users:
   - name: safuser
     lock_passwd: false
     passwd: $6$...                # openssl passwd -6
-    ssh_authorized_keys: [ssh-ed25519 AAAA...]
-ssh_authorized_keys: [ssh-ed25519 AAAA...]   # admin's
+    ssh_authorized_keys: [ecdsa-sha2-nistp384 AAAA...]
+ssh_authorized_keys: [ecdsa-sha2-nistp384 AAAA...]   # admin's
 ```
 
 First boot then keeps the password and keys `safuser` already has. A
@@ -124,7 +172,11 @@ A cloud-init user named something other than `admin` (including
 `SAFBOX_CLONE_USER` for `scripts/clone-and-ssh.sh`) is given to the safbox
 profile as its `admin_user` input in the site inputs file. A site that
 switches `safbox_base_5` off sets the profile's `safuser` input to `false`,
-and `safbox-accounts-3` is then Not Applicable. `safbox_base_6` should stay
+and `safbox-accounts-3` is then Not Applicable. The STIG overlay lists the
+accounts SAFBox creates, `admin` and `safuser`, as its `user_accounts`
+input (SV-281199, no unauthorized accounts); a site with other accounts,
+or another cloud-init user name, sets that input to its own list in the
+same file. `safbox_base_6` should stay
 on: without it `admin`'s key login ends when its password ages out.
 
 ## Accounts in the applications

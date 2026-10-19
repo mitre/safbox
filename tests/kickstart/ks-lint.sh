@@ -55,7 +55,7 @@ if grep -E '^services ' "$tmp" | grep -Eq 'qemu-guest-agent|cloud-init'; then
 fi
 grep -Eq '^systemctl enable .*qemu-guest-agent' "$tmp" || { echo "FAIL: %post must enable qemu-guest-agent" >&2; exit 1; }
 grep -Eq '^systemctl enable .*cloud-init' "$tmp" || { echo "FAIL: %post must enable cloud-init" >&2; exit 1; }
-# Scope: Phase 1 adds nothing to the kernel line beyond FIPS; hardening owns the rest.
+# Scope: the kickstart puts only FIPS on the kernel line; hardening owns the rest.
 if grep -E '^bootloader ' "$tmp" | grep -Eq 'audit=|audit_backlog'; then
   echo "FAIL: bootloader line carries hardening arguments that belong to the hardening role" >&2; exit 1
 fi

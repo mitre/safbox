@@ -1,16 +1,37 @@
 # {{ ansible_managed }}
 # Heimdall's PostgreSQL: the database service of upstream's
-# docker-compose.yml (https://github.com/mitre/heimdall2/blob/master/docker-compose.yml).
-#   image postgres:17                  -> pinned by digest (safbox_image_heimdall_db)
+# docker-compose.yml (https://github.com/mitre/heimdall2/blob/master/docker-compose.yml),
+# from a different image.
+#   image postgres:17                  -> the sclorg PostgreSQL 18 image on
+#                                         CentOS Stream 9, pinned by digest
+#                                         (safbox_image_postgresql): the
+#                                         Debian-based postgres image's
+#                                         OpenSSL has no FIPS provider, this
+#                                         one's runs it on a FIPS host. Its
+#                                         interface differs: the variables
+#                                         below, data in /var/lib/pgsql/data,
+#                                         user 26
 #   restart: unless-stopped            -> Restart=always
-#   healthcheck pg_isready -U postgres -> the same command and timings; the
-#     every 30s, timeout 60s,             unit is ready once healthy, so
-#     5 retries, start period 80s         Heimdall starts after it (upstream:
+#   healthcheck pg_isready -U postgres -> pg_isready over the pod's loopback
+#     every 30s, timeout 60s,             as Heimdall's role, with the same
+#     5 retries, start period 80s         timings: the image's first start
+#                                         runs a socket-only server first,
+#                                         so only TCP means ready. The unit
+#                                         is ready once healthy, so Heimdall
+#                                         starts after it (upstream:
 #                                         depends_on condition service_healthy)
 #   volumes ./data                     -> the heimdall-db named volume
-#   POSTGRES_DB, PGDATA                -> the same values
-#   POSTGRES_PASSWORD=${DATABASE_PASSWORD} -> heimdall-db.env, written by first boot
+#   POSTGRES_DB, PGDATA                -> POSTGRESQL_DATABASE, the same name;
+#                                         the image sets its own data path
+#   POSTGRES_PASSWORD=${DATABASE_PASSWORD} -> POSTGRESQL_PASSWORD in
+#                                         heimdall-db.env, written by first
+#                                         boot, for POSTGRESQL_USER: Heimdall
+#                                         signs in as a role of its own that
+#                                         owns its database, not as the
+#                                         superuser postgres
 #   expose "5432"                      -> reachable inside the pod only
+# Settings and access list: heimdall-postgresql.conf and
+# heimdall-pg_hba.conf (templates/postgresql.conf.j2, pg_hba.conf.j2).
 [Unit]
 Description=Heimdall PostgreSQL
 After=safbox-firstboot.service
@@ -20,11 +41,13 @@ ConditionPathExists={{ services_heimdall_db_env_file }}
 Image={{ services_heimdall_db_image }}
 ContainerName=heimdall-db
 Pod=heimdall.pod
-Volume=heimdall-db.volume:/var/lib/postgresql/data
-Environment=POSTGRES_DB=heimdall-server-production
-Environment=PGDATA=/var/lib/postgresql/data/pgdata
+Volume=heimdall-db.volume:/var/lib/pgsql/data
+Volume={{ services_postgresql_conf_dir }}/heimdall-postgresql.conf:/opt/app-root/src/postgresql-cfg/safbox.conf:ro,Z
+Volume={{ services_postgresql_conf_dir }}/heimdall-pg_hba.conf:/opt/app-root/src/pg_hba.conf:ro,Z
+Environment=POSTGRESQL_USER={{ services_heimdall_db_user }}
+Environment=POSTGRESQL_DATABASE={{ services_heimdall_db_name }}
 EnvironmentFile={{ services_heimdall_db_env_file }}
-HealthCmd=pg_isready -U postgres
+HealthCmd=pg_isready -h 127.0.0.1 -U {{ services_heimdall_db_user }} -d {{ services_heimdall_db_name }}
 HealthInterval=30s
 HealthTimeout=60s
 HealthRetries=5

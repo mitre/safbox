@@ -1,5 +1,5 @@
 ---
-# SAFBox appliance layer entrypoint (ADR-0001 §Decision, appliance layer).
+# SAFBox appliance layer entrypoint.
 # Turns any booted RHEL 10 family (or, untested, Debian family) host with
 # SSH and sudo into a SAFBox. Platform-agnostic by design: nothing here may
 # name a hypervisor or cloud; tests/platform-discipline.sh enforces it.
@@ -23,11 +23,10 @@
     - role: site_config
     - role: base
     - role: tools
-    # Services (ADR-0001 Phases 5 and 6) and the TLS proxy in front of them,
-    # one switchable task group each; the proxy fronts whichever
-    # applications are on.
+    # The services and the TLS proxy in front of them, one switchable task
+    # group each; the proxy fronts whichever applications are on.
     - role: services
-    # Hardening is always the last role (ADR-0001 §Decision): it applies the
-    # RHEL 10 STIG over everything the roles above installed, and the
-    # outside-in validation and the seal follow it.
+    # Hardening is always the last role: it applies the RHEL 10 STIG over
+    # everything the roles above installed, and the outside-in validation
+    # and the seal follow it.
     - role: hardening

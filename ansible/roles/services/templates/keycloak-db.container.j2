@@ -1,7 +1,13 @@
 # {{ ansible_managed }}
 # Keycloak's PostgreSQL, in the shape of heimdall-db.container and from the
-# same pinned image (Keycloak's server guide names PostgreSQL among its
-# supported databases).
+# same pinned image, the sclorg PostgreSQL 18 image on CentOS Stream 9
+# (Keycloak's database guide lists PostgreSQL 18 as supported). Keycloak
+# signs in as a role of its own that owns its database, not as the
+# superuser postgres. As there: POSTGRESQL_* variables, data in
+# /var/lib/pgsql/data owned by uid 26, and readiness checked over TCP
+# because the image's first-start server listens on its socket only.
+# Settings and access list: keycloak-postgresql.conf
+# and keycloak-pg_hba.conf (templates/postgresql.conf.j2, pg_hba.conf.j2).
 [Unit]
 Description=Keycloak PostgreSQL
 After=safbox-firstboot.service
@@ -11,11 +17,13 @@ ConditionPathExists={{ services_keycloak_db_env_file }}
 Image={{ services_keycloak_db_image }}
 ContainerName=keycloak-db
 Pod=keycloak.pod
-Volume=keycloak-db.volume:/var/lib/postgresql/data
-Environment=POSTGRES_DB=keycloak
-Environment=PGDATA=/var/lib/postgresql/data/pgdata
+Volume=keycloak-db.volume:/var/lib/pgsql/data
+Volume={{ services_postgresql_conf_dir }}/keycloak-postgresql.conf:/opt/app-root/src/postgresql-cfg/safbox.conf:ro,Z
+Volume={{ services_postgresql_conf_dir }}/keycloak-pg_hba.conf:/opt/app-root/src/pg_hba.conf:ro,Z
+Environment=POSTGRESQL_USER={{ services_keycloak_db_user }}
+Environment=POSTGRESQL_DATABASE={{ services_keycloak_db_name }}
 EnvironmentFile={{ services_keycloak_db_env_file }}
-HealthCmd=pg_isready -U postgres
+HealthCmd=pg_isready -h 127.0.0.1 -U {{ services_keycloak_db_user }} -d {{ services_keycloak_db_name }}
 HealthInterval=30s
 HealthTimeout=60s
 HealthRetries=5

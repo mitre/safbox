@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Vulcan on a deployed SAFBox, through the TLS proxy (ADR-0001 Phase 6
-# verification: the administrator signs in and creates a project).
+# Vulcan on a deployed SAFBox, through the TLS proxy: the
+# administrator signs in and creates a project.
 #
 #   VULCAN_ADMIN_PASSWORD=... tests/services/vulcan-project.sh <box-address> [name]
 #

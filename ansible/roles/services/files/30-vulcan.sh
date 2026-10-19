@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 30-vulcan.sh: first-boot hook of Vulcan (services role). The one place
-# Vulcan's per-install secrets are generated (ADR-0001 §Decision: secrets
-# are generated on first boot, never at build).
+# Vulcan's per-install secrets are generated: on first boot, never at
+# build, so no two installs share them.
 #
 # Writes, root-only (0600), with the strength of upstream's
 # setup-docker-secrets.sh (https://github.com/mitre/vulcan/blob/master/setup-docker-secrets.sh):
@@ -19,9 +19,10 @@
 #   /etc/safbox/vulcan-oidc.env VULCAN_OIDC_CLIENT_SECRET (-hex 32), Vulcan's
 #                              client secret in Keycloak, read by both;
 #                              unused while Keycloak is switched off
-#   /etc/safbox/vulcan-db.env  POSTGRES_PASSWORD, the same database password,
+#   /etc/safbox/vulcan-db.env  POSTGRESQL_PASSWORD, the same database password,
 #                              for the PostgreSQL container, which needs
-#                              nothing else
+#                              nothing else: the password of Vulcan's role,
+#                              which the image sets on every start
 # Vulcan reads POSTGRES_PASSWORD itself (config/database.yml), so no
 # DATABASE_URL carrying the password is written. Idempotent: an existing
 # value is kept, so a retried first boot leaves the database password the
@@ -49,6 +50,6 @@ fi
 safbox_ensure_secret "${SAFBOX_ETC_DIR}/vulcan-oidc.env" VULCAN_OIDC_CLIENT_SECRET 32
 
 safbox_ensure_env_file "$db_env_file"
-if ! grep -q '^POSTGRES_PASSWORD=' "$db_env_file"; then
-  printf 'POSTGRES_PASSWORD=%s\n' "$(safbox_env_get "$env_file" POSTGRES_PASSWORD)" >> "$db_env_file"
+if ! grep -q '^POSTGRESQL_PASSWORD=' "$db_env_file"; then
+  printf 'POSTGRESQL_PASSWORD=%s\n' "$(safbox_env_get "$env_file" POSTGRES_PASSWORD)" >> "$db_env_file"
 fi

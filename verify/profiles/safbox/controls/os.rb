@@ -221,6 +221,12 @@ control 'safbox-motd-1' do
     its('mode') { should cmp '0644' }
     its('content') { should include 'Welcome to SAFBox!' }
   end
+
+  # 15 lines leaves room for the STIG banner and the prompt on an 80x24
+  # console.
+  describe file('/etc/motd.d/safbox').content.to_s.lines.count do
+    it { should be <= 15 }
+  end
 end
 
 control 'safbox-guest-agent-1' do

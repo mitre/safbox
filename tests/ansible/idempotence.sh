@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Idempotence check (ADR-0001 Quality Standards: a second run reports zero
-# changed tasks). Runs playbooks/safbox.yml twice against one host and fails
-# if the second run changed anything. Arguments are passed to both runs,
-# e.g. -e safbox_example_quadlet_enabled=true. Requires:
+# Idempotence check: a second run must report zero changed tasks. Runs
+# playbooks/safbox.yml twice against one host and fails if the second run
+# changed anything. Arguments are passed to both runs, e.g.
+# -e safbox_example_quadlet_enabled=true. Requires:
 #   SAFBOX_HOST  address of a booted build VM or clone
 #   SAFBOX_USER  SSH user with passwordless sudo (the build user)
 #   SAFBOX_KEY   path to that user's SSH private key

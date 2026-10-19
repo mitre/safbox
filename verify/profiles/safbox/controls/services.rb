@@ -17,13 +17,17 @@ domain = input('domain')
 quadlet = '/etc/containers/systemd'
 trust_store = '/etc/pki/ca-trust/extracted:/etc/pki/ca-trust/extracted:ro'
 pinned = /@sha256:\h{64}$/
+# Every database runs the CentOS Stream build of the sclorg PostgreSQL image,
+# whose OpenSSL has a FIPS provider: safbox-heimdall-5, safbox-vulcan-4 and
+# safbox-keycloak-6 check it in the running containers.
+postgresql = %r{^quay\.io/sclorg/postgresql-\d+-c9s@sha256:\h{64}$}
 # The names the proxy serves besides the domain, one per application.
 served_apps = %w[heimdall vulcan keycloak]
 
 control 'safbox-heimdall-1' do
   impact 1.0
   title 'The Heimdall Quadlet units are installed'
-  desc 'Heimdall and its database run from images pinned by digest, with memory limits, no new privileges and the host CA trust store mounted read-only. The pod publishes 127.0.0.1:3000 only and waits for first boot to write its secrets. Registration is off: the only local account is the administrator, admin@<domain>, made on the first start with the password first boot wrote. With Keycloak on, everyone else signs in through it.'
+  desc 'Heimdall and its database run from images pinned by digest, the database from the CentOS Stream PostgreSQL image, with memory limits, no new privileges and the host CA trust store mounted read-only. The pod publishes 127.0.0.1:3000 only and waits for first boot to write its secrets; the unit is ready only once Heimdall answers its healthcheck. Registration is off: the only local account is the administrator, admin@<domain>, made on the first start with the password first boot wrote. With Keycloak on, everyone else signs in through it.'
   only_if('Heimdall is switched off', impact: 0.0) { services.include?('heimdall') }
 
   describe parse_config_file("#{quadlet}/heimdall.pod", multiple_values: true) do
@@ -37,6 +41,9 @@ control 'safbox-heimdall-1' do
     end
   end
   describe parse_config_file("#{quadlet}/heimdall.container", multiple_values: true) do
+    # Ready only once it answers, so the end of boot waits for it.
+    its('Container.HealthCmd') { should eq ['curl -fsS -o /dev/null http://localhost:3000/'] }
+    its('Container.Notify') { should eq ['healthy'] }
     its('Container.Image') { should all match(pinned) }
     its('Container.NoNewPrivileges') { should eq ['true'] }
     its('Container.DropCapability') { should eq ['all'] }
@@ -55,7 +62,7 @@ control 'safbox-heimdall-1' do
     its('Install.WantedBy') { should eq ['multi-user.target'] }
   end
   describe parse_config_file("#{quadlet}/heimdall-db.container", multiple_values: true) do
-    its('Container.Image') { should all match(pinned) }
+    its('Container.Image') { should all match(postgresql) }
     its('Container.Memory') { should_not be_empty }
   end
 end
@@ -103,19 +110,44 @@ end
 
 control 'safbox-heimdall-5' do
   impact 1.0
-  title "Heimdall's PostgreSQL container has an OpenSSL FIPS provider"
-  desc 'PostgreSQL password authentication and pgcrypto use the OpenSSL in its container, which needs a FIPS provider for FIPS-validated crypto.'
+  title "Heimdall's PostgreSQL runs its crypto in FIPS mode"
+  desc "PostgreSQL computes its password hashes (SCRAM-SHA-256) and digest functions with the OpenSSL in its container. That OpenSSL has its FIPS provider active under the host's FIPS crypto policy, so PostgreSQL refuses MD5; it stores passwords as SCRAM-SHA-256 only, and accepts no password method other than SCRAM-SHA-256 over TCP and no unauthenticated connection: only its own administrator signs in, over the container's local socket (peer). The provider is the CentOS Stream build of OpenSSL's FIPS provider, which runs in FIPS mode but carries no CMVP certificate."
   only_if('Heimdall is switched off, or this is not a deployed clone', impact: 0.0) { services.include?('heimdall') && deployed }
 
-  describe command('podman exec heimdall-db find / -xdev -name fips.so') do
-    its('stdout') { should match(/fips\.so$/) }
+  # As the database's own administrator, over the container's local socket.
+  psql = 'podman exec -u postgres heimdall-db psql -X -A -t -c'
+  describe command('podman exec heimdall-db openssl list -providers') do
+    its('stdout') { should match(/^\s+fips\n\s+name: .*FIPS Provider\n(\s+\w+: .*\n)*?\s+status: active$/) }
+  end
+  describe command('podman exec heimdall-db cat /etc/crypto-policies/config') do
+    its('stdout.strip') { should eq 'FIPS' }
+  end
+  describe command(%(#{psql} "SELECT md5('safbox')")) do
+    its('exit_status') { should_not eq 0 }
+    its('stderr') { should match(/could not compute MD5 hash/) }
+  end
+  describe command(%(#{psql} "SELECT encode(sha256('abc'), 'hex')")) do
+    its('stdout.strip') { should eq 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad' }
+  end
+  describe command(%(#{psql} "SHOW password_encryption")) do
+    its('stdout.strip') { should eq 'scram-sha-256' }
+  end
+  describe command(%(#{psql} "SELECT DISTINCT type || ' ' || auth_method FROM pg_hba_file_rules ORDER BY 1")) do
+    its('stdout') { should eq "host scram-sha-256\nlocal peer\n" }
+  end
+  describe command(%(#{psql} "SELECT rolname FROM pg_authid WHERE rolpassword NOT LIKE 'SCRAM-SHA-256%'")) do
+    its('exit_status') { should eq 0 }
+    its('stdout') { should eq '' }
+  end
+  describe command(%(#{psql} "SELECT rolname FROM pg_authid WHERE rolpassword LIKE 'SCRAM-SHA-256%'")) do
+    its('stdout') { should eq "heimdall\n" }
   end
 end
 
 control 'safbox-vulcan-1' do
   impact 1.0
   title 'The Vulcan Quadlet units are installed'
-  desc 'Vulcan and its database run from images pinned by digest, with memory limits, no new privileges and the host CA trust store mounted read-only. The pod publishes 127.0.0.1:3001 only and waits for first boot to write its secrets. Local login is on and registration is set off (VULCAN_ENABLE_USER_REGISTRATION=false). The administrator, admin@<domain>, is made on the first start with the password first boot wrote, and no user becomes admin by being first. With Keycloak on, everyone else signs in through it. Known upstream defect, accepted: Vulcan 2.4.1 only hides the sign-up link, so anyone who can reach it can still register a regular local account; this control checks the setting, not that registration is refused.'
+  desc 'Vulcan and its database run from images pinned by digest, the database from the CentOS Stream PostgreSQL image, with memory limits, no new privileges and the host CA trust store mounted read-only. The pod publishes 127.0.0.1:3001 only and waits for first boot to write its secrets; the unit is ready only once Vulcan answers its healthcheck. Local login is on and registration is set off (VULCAN_ENABLE_USER_REGISTRATION=false). The administrator, admin@<domain>, is made on the first start with the password first boot wrote, and no user becomes admin by being first. With Keycloak on, everyone else signs in through it. Known upstream defect, accepted: Vulcan 2.4.1 only hides the sign-up link, so anyone who can reach it can still register a regular local account; this control checks the setting, not that registration is refused.'
   only_if('Vulcan is switched off', impact: 0.0) { services.include?('vulcan') }
 
   describe parse_config_file("#{quadlet}/vulcan.pod", multiple_values: true) do
@@ -129,6 +161,9 @@ control 'safbox-vulcan-1' do
     end
   end
   describe parse_config_file("#{quadlet}/vulcan.container", multiple_values: true) do
+    # Ready only once it answers, so the end of boot waits for it.
+    its('Container.HealthCmd') { should eq ['curl -f http://localhost:3000/up || exit 1'] }
+    its('Container.Notify') { should eq ['healthy'] }
     its('Container.Image') { should all match(pinned) }
     its('Container.NoNewPrivileges') { should eq ['true'] }
     its('Container.DropCapability') { should eq ['all'] }
@@ -150,7 +185,7 @@ control 'safbox-vulcan-1' do
     its('Install.WantedBy') { should eq ['multi-user.target'] }
   end
   describe parse_config_file("#{quadlet}/vulcan-db.container", multiple_values: true) do
-    its('Container.Image') { should all match(pinned) }
+    its('Container.Image') { should all match(postgresql) }
     its('Container.Memory') { should_not be_empty }
   end
 end
@@ -199,12 +234,37 @@ end
 
 control 'safbox-vulcan-4' do
   impact 1.0
-  title "Vulcan's PostgreSQL container has an OpenSSL FIPS provider"
-  desc 'PostgreSQL password authentication and pgcrypto use the OpenSSL in its container, which needs a FIPS provider for FIPS-validated crypto.'
+  title "Vulcan's PostgreSQL runs its crypto in FIPS mode"
+  desc "PostgreSQL computes its password hashes (SCRAM-SHA-256) and digest functions with the OpenSSL in its container. That OpenSSL has its FIPS provider active under the host's FIPS crypto policy, so PostgreSQL refuses MD5; it stores passwords as SCRAM-SHA-256 only, and accepts no password method other than SCRAM-SHA-256 over TCP and no unauthenticated connection: only its own administrator signs in, over the container's local socket (peer). The provider is the CentOS Stream build of OpenSSL's FIPS provider, which runs in FIPS mode but carries no CMVP certificate."
   only_if('Vulcan is switched off, or this is not a deployed clone', impact: 0.0) { services.include?('vulcan') && deployed }
 
-  describe command('podman exec vulcan-db find / -xdev -name fips.so') do
-    its('stdout') { should match(/fips\.so$/) }
+  # As the database's own administrator, over the container's local socket.
+  psql = 'podman exec -u postgres vulcan-db psql -X -A -t -c'
+  describe command('podman exec vulcan-db openssl list -providers') do
+    its('stdout') { should match(/^\s+fips\n\s+name: .*FIPS Provider\n(\s+\w+: .*\n)*?\s+status: active$/) }
+  end
+  describe command('podman exec vulcan-db cat /etc/crypto-policies/config') do
+    its('stdout.strip') { should eq 'FIPS' }
+  end
+  describe command(%(#{psql} "SELECT md5('safbox')")) do
+    its('exit_status') { should_not eq 0 }
+    its('stderr') { should match(/could not compute MD5 hash/) }
+  end
+  describe command(%(#{psql} "SELECT encode(sha256('abc'), 'hex')")) do
+    its('stdout.strip') { should eq 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad' }
+  end
+  describe command(%(#{psql} "SHOW password_encryption")) do
+    its('stdout.strip') { should eq 'scram-sha-256' }
+  end
+  describe command(%(#{psql} "SELECT DISTINCT type || ' ' || auth_method FROM pg_hba_file_rules ORDER BY 1")) do
+    its('stdout') { should eq "host scram-sha-256\nlocal peer\n" }
+  end
+  describe command(%(#{psql} "SELECT rolname FROM pg_authid WHERE rolpassword NOT LIKE 'SCRAM-SHA-256%'")) do
+    its('exit_status') { should eq 0 }
+    its('stdout') { should eq '' }
+  end
+  describe command(%(#{psql} "SELECT rolname FROM pg_authid WHERE rolpassword LIKE 'SCRAM-SHA-256%'")) do
+    its('stdout') { should eq "vulcan\n" }
   end
 end
 
@@ -252,7 +312,7 @@ end
 control 'safbox-keycloak-2' do
   impact 1.0
   title 'The Keycloak Quadlet units are installed'
-  desc "Keycloak runs from the image built on the template and its database from an image pinned by digest, with memory limits and no new privileges. The pod publishes Keycloak's HTTP port on 127.0.0.1 only, for the proxy, and waits for first boot to write its secrets. Keycloak runs a single node (local cache), imports the safbox realm on its first start, and believes forwarded headers only from its network's gateway, where the proxy's connections arrive."
+  desc "Keycloak runs from the image built on the template and its database from the CentOS Stream PostgreSQL image, pinned by digest, with memory limits and no new privileges. The pod publishes Keycloak's HTTP port on 127.0.0.1 only, for the proxy, and waits for first boot to write its secrets; the unit is ready only once Keycloak reports itself ready. Keycloak runs a single node (local cache), imports the safbox realm on its first start, and believes forwarded headers only from its network's gateway, where the proxy's connections arrive."
   only_if('Keycloak is switched off', impact: 0.0) { services.include?('keycloak') }
 
   network = parse_config_file("#{quadlet}/keycloak.network", multiple_values: true)
@@ -265,6 +325,9 @@ control 'safbox-keycloak-2' do
     its('Unit.ConditionPathExists') { should eq ['/etc/safbox/keycloak.env'] }
   end
   describe parse_config_file("#{quadlet}/keycloak.container", multiple_values: true) do
+    # Ready only once /health/ready answers, so the end of boot waits for it.
+    its('Container.HealthCmd') { should eq [%q({ printf 'HEAD /health/ready HTTP/1.0\r\n\r\n' >&0; grep -q 'HTTP/1.0 200'; } 0<>/dev/tcp/localhost/9000)] }
+    its('Container.Notify') { should eq ['healthy'] }
     its('Container.Image') { should all match(%r{^localhost/safbox-keycloak-fips:}) }
     its('Container.Exec') { should eq ['start --optimized --import-realm'] }
     its('Container.Environment') { should include 'KC_CACHE=local' }
@@ -277,7 +340,7 @@ control 'safbox-keycloak-2' do
     its('Install.WantedBy') { should eq ['multi-user.target'] }
   end
   describe parse_config_file("#{quadlet}/keycloak-db.container", multiple_values: true) do
-    its('Container.Image') { should all match(pinned) }
+    its('Container.Image') { should all match(postgresql) }
     its('Container.Memory') { should_not be_empty }
   end
   describe json('/etc/safbox-keycloak/safbox-realm.json') do
@@ -353,6 +416,42 @@ control 'safbox-keycloak-5' do
   end
 end
 
+control 'safbox-keycloak-6' do
+  impact 1.0
+  title "Keycloak's PostgreSQL runs its crypto in FIPS mode"
+  desc "PostgreSQL computes its password hashes (SCRAM-SHA-256) and digest functions with the OpenSSL in its container. That OpenSSL has its FIPS provider active under the host's FIPS crypto policy, so PostgreSQL refuses MD5; it stores passwords as SCRAM-SHA-256 only, and accepts no password method other than SCRAM-SHA-256 over TCP and no unauthenticated connection: only its own administrator signs in, over the container's local socket (peer). The provider is the CentOS Stream build of OpenSSL's FIPS provider, which runs in FIPS mode but carries no CMVP certificate."
+  only_if('Keycloak is switched off, or this is not a deployed clone', impact: 0.0) { services.include?('keycloak') && deployed }
+
+  # As the database's own administrator, over the container's local socket.
+  psql = 'podman exec -u postgres keycloak-db psql -X -A -t -c'
+  describe command('podman exec keycloak-db openssl list -providers') do
+    its('stdout') { should match(/^\s+fips\n\s+name: .*FIPS Provider\n(\s+\w+: .*\n)*?\s+status: active$/) }
+  end
+  describe command('podman exec keycloak-db cat /etc/crypto-policies/config') do
+    its('stdout.strip') { should eq 'FIPS' }
+  end
+  describe command(%(#{psql} "SELECT md5('safbox')")) do
+    its('exit_status') { should_not eq 0 }
+    its('stderr') { should match(/could not compute MD5 hash/) }
+  end
+  describe command(%(#{psql} "SELECT encode(sha256('abc'), 'hex')")) do
+    its('stdout.strip') { should eq 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad' }
+  end
+  describe command(%(#{psql} "SHOW password_encryption")) do
+    its('stdout.strip') { should eq 'scram-sha-256' }
+  end
+  describe command(%(#{psql} "SELECT DISTINCT type || ' ' || auth_method FROM pg_hba_file_rules ORDER BY 1")) do
+    its('stdout') { should eq "host scram-sha-256\nlocal peer\n" }
+  end
+  describe command(%(#{psql} "SELECT rolname FROM pg_authid WHERE rolpassword NOT LIKE 'SCRAM-SHA-256%'")) do
+    its('exit_status') { should eq 0 }
+    its('stdout') { should eq '' }
+  end
+  describe command(%(#{psql} "SELECT rolname FROM pg_authid WHERE rolpassword LIKE 'SCRAM-SHA-256%'")) do
+    its('stdout') { should eq "keycloak\n" }
+  end
+end
+
 control 'safbox-proxy-1' do
   impact 1.0
   title 'The TLS proxy unit and its nginx configuration are installed'
@@ -386,7 +485,7 @@ end
 control 'safbox-proxy-2' do
   impact 1.0
   title 'Each name serves its page over HTTPS, with a certificate the box trusts'
-  desc "#{domain} and the bare address serve the SAFBox documentation site as the start page, and its status.json lists each shipped application, up, at its own name; each application answers at that name on port 443. The names verify; the bare address does not, as the certificate names only the box's names. First boot adds the local CA that signs the proxy's certificate to the system trust store, so clients on the box verify it."
+  desc "#{domain} and the bare address serve the SAFBox documentation site as the start page, and its status.json lists each shipped application, up, at its own name, and was written after each of them and the proxy last started, with its refresh timer running; each application answers at that name on port 443. The names verify; the bare address does not, as the certificate names only the box's names. First boot adds the local CA that signs the proxy's certificate to the system trust store, so clients on the box verify it."
   only_if('The proxy is switched off, or this is not a deployed clone', impact: 0.0) { services.include?('proxy') && deployed }
 
   apps = served_apps.select { |app| services.include?(app) }
@@ -405,6 +504,20 @@ control 'safbox-proxy-2' do
       it { should_not be_nil }
       its(['state']) { should eq 'up' }
     end
+  end
+  # The status is current: each listed unit's start pulls in a rewrite
+  # ordered after it, and the timer rewrites it every minute.
+  written = file('/etc/safbox-proxy/html/status.json').mtime.to_i
+  (apps.map { |app| "#{app}.service" } + ['safbox-proxy.service']).each do |unit|
+    started = command("systemctl show --timestamp=unix -P ActiveEnterTimestamp #{unit}").stdout[/\A@(\d+)/, 1]
+    describe "The start page's status.json, written at @#{written}, after #{unit} last became active (@#{started})" do
+      subject { !started.nil? && written >= started.to_i }
+      it { should eq true }
+    end
+  end
+  describe service('safbox-site-status.timer') do
+    it { should be_enabled }
+    it { should be_running }
   end
   {
     'heimdall' => ['/', %r{<title>Heimdall</title>}],

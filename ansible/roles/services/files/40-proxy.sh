@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # 40-proxy.sh: first-boot hook of the TLS proxy (services role). Generates its
 # certificate on first boot, never at build, signed by a small local CA of the
-# box's own, and makes the box trust that CA. (ADR-0001 §Decision says first
-# boot mints a self-signed certificate; the box now mints a local CA and a
-# certificate it signs, so that the box's own browser trusts it.)
+# box's own, and makes the box trust that CA. A local CA rather than a
+# self-signed certificate, so that the box's own browser trusts it.
 #   /etc/safbox/ca/ca.key       the local CA's key, RSA 3072, root only (0600),
 #                               in a root-only directory (0700) that is not
 #                               mounted into the proxy container

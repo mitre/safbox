@@ -1,6 +1,6 @@
 ---
 # Roles and collections the build runner needs for the appliance layer,
-# pinned to exact versions (ADR-0001 Quality Standards: pinned inputs).
+# pinned to exact versions so every build installs the same code.
 # Install both from the ansible/ directory:
 #   ansible-galaxy install -r requirements.yml
 # Roles land in galaxy_roles/ (the first roles_path in ansible.cfg,

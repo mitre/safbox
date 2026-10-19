@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Platform discipline (ADR-0001 Quality Standards): the appliance layer and
-# everything outside the install layer must not name a hypervisor or cloud.
+# Platform discipline: the appliance layer and everything outside the install
+# layer must not name a hypervisor or cloud, so a new platform needs only
+# a new Packer source and answer file.
 #
-# Scope. The ADR names packer/source-*.pkr.hcl and packer/answerfiles/ as the only
+# Scope. packer/source-*.pkr.hcl and packer/answerfiles/ are the only
 # places a platform may appear. The rest of the install layer (variables,
 # the shared build block, its tests, the runner scripts and theirs) necessarily
 # names the builder plugin, and the documentation describes the targets, so

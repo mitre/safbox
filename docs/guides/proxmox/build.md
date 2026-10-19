@@ -287,13 +287,18 @@ Add `SAFBOX_CA_FILE=<cluster-ca.pem>` (or, for a throwaway lab,
 argument to leave the clone running. Set `SAFBOX_CLONE_PASSWORD` to an
 `openssl passwd -6` hash to give `safuser` its password (see
 [Accounts on a clone](#accounts-on-a-clone)); without it first boot
-generates `safuser`'s.
+generates `safuser`'s. To log in to the clones it makes with your own key,
+put the public key in `.build/keys/` (every `*.pub` there is added) or
+name its file in `SAFBOX_EXTRA_SSH_KEYS` (colon-separated); a key the
+FIPS-mode box would refuse, Ed25519 included, stops the run before the
+clone is made. Run from a git worktree, the script uses that worktree's
+`.build/`; see [Deploying a clone](../../reference/accounts.md#deploying-a-clone).
 
 The clone test (`scripts/clone-and-ssh.sh`) is the release gate. It clones
 the template through the API into the pool, injects a cloud-init user
 (`admin`, or `SAFBOX_CLONE_USER`, which a site inputs file must then name
-as `admin_user`) and an RSA key, boots it, learns its address from the
-guest agent, logs in as that user and checks FIPS mode and the clone's
+as `admin_user`) with its RSA build key and any extra keys, boots it,
+learns its address from the guest agent, logs in as that user and checks FIPS mode and the clone's
 host name, waits for the boot to finish (below), logs in as `safuser` with
 the same key, then runs
 `scripts/validate.sh` against it. SSH
@@ -333,13 +338,20 @@ the account people log in as day to day. On the clone's **Cloud-Init** tab
   clone test sets `admin` explicitly. It gets the SSH key and passwordless
   sudo, never a password.
 - **SSH public key** (`sshkeys`): your key, for `admin`. First boot gives
-  it to `safuser` as well.
+  it to `safuser` as well. It must be ECDSA or RSA of at least 2048 bits:
+  the box is in FIPS mode and its sshd refuses Ed25519 (`ssh-keygen -t
+  ecdsa -b 384` makes an accepted key).
 - **Password** (`cipassword`, optional): `safuser`'s password, and
   `safuser`'s only; `admin` never gets it. Paste the output of `openssl
   passwd -6`, not the plain password: Proxmox stores a plain one as a
   SHA-256 hash, which the STIG flags, but keeps a `$6$` hash as given.
   Leave it empty and first boot generates `safuser`'s password; read it
   with `sudo cat /etc/safbox/safuser.env` as `admin`.
+
+Set them before the clone's first boot: first boot runs once, so a
+password or key changed afterwards does not reach `safuser` (as `admin`,
+`sudo passwd safuser` sets its password). See
+[Deploying a clone](../../reference/accounts.md#deploying-a-clone).
 
 `safuser`'s password follows the STIG: it expires 60 days after it is set,
 and three wrong passwords in 15 minutes lock the account until an

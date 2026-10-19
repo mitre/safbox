@@ -1,6 +1,6 @@
 ---
-# Debian family names. Present per ADR-0001 but untested until the Ubuntu
-# source lands.
+# Debian family names, so the appliance layer can run on a Debian family
+# host; untested until the Ubuntu source lands.
 seal_package_cache_clean_argv: [apt-get, clean]
 seal_proxy_ca_anchor: /usr/local/share/ca-certificates/local-ca-safbox-proxy.crt
 seal_trust_update_argv: [update-ca-certificates, --fresh]

@@ -1,9 +1,9 @@
 ---
 # platform role: the operating-system contract every SAFBox host meets (time,
 # SSH, firewall, SELinux) and the container runtime its services run on
-# (ADR-0001 §Decision: services run as podman Quadlets). Task groups are
-# tagged safbox-platform-<n> and switched off by setting safbox_platform_<n>
-# to false (see group_vars/all/main.yml).
+# (podman, each service a set of Quadlet units). Task groups are tagged
+# safbox-platform-<n> and switched off by setting safbox_platform_<n> to
+# false (see group_vars/all/main.yml).
 
 # SELinux must be enforcing on the RHEL family; the kickstart sets it and
 # this role only asserts it. The vars file for a family without SELinux

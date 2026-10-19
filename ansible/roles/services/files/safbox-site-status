@@ -3,7 +3,8 @@
 # service up or down, for the documentation site's live status table.
 #   safbox-site-status <list> <status.json>
 # Each line of <list> is "Title|unit|url" (url may be empty). Run by
-# safbox-site-status.timer; services role, task group safbox-services-3.
+# safbox-site-status.service after each listed unit starts and every minute
+# from its timer; services role, task group safbox-services-3.
 set -euo pipefail
 list=${1:?list file}
 out=${2:?status.json path}

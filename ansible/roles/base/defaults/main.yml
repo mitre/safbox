@@ -2,8 +2,8 @@
 # base role: the base OS and SAFBox's own tooling on the box. It first
 # brings every installed package up to date from the configured
 # repositories, rebooting when the update needs it. The run-once first-boot
-# framework owns every per-install secret (ADR-0001 §Decision: secrets are
-# generated on first boot, not at build); the `safbox` command and its
+# framework owns every per-install secret, generated on first boot and not
+# at build so no two installs share one; the `safbox` command and its
 # subcommand registry give operators one entry point. Task groups are tagged
 # safbox-base-<n> and switched off by setting safbox_base_<n> to
 # false (see group_vars/all/main.yml).

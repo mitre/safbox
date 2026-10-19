@@ -94,9 +94,8 @@ visudo -cf /etc/sudoers.d/90-${build_user}
 # is required: without it, a boot with no datasource (the build VM's own
 # first boot) never completes cloud-init, and sshd, which is ordered after
 # it, never starts (observed on two builds). The price is that the None
-# datasource applies defaults and creates the distribution's default user;
-# the build removes that account before converting to a template, and
-# preventing its creation outright is Phase 2 work.
+# datasource applies defaults, which would create the distribution's default
+# user; the next file stops that.
 cat > /etc/cloud/cloud.cfg.d/90-safbox-datasource.cfg <<'EOC'
 datasource_list: [ ${datasource_list}, None ]
 EOC

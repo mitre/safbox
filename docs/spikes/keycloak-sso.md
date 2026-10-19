@@ -319,7 +319,7 @@ not tried.
   use about 0.75 GiB at peak, under 5 % of RAM. Their limits (2 GiB) bring
   the box's total of container memory limits from 3.5 GiB (Heimdall 1g +
   512m, Vulcan 1g + 512m, proxy 512m) to 5.5 GiB.
-- **8 GB (ADR-0001's reference footprint):** it fits, but the limits then
+- **8 GB (the reference footprint):** it fits, but the limits then
   claim about 70 % of RAM before a scan runs.
 - **4 GiB (the services role's comment on limits):** the limits would sum
   to 5.5 GiB, so Keycloak does not fit there with these limits.
@@ -412,7 +412,7 @@ Every FIPS statement below is from the cited source, fetched on 2026-10-16.
 - Authelia and Kanidm are lighter, but neither documents FIPS. Choosing
   either would mean making the FIPS claim for them.
 
-**For the later Kubernetes trigger** (ADR-0001 Alternative A names k3s):
+**For the later Kubernetes trigger** (the planned upgrade path is k3s):
 
 - RKE2 documents FIPS 140-2 compliance: its components are built with Go
   BoringCrypto (CMVP #4407), and its ingress nginx uses a FIPS-validated
@@ -484,7 +484,7 @@ and the validated-module caveat (Decision 6).
        but that converts the break-glass admin into an SSO account.
 4. **Memory budget.** Keycloak and its database use about 0.65 GiB, with
    2 GiB of limits in the spike, and Keycloak's use scales with its limit.
-   - That fits the 16 GiB reference easily and ADR-0001's 8 GB tightly.
+   - That fits the 16 GiB reference easily and the 8 GB reference tightly.
    - It does not fit the 4 GiB figure in the services role's comments with
      these limits.
    - A 768 MiB Keycloak limit served the same login load (Finding 6).

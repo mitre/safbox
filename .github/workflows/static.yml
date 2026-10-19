@@ -1,7 +1,6 @@
-# Static suite (ADR-0001 Verification Strategy: Static; CI and runner
-# strategy): secret scanning and every check that needs no hypervisor, on
-# every push and pull request. No credentials: the suite never connects to a
-# hypervisor, and the Packer validate step supplies inert placeholders.
+# Static suite: secret scanning and every check that needs no hypervisor,
+# on every push and pull request. No credentials: the suite never connects
+# to a hypervisor, and the Packer validate step supplies inert placeholders.
 #
 # Every input is pinned: actions by commit SHA, downloads by version and
 # sha256, Python tools in tests/requirements.txt, Packer plugins by the

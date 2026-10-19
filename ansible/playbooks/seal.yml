@@ -1,7 +1,7 @@
 ---
-# Seal the image (ADR-0001 Phase 2): record the build, strip instance
-# identity and build residue, delete the build user, and assert the result
-# (the final script checks its own post-conditions). The last step of a
+# Seal the image: record the build, strip instance identity and build
+# residue, delete the build user, and assert the result (the final script
+# checks its own post-conditions). The last step of a
 # build; afterwards the build user no longer exists, so nothing may run over
 # SSH as that user. -e seal_mode=development stops before deleting the build
 # user, host keys and logs (see the seal role defaults).

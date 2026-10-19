@@ -1,6 +1,6 @@
 # Install layer: Proxmox + RHEL 10 family (Rocky 10 for release, AlmaLinux 10
 # x86-64-v2 for development hosts without AVX2). The only input that differs
-# between the two is iso_file. See ADR-0001 §Decision (install layer).
+# between the two is iso_file.
 
 source "proxmox-iso" "el10" {
   proxmox_url              = var.proxmox_url
