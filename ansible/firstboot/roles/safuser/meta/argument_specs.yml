@@ -1,0 +1,45 @@
+---
+argument_specs:
+  main:
+    short_description: Create safuser on a SAFBox's first boot
+    description:
+      - >-
+        Creates safuser with the deployer's SSH keys from cloud-init and the
+        password cloud-init was given (a crypt hash as it is, a plain one hashed
+        with SHA-512), or a generated one kept for root only.
+      - >-
+        Keeps an existing usable password and existing keys. Gives safuser sudo
+        that asks for its password.
+    options:
+      safuser_name:
+        type: str
+        default: safuser
+        description: The account's name.
+      safuser_comment:
+        type: str
+        default: SAFBox tools user
+        description: The account's GECOS comment.
+      safuser_env_file:
+        type: path
+        default: /etc/safbox/safuser.env
+        description: Root-only file that keeps a generated password (SAFUSER_PASSWORD=).
+      safuser_sudoers_file:
+        type: path
+        default: /etc/sudoers.d/50-safuser
+        description: The account's sudo rule, which asks for its password.
+      safuser_pam_password_file:
+        type: path
+        default: /etc/pam.d/system-auth
+        description: The PAM file whose pam_unix rounds= the password is hashed with.
+      safuser_generate_attempts:
+        type: int
+        default: 50
+        description:
+          - Passwords to try (pwmake, then pwscore) before giving up on one that meets the password quality policy.
+          - pwmake fails about 1 call in 22 under the STIG policy, so 50 makes giving up practically impossible.
+      safuser_cloud_config:
+        type: dict
+        required: false
+        description:
+          - cloud-init's combined configuration (ssh_authorized_keys, password), for testing.
+          - Without it, the role reads it with cloud-init query combined_cloud_config.

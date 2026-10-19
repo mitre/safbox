@@ -1,0 +1,47 @@
+---
+argument_specs:
+  main:
+    short_description: Make the TLS proxy's certificate on a SAFBox's first boot and trust its local CA
+    description:
+      - >-
+        Makes a local CA limited to server certificates for names under the
+        box's domain, and a certificate it signs for exactly the names the
+        proxy serves.
+      - >-
+        Keeps existing files. Adds the local CA to the system trust store while
+        it signed the certificate the proxy serves, and rebuilds the store
+        whenever the store does not verify that certificate.
+    options:
+      proxy_tls_days:
+        type: int
+        default: 365
+        description: Days the server certificate is valid.
+      proxy_tls_ca_days:
+        type: int
+        default: 3650
+        description: Days the local CA is valid.
+      proxy_tls_etc_dir:
+        type: path
+        default: /etc/safbox
+        description: SAFBox's root-only configuration directory.
+      proxy_tls_dir:
+        type: path
+        description: The directory the proxy container mounts, holding its certificate and key.
+      proxy_tls_ca_dir:
+        type: path
+        description: The local CA's root-only directory, which the proxy container does not mount.
+      proxy_tls_key:
+        type: path
+        description: The server certificate's key.
+      proxy_tls_cert:
+        type: path
+        description: The server certificate.
+      proxy_tls_ca_key:
+        type: path
+        description: The local CA's key.
+      proxy_tls_ca_cert:
+        type: path
+        description: The local CA's certificate.
+      proxy_tls_names_file:
+        type: path
+        description: The names the proxy serves, one per line, the domain first (written by the services role at build).

@@ -6,10 +6,9 @@
 base_family_packages:
   - cloud-guest-utils
 
-# jq reads cloud-init's configuration; pwmake and pwscore generate a password
-# that meets the password quality policy (the safuser hook).
+# pwmake and pwscore generate a password that meets the password quality
+# policy (the first-boot play's safuser role).
 base_safuser_packages:
-  - jq
   - libpwquality-tools
 
 # jq reads cloud-init's configuration (the admin hook).

@@ -13,8 +13,31 @@ base_firstboot_hook_dir: /etc/safbox/firstboot.d
 base_firstboot_state_dir: /var/lib/safbox
 base_firstboot_done_marker: /var/lib/safbox/firstboot.done
 base_lib_dir: /usr/local/lib/safbox
-base_firstboot_script: /usr/local/sbin/safbox-firstboot
+# The first-boot play (ansible/firstboot/), its roles and the vars the build
+# writes for it; the unit runs it with the box's own ansible-core.
+base_firstboot_play_dir: /usr/local/lib/safbox/firstboot
+base_firstboot_play: "{{ base_firstboot_play_dir }}/firstboot.yml"
+# The play's source: ansible/firstboot/ in this repository, beside the
+# build's own playbooks, with roles of its own.
+base_firstboot_play_src: "{{ role_path }}/../../firstboot/"
+base_firstboot_play_tree: "{{ query('community.general.filetree', base_firstboot_play_src) }}"
+# The shell runner the play replaced, removed from boxes built before it.
+base_firstboot_retired_script: /usr/local/sbin/safbox-firstboot
 base_firstboot_unit: safbox-firstboot.service
+# Keeps the unit enabled through the preset a First Boot may apply (the
+# seal leaves /etc/machine-id "uninitialized").
+base_preset_file: /etc/systemd/system-preset/50-safbox-base.preset
+
+# The play's steps that are roles, each run when its task group is on (the
+# proxy's is the services role's); the step name orders it among the hooks
+# in firstboot.d, as the hook it replaced was ordered.
+base_firstboot_roles:
+  - step: 15-safuser
+    role: safuser
+    enabled: "{{ safbox_base_5 | default(true) }}"
+  - step: 40-proxy
+    role: proxy_tls
+    enabled: "{{ safbox_services_3 | default(true) }}"
 
 # Units that must wait for first boot to finish (the service pods of later
 # phases). Service roles append their unit names; each Quadlet unit should

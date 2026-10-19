@@ -92,6 +92,18 @@ for t in git "ssh:OpenSSH client (ssh)" "ssh-keygen:OpenSSH client (ssh-keygen)"
   command -v "${t%%:*}" >/dev/null || problem "${t#*:} not found; see $GUIDE"
 done
 
+# The release gate's client checks (verify/profiles/safbox-client) probe the
+# box's TLS with openssl s_client, which must be OpenSSL 3, not LibreSSL.
+if ! command -v openssl >/dev/null; then
+  problem "OpenSSL (openssl) not found; see $GUIDE"
+elif ! openssl version | grep -q '^OpenSSL 3'; then
+  problem "openssl at $(command -v openssl) is $(openssl version); put OpenSSL 3 first on PATH, see $GUIDE"
+fi
+# Its port probes (InSpec's host resource) use netcat.
+if ! command -v nc >/dev/null && ! command -v ncat >/dev/null; then
+  problem "netcat (nc or ncat) not found; the release gate's client checks probe the box's ports with it, see $GUIDE"
+fi
+
 if [ "$fail" -ne 0 ]; then
   echo "FAIL: workstation prerequisites; fix the above and rerun" >&2
   exit 1

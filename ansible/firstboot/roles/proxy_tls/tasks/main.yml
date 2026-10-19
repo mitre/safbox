@@ -1,0 +1,245 @@
+---
+# The TLS proxy's certificate, made on first boot and never at build, and
+# signed by a small local CA of the box's own, which the box then trusts.
+# The local CA (/etc/safbox/ca, root-only, not mounted into the proxy
+# container) signs TLS server certificates only (pathlen 0, extended key
+# usage serverAuth) and only for names under the box's domain: critical
+# name constraints permit the domain and its subdomains and exclude every
+# IPv4 and IPv6 address. The server certificate (/etc/safbox/tls) names
+# exactly the served names (/etc/safbox/proxy-names, the domain first);
+# the bare address is not named, so a browser warns there. RSA 3072 and
+# SHA-256 throughout, from the host's OpenSSL (FIPS mode) through
+# python3-cryptography. Keys 0600, certificates 0644, directories 0700.
+#
+# The box trusts the local CA: a copy goes in the system trust store and
+# the store is rebuilt, so curl, the service containers (which mount the
+# store) and Firefox (whose NSS reads it through p11-kit) verify the proxy.
+# A CA, not the server certificate itself: Firefox does not accept a
+# server certificate as its own trust anchor.
+#
+# Existing files are kept: to use your own certificate, replace safbox.crt
+# and safbox.key (and retire the local CA); to regenerate the box's own,
+# delete those two and run this step again (docs/reference/services.md).
+# After a change of domain, delete the CA's two files as well.
+
+- name: Read the names the proxy serves
+  ansible.builtin.slurp:
+    src: "{{ proxy_tls_names_file }}"
+  register: proxy_tls_names_raw
+
+- name: Take the domain from the first name
+  ansible.builtin.set_fact:
+    proxy_tls_names: "{{ proxy_tls_names_raw.content | b64decode | split('\n') | select | list }}"
+
+- name: Check the names file names something
+  ansible.builtin.assert:
+    that: proxy_tls_names | length > 0
+    fail_msg: "{{ proxy_tls_names_file }} names nothing"
+    quiet: true
+
+- name: Create the root-only certificate directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0700'
+  loop: ["{{ proxy_tls_dir }}", "{{ proxy_tls_ca_dir }}"]
+
+- name: Look for an existing certificate, key and local CA
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop: ["{{ proxy_tls_key }}", "{{ proxy_tls_cert }}", "{{ proxy_tls_ca_key }}", "{{ proxy_tls_ca_cert }}"]
+  register: proxy_tls_existing
+
+- name: Name what exists
+  ansible.builtin.set_fact:
+    proxy_tls_have_key: "{{ proxy_tls_existing.results[0].stat.exists }}"
+    proxy_tls_have_cert: "{{ proxy_tls_existing.results[1].stat.exists }}"
+    proxy_tls_have_ca: "{{ proxy_tls_existing.results[2].stat.exists and proxy_tls_existing.results[3].stat.exists }}"
+
+- name: Refuse a certificate without its key, or a key without its certificate
+  when: proxy_tls_have_key != proxy_tls_have_cert
+  ansible.builtin.fail:
+    msg: "only one of {{ proxy_tls_key }} and {{ proxy_tls_cert }} exists; supply both or remove both"
+
+- name: Make the certificate
+  when: not proxy_tls_have_key
+  block:
+    - name: Make the local CA
+      when: not proxy_tls_have_ca
+      block:
+        - name: Generate the local CA's key
+          community.crypto.openssl_privatekey:
+            path: "{{ proxy_tls_ca_key }}"
+            type: RSA
+            size: 3072
+            force: true
+            owner: root
+            group: root
+            mode: '0600'
+
+        - name: Describe the local CA
+          community.crypto.openssl_csr_pipe:
+            privatekey_path: "{{ proxy_tls_ca_key }}"
+            common_name: "SAFBox local CA ({{ proxy_tls_names[0] }})"
+            use_common_name_for_san: false
+            basic_constraints: ["CA:TRUE", "pathlen:0"]
+            basic_constraints_critical: true
+            key_usage: [keyCertSign, cRLSign]
+            key_usage_critical: true
+            extended_key_usage: [serverAuth]
+            name_constraints_permitted:
+              - "DNS:{{ proxy_tls_names[0] }}"
+              - "DNS:.{{ proxy_tls_names[0] }}"
+            name_constraints_excluded:
+              - IP:0.0.0.0/0
+              - IP:::/0
+            name_constraints_critical: true
+          register: proxy_tls_ca_csr
+
+        - name: Self-sign the local CA
+          community.crypto.x509_certificate:
+            path: "{{ proxy_tls_ca_cert }}"
+            provider: selfsigned
+            csr_content: "{{ proxy_tls_ca_csr.csr }}"
+            privatekey_path: "{{ proxy_tls_ca_key }}"
+            selfsigned_digest: sha256
+            selfsigned_not_after: "+{{ proxy_tls_ca_days }}d"
+            force: true
+            owner: root
+            group: root
+            mode: '0644'
+
+    # Written beside the final names and moved into place together, so an
+    # interrupted run leaves no half pair; the next run starts again.
+    - name: Generate the server key
+      community.crypto.openssl_privatekey:
+        path: "{{ proxy_tls_key }}.new"
+        type: RSA
+        size: 3072
+        force: true
+        owner: root
+        group: root
+        mode: '0600'
+
+    - name: Describe the server certificate, exactly the served names
+      community.crypto.openssl_csr_pipe:
+        privatekey_path: "{{ proxy_tls_key }}.new"
+        common_name: "{{ proxy_tls_names[0] }}"
+        subject_alt_name: "{{ proxy_tls_names | map('regex_replace', '^', 'DNS:') | list }}"
+        basic_constraints: ["CA:FALSE"]
+        basic_constraints_critical: true
+        key_usage: [digitalSignature, keyEncipherment]
+        key_usage_critical: true
+        extended_key_usage: [serverAuth]
+      register: proxy_tls_csr
+
+    - name: Sign the server certificate with the local CA
+      community.crypto.x509_certificate:
+        path: "{{ proxy_tls_cert }}.new"
+        provider: ownca
+        csr_content: "{{ proxy_tls_csr.csr }}"
+        ownca_path: "{{ proxy_tls_ca_cert }}"
+        ownca_privatekey_path: "{{ proxy_tls_ca_key }}"
+        ownca_digest: sha256
+        ownca_not_after: "+{{ proxy_tls_days }}d"
+        force: true
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Move the key and certificate into place
+      ansible.builtin.copy:
+        src: "{{ item.path }}.new"
+        dest: "{{ item.path }}"
+        remote_src: true
+        owner: root
+        group: root
+        mode: "{{ item.mode }}"
+      loop:
+        - {path: "{{ proxy_tls_key }}", mode: '0600'}
+        - {path: "{{ proxy_tls_cert }}", mode: '0644'}
+
+    - name: Remove the staged copies
+      ansible.builtin.file:
+        path: "{{ item }}.new"
+        state: absent
+      loop: ["{{ proxy_tls_key }}", "{{ proxy_tls_cert }}"]
+
+# Trust the local CA only while it signed the certificate the proxy serves
+# and that certificate verifies against it, so a site's own certificate
+# never brings the local CA back into the trust store.
+- name: Look for the local CA
+  ansible.builtin.stat:
+    path: "{{ proxy_tls_ca_cert }}"
+  register: proxy_tls_ca_stat
+
+- name: Trust the local CA
+  when: proxy_tls_ca_stat.stat.exists
+  block:
+    - name: Read the certificate and the local CA
+      community.crypto.x509_certificate_info:
+        path: "{{ item }}"
+      loop: ["{{ proxy_tls_cert }}", "{{ proxy_tls_ca_cert }}"]
+      register: proxy_tls_info
+
+    - name: Verify the certificate against the local CA
+      when: proxy_tls_info.results[0].issuer_ordered == proxy_tls_info.results[1].subject_ordered
+      ansible.builtin.command:
+        argv: [openssl, verify, -purpose, sslserver, -CAfile, "{{ proxy_tls_ca_cert }}", "{{ proxy_tls_cert }}"]
+      register: proxy_tls_verify
+      changed_when: false
+      failed_when: false
+
+    - name: Report a certificate the local CA did not sign
+      when: proxy_tls_verify is skipped
+      ansible.builtin.debug:
+        msg: "{{ proxy_tls_cert }} is not signed by the local CA; not trusting it"
+
+    - name: Report a certificate the local CA signed that does not verify
+      when: proxy_tls_verify is not skipped and proxy_tls_verify.rc != 0
+      ansible.builtin.debug:
+        msg: >-
+          WARNING: {{ proxy_tls_cert }} is signed by the local CA but does not verify
+          ({{ proxy_tls_verify.stdout }} {{ proxy_tls_verify.stderr }}); not trusting it.
+          Regenerate it (and the CA after a change of domain), docs/reference/services.md
+
+    - name: Add the local CA to the system trust store
+      when: proxy_tls_verify is not skipped and proxy_tls_verify.rc == 0
+      block:
+        - name: Add the local CA to the system trust anchors
+          ansible.builtin.copy:
+            src: "{{ proxy_tls_ca_cert }}"
+            dest: "{{ proxy_tls_anchor }}"
+            remote_src: true
+            owner: root
+            group: root
+            mode: '0644'
+          register: proxy_tls_anchor_copy
+
+        # The anchor alone proves nothing: a run stopped between copying
+        # it and rebuilding the store leaves an anchor the store lacks. The
+        # store every client reads must verify the certificate.
+        - name: Check the system trust store verifies the certificate
+          ansible.builtin.command:
+            argv: [openssl, verify, -purpose, sslserver, -CAfile, "{{ proxy_tls_bundle }}", "{{ proxy_tls_cert }}"]
+          register: proxy_tls_store_verify
+          changed_when: false
+          failed_when: false
+
+        # The rebuilt store is read by every user: not under the unit's
+        # umask.
+        - name: Rebuild the system trust store
+          when: proxy_tls_anchor_copy is changed or proxy_tls_store_verify.rc != 0
+          ansible.builtin.command:
+            argv: >-
+              {{ ['sh', '-c', 'umask 022 && exec "$0" "$@"']
+                 + proxy_tls_trust[ansible_facts['os_family']].rebuild }}
+          changed_when: true
+
+        - name: Check the rebuilt trust store verifies the certificate
+          when: proxy_tls_anchor_copy is changed or proxy_tls_store_verify.rc != 0
+          ansible.builtin.command:
+            argv: [openssl, verify, -purpose, sslserver, -CAfile, "{{ proxy_tls_bundle }}", "{{ proxy_tls_cert }}"]
+          changed_when: false

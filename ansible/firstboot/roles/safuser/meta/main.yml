@@ -1,0 +1,15 @@
+---
+galaxy_info:
+  role_name: safuser
+  namespace: safbox
+  author: MITRE SAF
+  description: "First boot: safuser, the tools account, with the deployer's keys and password or a generated one"
+  license: Apache-2.0
+  min_ansible_version: "2.16"
+  platforms:
+    - name: EL
+      versions:
+        - "10"
+  galaxy_tags:
+    - safbox
+dependencies: []

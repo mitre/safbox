@@ -9,10 +9,13 @@
 #                                the temporary administrator Keycloak makes
 #                                on its first start, KC_BOOTSTRAP_ADMIN_PASSWORD
 #                                (-hex 24), and SAFUSER_PASSWORD (-hex 16, 32
-#                                characters), the Keycloak password of safuser,
-#                                its own and not the OS account's, which the
-#                                realm import gives it on Keycloak's first
-#                                start
+#                                characters), the initial Keycloak password of
+#                                safuser, its own and not the OS account's,
+#                                which the realm import gives it on Keycloak's
+#                                first start: one-time, since the realm makes
+#                                safuser change it at its first sign-in, and
+#                                never updated here when it changes; a comment
+#                                in the file says so
 #   /etc/safbox/keycloak-db.env  POSTGRESQL_PASSWORD, the same database password,
 #                                for the PostgreSQL container: the password of
 #                                Keycloak's role, which the image sets on every
@@ -36,6 +39,10 @@ db_env_file="${SAFBOX_ETC_DIR}/keycloak-db.env"
 
 safbox_ensure_secret "$env_file" KC_DB_PASSWORD 33
 safbox_ensure_secret "$env_file" KC_BOOTSTRAP_ADMIN_PASSWORD 24
+safuser_note="# SAFUSER_PASSWORD is safuser's initial Keycloak password. It must be changed at the first sign-in, and this file is not updated when it changes."
+if ! grep -qxF "$safuser_note" "$env_file"; then
+  printf '%s\n' "$safuser_note" >> "$env_file"
+fi
 safbox_ensure_secret "$env_file" SAFUSER_PASSWORD 16
 
 safbox_ensure_env_file "$db_env_file"

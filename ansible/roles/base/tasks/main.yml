@@ -52,6 +52,17 @@
   when: safbox_base_1 | default(true) | bool
   tags: [safbox-base-1]
   block:
+    # First boot is a local play run by the box's own ansible-core and its
+    # collections (community.crypto for the proxy's certificate), which
+    # the tools role installs; there is no network to fetch them then.
+    - name: Refuse first boot without the box's ansible-core
+      ansible.builtin.assert:
+        that: safbox_tools_3 | default(true) | bool
+        fail_msg: >-
+          The first-boot play runs on the box's ansible-core and collections
+          (tools task group 3): leave safbox_tools_3 on while safbox_base_1 is on.
+        quiet: true
+
     - name: Install the packages the first-boot framework uses
       ansible.builtin.package:
         name: "{{ base_packages + base_family_packages }}"
@@ -85,13 +96,44 @@
         group: root
         mode: '0644'
 
-    - name: Install the first-boot script
-      ansible.builtin.copy:
-        src: safbox-firstboot
-        dest: "{{ base_firstboot_script }}"
+    # It runs as root: root's alone to change. Only the play's YAML and its
+    # configuration, so nothing else in the checkout reaches the image.
+    - name: Create the first-boot play's directories
+      ansible.builtin.file:
+        path: "{{ base_firstboot_play_dir }}/{{ item.path }}"
+        state: directory
         owner: root
         group: root
         mode: '0755'
+      loop: "{{ [{'path': ''}] + base_firstboot_play_tree | selectattr('state', 'eq', 'directory') | list }}"
+      loop_control:
+        label: "{{ base_firstboot_play_dir }}/{{ item.path }}"
+
+    - name: Install the first-boot play and its roles
+      ansible.builtin.copy:
+        src: "{{ item.src }}"
+        dest: "{{ base_firstboot_play_dir }}/{{ item.path }}"
+        owner: root
+        group: root
+        mode: '0644'
+      loop: >-
+        {{ base_firstboot_play_tree | selectattr('state', 'eq', 'file')
+           | selectattr('path', 'search', '[.]yml$|^ansible[.]cfg$') | list }}
+      loop_control:
+        label: "{{ base_firstboot_play_dir }}/{{ item.path }}"
+
+    - name: Write the first-boot play's vars from the site's switches
+      ansible.builtin.template:
+        src: firstboot-vars.yml.j2
+        dest: "{{ base_firstboot_play_dir }}/vars.yml"
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Remove the shell runner the play replaced
+      ansible.builtin.file:
+        path: "{{ base_firstboot_retired_script }}"
+        state: absent
 
     - name: Install the first-boot hook that hands a larger disk to the growing volumes
       ansible.builtin.copy:
@@ -119,6 +161,28 @@
       ansible.builtin.systemd_service:
         name: "{{ base_firstboot_unit }}"
         enabled: true
+
+    # The seal leaves /etc/machine-id "uninitialized", so a clone's first
+    # boot is a systemd First Boot, which may reset every unit to its
+    # preset policy, and the distribution's presets end in "disable *".
+    - name: Create the systemd preset directory
+      ansible.builtin.file:
+        path: "{{ base_preset_file | dirname }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Keep the first-boot unit enabled through a First Boot preset
+      ansible.builtin.copy:
+        content: |
+          # Written by the SAFBox base role: a First Boot preset leaves the
+          # first-boot unit enabled.
+          enable {{ base_firstboot_unit }}
+        dest: "{{ base_preset_file }}"
+        owner: root
+        group: root
+        mode: '0644'
 
 - name: The safbox command
   when: safbox_base_2 | default(true) | bool
@@ -170,34 +234,23 @@
         mode: '0644'
 
 # safuser, the account for using the tools day to day, is made on each
-# clone's first boot by the hook, never in the template. Its sudo rule is
-# installed here and asks for safuser's password; only admin, the account
-# cloud-init creates, has passwordless sudo.
+# clone's first boot by the first-boot play's safuser role (ansible/firstboot/
+# roles/safuser, run when this group is on), never in the template; the
+# role also gives it sudo that asks for its password. Only admin, the
+# account cloud-init creates, has passwordless sudo.
 - name: The safuser account
   when: safbox_base_5 | default(true) | bool
   tags: [safbox-base-5]
   block:
-    - name: Install the packages the safuser hook uses
+    - name: Install the packages the safuser role uses
       ansible.builtin.package:
         name: "{{ base_safuser_packages }}"
         state: present
 
-    - name: Install the first-boot hook that creates safuser
-      ansible.builtin.copy:
-        src: 15-safuser.sh
-        dest: "{{ base_firstboot_hook_dir }}/15-safuser.sh"
-        owner: root
-        group: root
-        mode: '0755'
-
-    - name: Give safuser sudo that asks for its password
-      ansible.builtin.copy:
-        content: "safuser ALL=(ALL) ALL\n"
-        dest: /etc/sudoers.d/50-safuser
-        owner: root
-        group: root
-        mode: '0440'
-        validate: /usr/sbin/visudo -cf %s
+    - name: Remove the hook the safuser role replaced
+      ansible.builtin.file:
+        path: "{{ base_firstboot_hook_dir }}/15-safuser.sh"
+        state: absent
 
 # admin, cloud-init's default user, is the deployer's key-only account for
 # deploying and automation. cloud-init creates it with passwordless sudo

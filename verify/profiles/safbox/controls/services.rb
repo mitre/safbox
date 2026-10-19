@@ -144,6 +144,32 @@ control 'safbox-heimdall-5' do
   end
 end
 
+control 'safbox-heimdall-6' do
+  impact 1.0
+  title 'Heimdall offers local log in and refuses sign-ups'
+  desc "Through the proxy, Heimdall's /server document says local log in is on and registration is off, and a sign-up posted to its API is refused with 403, so the administrator, admin@<domain>, is its only local account. Heimdall checks a sign-up's fields before the registration switch (a weak password answers 400), so the sign-up's password meets its complexity rules (15 characters or more, upper and lower case, digits and symbols, never four of one class in a row) and only the switch can refuse it. That password is made on the box from openssl rand and handed to curl on its standard input, so it is in no command line, no resource parameter and no report."
+  only_if('Heimdall or the proxy is switched off, or this is not a deployed clone', impact: 0.0) do
+    services.include?('heimdall') && services.include?('proxy') && deployed
+  end
+
+  describe "https://heimdall.#{domain}/server" do
+    subject { json(content: http("https://heimdall.#{domain}/server").body) }
+    its('registrationEnabled') { should eq false }
+    its('localLoginEnabled') { should eq true }
+  end
+  # Each of 24 random hex digits followed by Qa7!: 120 characters. One
+  # pipeline, so no step needs a shell variable (with --sudo, CINC Auditor
+  # puts sudo before the first command only).
+  json = '{"email":"safbox-test-signup@example.invalid","password":"&","passwordConfirmation":"&",' \
+         '"firstName":"SAFBox","lastName":"Test","role":"user","creationMethod":"local"}'
+  sign_up = "openssl rand -hex 12 | sed -e 's/./&Qa7!/g' -e 's/.*/#{json}/' " \
+            "| curl -sS -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' --data-binary @- https://heimdall.#{domain}/users"
+  describe "A sign-up posted to https://heimdall.#{domain}/users" do
+    subject { command(sign_up) }
+    its('stdout') { should eq '403' }
+  end
+end
+
 control 'safbox-vulcan-1' do
   impact 1.0
   title 'The Vulcan Quadlet units are installed'
@@ -312,7 +338,7 @@ end
 control 'safbox-keycloak-2' do
   impact 1.0
   title 'The Keycloak Quadlet units are installed'
-  desc "Keycloak runs from the image built on the template and its database from the CentOS Stream PostgreSQL image, pinned by digest, with memory limits and no new privileges. The pod publishes Keycloak's HTTP port on 127.0.0.1 only, for the proxy, and waits for first boot to write its secrets; the unit is ready only once Keycloak reports itself ready. Keycloak runs a single node (local cache), imports the safbox realm on its first start, and believes forwarded headers only from its network's gateway, where the proxy's connections arrive."
+  desc "Keycloak runs from the image built on the template and its database from the CentOS Stream PostgreSQL image, pinned by digest, with memory limits and no new privileges. The pod publishes Keycloak's HTTP port on 127.0.0.1 only, for the proxy, and waits for first boot to write its secrets; the unit is ready only once Keycloak reports itself ready. Keycloak runs a single node (local cache), imports the safbox realm on its first start, and believes forwarded headers only from its network's gateway, where the proxy's connections arrive. The realm's one user, safuser, holds the realm's default role (so its account console works) and must change its generated password at its first sign-in."
   only_if('Keycloak is switched off', impact: 0.0) { services.include?('keycloak') }
 
   network = parse_config_file("#{quadlet}/keycloak.network", multiple_values: true)
@@ -349,12 +375,20 @@ control 'safbox-keycloak-2' do
     its('bruteForceProtected') { should eq true }
     its('passwordPolicy') { should match(/hashAlgorithm\(pbkdf2-sha512\)/) }
   end
+  # The import grants an imported user neither the realm's default role nor
+  # a required action unless the user lists them.
+  safuser = Array(json('/etc/safbox-keycloak/safbox-realm.json').params['users']).find { |u| u['username'] == 'safuser' } || {}
+  describe 'safuser in the realm file' do
+    subject { safuser }
+    its(['realmRoles']) { should eq ['default-roles-safbox'] }
+    its(['requiredActions']) { should eq ['UPDATE_PASSWORD'] }
+  end
 end
 
 control 'safbox-keycloak-3' do
   impact 1.0
   title "Keycloak's secrets exist only after first boot, readable by root only"
-  desc "First boot writes Keycloak's database password and its bootstrap administrator's password. The template and the build VM hold none, and the realm file holds placeholders only."
+  desc "First boot writes Keycloak's database password, its bootstrap administrator's password and safuser's initial Keycloak password, with a note in the file that safuser must change that password at its first sign-in and that the file is not updated when it does. The template and the build VM hold none, and the realm file holds placeholders only."
   only_if('Keycloak is switched off', impact: 0.0) { services.include?('keycloak') }
 
   %w[/etc/safbox/keycloak.env /etc/safbox/keycloak-db.env].each do |path|
@@ -366,6 +400,12 @@ control 'safbox-keycloak-3' do
       else
         it { should_not exist }
       end
+    end
+  end
+  # Counted with grep, so no report ever shows the file's secrets.
+  if deployed
+    describe command(%q(grep -cxE 'SAFUSER_PASSWORD=[0-9a-f]{32}|# SAFUSER_PASSWORD is safuser.s initial Keycloak password\. It must be changed at the first sign-in, and this file is not updated when it changes\.' /etc/safbox/keycloak.env)) do
+      its('stdout') { should eq "2\n" }
     end
   end
   describe file('/etc/safbox-keycloak/safbox-realm.json') do
@@ -398,7 +438,7 @@ end
 control 'safbox-keycloak-5' do
   impact 1.0
   title "Keycloak's administration paths answer to the box itself only"
-  desc "Keycloak's reverse-proxy guide advises against exposing /admin/ and the master realm. The proxy serves them to requests from the box's own address and refuses every other client; the safbox realm, which the applications and browsers use, is served to all. Refusal from another machine is tested from outside (tests/services/keycloak-login.sh)."
+  desc "Keycloak's reverse-proxy guide advises against exposing /admin/ and the master realm. The proxy serves them to requests from the box's own address and refuses every other client; the safbox realm, which the applications and browsers use, is served to all. Keycloak's homepage, its welcome page, would lead to that console and the master realm's sign-in, so the bare name is sent to the safbox account page with a temporary redirect. Refusal from another machine, and the redirect, are checked from outside (safbox-client-keycloak-1 in the safbox-client profile)."
   only_if('Keycloak or the proxy is switched off', impact: 0.0) { services.include?('keycloak') && services.include?('proxy') }
 
   conf = file('/etc/safbox-proxy/nginx.conf').content.to_s
@@ -409,9 +449,20 @@ control 'safbox-keycloak-5' do
       it { should match(/deny all;/) }
     end
   end
+  # Keycloak's homepage leads to the console; the bare name goes to the
+  # safbox account page instead.
+  account = "https://keycloak.#{domain}/realms/safbox/account/"
+  describe "nginx's location for / on Keycloak's name" do
+    subject { conf[/location = \/ \{[^}]*\}/m] }
+    it { should match(/return 302 #{Regexp.escape(account)};/) }
+  end
   if deployed
     describe http("https://keycloak.#{domain}/realms/master/.well-known/openid-configuration") do
       its('status') { should eq 200 }
+    end
+    describe http("https://keycloak.#{domain}/") do
+      its('status') { should eq 302 }
+      its('headers.Location') { should eq account }
     end
   end
 end
@@ -536,7 +587,7 @@ end
 control 'safbox-proxy-3' do
   impact 1.0
   title 'The box resolves its names to itself, and its first-boot certificate names them'
-  desc "/etc/hosts maps #{domain} and each shipped application's name to 127.0.0.1, and a switched-off application's name is not mapped. First boot writes a certificate for exactly those names, signed by a local CA of the box's own that may sign only server certificates for names under #{domain}, and no IP address. Both keys are readable by root only, and the CA's key is kept outside the directory the proxy container mounts. The template and the build VM hold no certificate. A site may replace the certificate and its key with its own and retire the local CA; the exact names and the CA's limits are then not checked."
+  desc "/etc/hosts maps #{domain} and each shipped application's name to 127.0.0.1, and a switched-off application's name is not mapped. First boot writes a certificate for exactly those names, signed by a local CA of the box's own that may sign only server certificates for names under #{domain}, and no IP address, and the system trust store, as extracted for every client on the box, verifies it. Both keys are readable by root only, and the CA's key is kept outside the directory the proxy container mounts. The template and the build VM hold no certificate. A site may replace the certificate and its key with its own and retire the local CA; the exact names and the CA's limits are then not checked."
   only_if('The proxy is switched off', impact: 0.0) { services.include?('proxy') }
 
   apps = served_apps.select { |app| services.include?(app) }
@@ -587,6 +638,11 @@ control 'safbox-proxy-3' do
       if served.issuer_dn == local_ca.subject_dn
         describe served do
           its('subject_alt_names') { should match_array(([domain] + apps.map { |app| "#{app}.#{domain}" }).map { |name| "DNS:#{name}" }) }
+        end
+        # The local CA is in the extracted store every client reads, not
+        # only among the anchors it is built from.
+        describe command('openssl verify -purpose sslserver -CAfile /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem /etc/safbox/tls/safbox.crt') do
+          its('exit_status') { should eq 0 }
         end
       end
     end

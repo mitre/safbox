@@ -12,7 +12,7 @@ GitHub-hosted runners. It needs no hypervisor and no credentials.
 - **static checks:** `pre-commit run --all-files`, the `build.sh` tests in
   `tests/scripts/`, `tests/kickstart/ks-lint.sh`, `tests/ansible/lint.sh`
   (yamllint, ansible-lint, the playbook syntax check, shellcheck,
-  `tests/packer/validate.sh` and `cinc-auditor check` on both profiles) and
+  `tests/packer/validate.sh` and `cinc-auditor check` on the three profiles) and
   `tests/platform-discipline.sh`.
 
 Every input is pinned: actions by commit SHA, gitleaks and CINC Auditor by

@@ -37,7 +37,7 @@ http {
     # policy's TLS 1.2 cipher list, and TLS 1.3 suites come from the policy
     # through OpenSSL's configuration. Both applications' upstream examples
     # name TLS 1.2 and 1.3; the policy forbids anything older. One
-    # certificate names every server below (first boot, 40-proxy.sh).
+    # certificate names every server below (first boot, the proxy_tls role).
     ssl_certificate /etc/nginx/tls/safbox.crt;
     ssl_certificate_key /etc/nginx/tls/safbox.key;
     ssl_protocols TLSv1.2 TLSv1.3;
@@ -150,6 +150,11 @@ http {
     # the buffers fit its large response headers. The guide advises
     # against exposing the administration console and the master realm:
     # they answer to the box itself only (its names map to 127.0.0.1).
+    # Keycloak's own homepage is its welcome page, which leads to that
+    # console and the master realm's sign-in, where no user of the safbox
+    # realm exists; the bare name goes to the safbox account page instead,
+    # with a temporary redirect, which browsers do not keep. The console
+    # stays at its full path, /admin/master/console/, for the box.
     server {
         listen 443 ssl;
         http2 on;
@@ -164,6 +169,9 @@ http {
         proxy_buffers 4 256k;
         proxy_busy_buffers_size 256k;
 
+        location = / {
+            return 302 https://{{ app.host }}/realms/safbox/account/;
+        }
         location / {
             proxy_pass http://127.0.0.1:{{ app.loopback_port }};
         }

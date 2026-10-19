@@ -58,6 +58,64 @@ group are listed in `ansible/group_vars/all/main.yml`.
 - `safbox_base_6` settles `admin`, cloud-init's key-only default user, on
   each clone's first boot: no password, exempt from password ageing,
   hidden from the desktop login screen; see [Accounts](accounts.md).
+- `safbox_base_1`, the first-boot framework, needs the box's own
+  ansible-core and collections from `safbox_tools_3`: first boot is an
+  Ansible play (below), and the build refuses `safbox_tools_3: false`
+  while `safbox_base_1` is on.
+
+## First boot
+
+Everything that must differ between two boxes made from one template (the
+`safuser` account and its password, each service's secrets, the proxy's
+certificate) is made on each clone's first boot, never at build.
+`safbox-firstboot.service` runs once, after cloud-init has applied the
+instance's users and keys, and before the services start. It runs the
+first-boot play locally with the box's own ansible-core, offline:
+
+```
+ansible-playbook -c local -i localhost, /usr/local/lib/safbox/firstboot/firstboot.yml
+```
+
+The play and its roles come from `ansible/firstboot/` in this repository,
+installed by the `base` role. Its steps run in name order: each executable
+hook in `/etc/safbox/firstboot.d` (a regular file; a symbolic link is
+not run) not yet converted to a role
+(`10-grow-disk.sh`, `12-admin.sh`, `18-init-file-modes.sh` and the
+services' secrets) and each role the build switched on, named in
+`/usr/local/lib/safbox/firstboot/vars.yml`: `15-safuser` (the `safuser`
+role, with `safbox_base_5`) and `40-proxy` (the `proxy_tls` role, with
+`safbox_services_3`). Each role declares its options in
+`meta/argument_specs.yml`.
+
+- **Its log.** `journalctl -u safbox-firstboot` shows each step and task
+  with its time. Tasks that handle a password or a key are `no_log`, so
+  their values never reach the journal, and the play's configuration keeps
+  Ansible's module invocations out of the system log.
+- **A failure** stops the play at that step, named in the last lines of
+  the log (`first-boot step 40-proxy failed at ...`). The play writes the
+  done marker, `/var/lib/safbox/firstboot.done`, as its last task, so a
+  failed first boot leaves none and runs again at the next boot. Every
+  step keeps what an earlier run made: an account, a password, a secret,
+  a certificate.
+- **Running steps again** on a box whose first boot is done, as root
+  (neither run writes the marker):
+
+  ```
+  export ANSIBLE_CONFIG=/usr/local/lib/safbox/firstboot/ansible.cfg
+  ansible-playbook -c local -i localhost, /usr/local/lib/safbox/firstboot/firstboot.yml -e firstboot_rerun=true
+  ansible-playbook -c local -i localhost, /usr/local/lib/safbox/firstboot/firstboot.yml -e '{"firstboot_only": ["40-proxy"]}'
+  ```
+
+  The first runs every step, the second only the named ones.
+- **Unit presets.** The seal leaves `/etc/machine-id` "uninitialized", so
+  a clone's first boot is a systemd *First Boot*, which may reset every
+  unit to its preset policy, and the distribution's presets end in
+  `disable *`. Each role that enables a unit ships a preset file,
+  `/etc/systemd/system-preset/50-safbox-<role>.preset`, enabling it:
+  `safbox-firstboot.service` (base), `safbox-site-status.service` and
+  `.timer` (services), `safbox-aide-init.service` and `usbguard.service`
+  (hardening). Quadlet-generated units have no preset state. Control
+  `safbox-firstboot-3` checks each unit is enabled and its preset agrees.
 
 ## Migrating from the per-service roles
 

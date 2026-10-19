@@ -247,7 +247,8 @@ services_keycloak_enabled: "{{ safbox_services_5 | default(true) | bool }}"
 # One nginx container, the one place TLS terminates, that serves each enabled
 # application over HTTPS on port 443 by name (name-based virtual hosts),
 # with a certificate first boot generates and signs with a local CA of the
-# box's own, which the box trusts (files/40-proxy.sh). Any other name,
+# box's own, which the box trusts (the first-boot play's proxy_tls
+# role, ansible/firstboot/roles, which the base role installs). Any other name,
 # or the bare address, gets a start page linking to the applications.
 # Port 80, and plain HTTP sent to 443, redirect to HTTPS.
 
@@ -296,15 +297,19 @@ services_proxy_conf_dir: /etc/safbox-proxy
 services_site_src: "{{ playbook_dir }}/../../site/.vitepress/dist/"
 services_status_script: /usr/local/libexec/safbox-site-status
 services_status_list: /etc/safbox/site-status.services
+# Keeps the status units enabled through the preset a First Boot may apply
+# (the seal leaves /etc/machine-id "uninitialized").
+services_preset_file: /etc/systemd/system-preset/50-safbox-services.preset
 
-# The certificate and key first boot generates (files/40-proxy.sh). To use
+# The certificate and key first boot generates (the proxy_tls role). To use
 # your own, replace both files (PEM, the key unencrypted, root-only) and
 # restart safbox-proxy.service; first boot never overwrites them.
 services_proxy_tls_dir: /etc/safbox/tls
 services_proxy_cert: "{{ services_proxy_tls_dir }}/safbox.crt"
 services_proxy_key: "{{ services_proxy_tls_dir }}/safbox.key"
-services_proxy_firstboot_hook: /etc/safbox/firstboot.d/40-proxy.sh
-# The served names, one per line, the domain first: the hook names exactly
+# The hook the proxy_tls role replaced, removed from boxes built before it.
+services_proxy_retired_hook: /etc/safbox/firstboot.d/40-proxy.sh
+# The served names, one per line, the domain first: proxy_tls names exactly
 # these in the certificate and limits its local CA to the domain.
 services_proxy_names_file: /etc/safbox/proxy-names
 

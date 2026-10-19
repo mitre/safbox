@@ -28,8 +28,11 @@ upstream pages linked below. The versions listed are the ones CI uses
 | Node.js and npm | 18 or newer; the build uses them to build the documentation site the box serves (`site/`), from its lockfile | [nodejs.org](https://nodejs.org/en/download) |
 
 The scripts also use the usual command-line tools: git, the OpenSSH client
-(`ssh`, `ssh-keygen`), curl, jq, and flock (util-linux; on macOS, Homebrew's
-`flock` or `util-linux`).
+(`ssh`, `ssh-keygen`), curl, jq, flock (util-linux; on macOS, Homebrew's
+`flock` or `util-linux`), netcat (`nc` or `ncat`) and OpenSSL 3 as `openssl`,
+which the release gate's client checks use to probe the box's ports and
+TLS (on macOS, whose `openssl` is LibreSSL, put Homebrew's `openssl@3`
+first on `PATH`).
 
 **Install the right Ansible.** Several different things are called Ansible,
 and it is easy to get the wrong one:
@@ -300,8 +303,12 @@ the template through the API into the pool, injects a cloud-init user
 as `admin_user`) with its RSA build key and any extra keys, boots it,
 learns its address from the guest agent, logs in as that user and checks FIPS mode and the clone's
 host name, waits for the boot to finish (below), logs in as `safuser` with
-the same key, then runs
-`scripts/validate.sh` against it. SSH
+the same key, reads the passwords first boot generated (the Heimdall and
+Vulcan administrators' and `safuser`'s Keycloak password) over SSH into a
+file on your workstation that only you can read and that is removed when
+the test ends, then runs `scripts/validate.sh --client-inputs` against it:
+the box's two profiles over SSH, then the client profile from your
+workstation (see [How SAFBox is validated](../../reference/validation.md)). SSH
 answers well before first boot has finished: the secrets, the certificate,
 the Heimdall and Vulcan pods and the TLS proxy come later, and a scan that
 starts too early fails their controls. So the clone test first waits, over

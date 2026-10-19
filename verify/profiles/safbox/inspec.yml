@@ -44,6 +44,14 @@ inputs:
       false for an image built with that group switched off.
     type: Boolean
     value: true
+  - name: usbguard
+    description: >-
+      True when the build enables usbguard: Ansible Lockdown's
+      RHEL-10-200561 with its CAT II rules (rhel10stig_cat2 and
+      rhel10stig_200561 on, the default, and safbox_hardening_1 on); false
+      for an image built with any of them off.
+    type: Boolean
+    value: true
   - name: expected_tools
     description: Tools the image ships. Remove one a site switches off.
     type: Array

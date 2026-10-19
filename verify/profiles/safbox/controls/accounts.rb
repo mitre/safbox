@@ -49,7 +49,7 @@ admin_user = input('admin_user')
 control 'safbox-accounts-3' do
   impact 1.0
   title 'safuser has a password that expires, the deployer\'s SSH key, and sudo that asks for its password'
-  desc 'First boot creates safuser, the account for using the tools day to day. It logs in with the deployer\'s SSH key, or with its password at the console and the desktop login screen. Its password is the one the deployer supplied through cloud-init, or one generated at first boot and kept readable by root only in /etc/safbox/safuser.env. It is not expired, so the first login does not force a change, and it follows the STIG\'s ageing: at most 60 days, then 35 days of grace before the account is disabled. Its sudo asks for that password.'
+  desc 'First boot creates safuser, the account for using the tools day to day. It logs in with the deployer\'s SSH key, or with its password at the console and the desktop login screen. Its password is the one the deployer supplied through cloud-init, or one generated at first boot, which meets the password quality policy, and kept readable by root only in /etc/safbox/safuser.env. It is not expired, so the first login does not force a change, and it follows the STIG\'s ageing: at most 60 days, then 35 days of grace before the account is disabled. Its sudo asks for that password.'
   only_if('First boot creates safuser on a deployed clone when safbox_base_5 is on', impact: 0.0) { deployed && input('safuser') }
 
   describe user('safuser') do
@@ -62,6 +62,13 @@ control 'safbox-accounts-3' do
     its('last_changes.first.to_i') { should be > 0 }
     its('max_days.first') { should cmp 60 }
     its('inactive_days.first') { should cmp 35 }
+  end
+  # A generated password meets the password quality policy. The check reads
+  # it from the root-only file inside the shell and reports only pwscore's
+  # verdict; with a supplied password there is none to check.
+  describe command("p=$(sed -n 's/^SAFUSER_PASSWORD=//p' /etc/safbox/safuser.env 2>/dev/null); " \
+                   "[ -z \"$p\" ] || printf '%s\\n' \"$p\" | pwscore safuser >/dev/null") do
+    its('exit_status') { should eq 0 }
   end
   describe file('/home/safuser/.ssh/authorized_keys') do
     it { should be_owned_by 'safuser' }

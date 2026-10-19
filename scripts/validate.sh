@@ -1,34 +1,47 @@
 #!/usr/bin/env bash
 # Validate a SAFBox from the outside: scan it over SSH with CINC Auditor using
-# the two profiles in verify/profiles/ (safbox, safbox-rhel10-stig-overlay),
-# and check each result against its SAF CLI threshold in verify/thresholds/.
+# the profiles in verify/profiles/ (safbox, safbox-rhel10-stig-overlay), and
+# check each result against its SAF CLI threshold in verify/thresholds/. In
+# the release context, with --client-inputs, also run the safbox-client
+# profile on this machine against the box's names at its address, as a
+# browser here would.
 #
 #   scripts/validate.sh [--site-inputs FILE] [--ssh-config FILE] \
-#     <user@host[:port]> <private-key> <build|release> [label]
+#     [--client-inputs FILE] <user@host[:port]> <private-key> <build|release> [label]
 #
 #   build    the build VM before the seal (verify/inputs/build.yml)
 #   release  a deployed clone of a sealed template (the profiles' defaults)
-#   --site-inputs FILE  a site's inputs, layered after the context's
-#   --ssh-config FILE   the SSH client config CINC Auditor reads instead of
-#                       ~/.ssh/config and /etc/ssh/ssh_config; /dev/null
-#                       reads none
+#   --site-inputs FILE    a site's inputs, layered after the context's
+#   --ssh-config FILE     the SSH client config CINC Auditor reads instead of
+#                         ~/.ssh/config and /etc/ssh/ssh_config; /dev/null
+#                         reads none
+#   --client-inputs FILE  release only: the box's passwords for the
+#                         safbox-client profile, a .yml or .yaml inputs
+#                         file of mode 0600 (scripts/clone-and-ssh.sh writes
+#                         one). That profile signs in, uploads the safbox
+#                         profile's results to Heimdall, creates a Vulcan
+#                         project and changes safuser's Keycloak password,
+#                         so give it for a clone only, never an appliance in
+#                         use.
 #
 # Results land in .build/validate-<label>-<profile>-<UTC time>.json, with
 # -2, -3, ... before .json when another scan took that name first.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 usage() {
-  echo "usage: $0 [--site-inputs FILE] [--ssh-config FILE] <user@host[:port]> <private-key> <build|release> [label]" >&2
+  echo "usage: $0 [--site-inputs FILE] [--ssh-config FILE] [--client-inputs FILE] <user@host[:port]> <private-key> <build|release> [label]" >&2
   exit 2
 }
 
 INPUT_ARGS=()
 SITE_INPUTS=""
+CLIENT_INPUTS=""
 SSH_ARGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --site-inputs) [ -n "${2:-}" ] || usage; SITE_INPUTS=$2; shift 2 ;;
     --ssh-config) [ -n "${2:-}" ] || usage; SSH_ARGS=(--ssh-config-file "$2"); shift 2 ;;
+    --client-inputs) [ -n "${2:-}" ] || usage; CLIENT_INPUTS=$2; shift 2 ;;
     -*) usage ;;
     *) break ;;
   esac
@@ -44,7 +57,20 @@ case "$CONTEXT" in
   *) usage ;;
 esac
 if [ -n "$SITE_INPUTS" ]; then INPUT_ARGS+=("$(realpath "$SITE_INPUTS")"); fi
-if [ ${#INPUT_ARGS[@]} -gt 0 ]; then INPUT_ARGS=(--input-file "${INPUT_ARGS[@]}"); fi
+if [ -n "$CLIENT_INPUTS" ]; then
+  [ "$CONTEXT" = release ] || { echo "validate.sh: --client-inputs is for the release context only" >&2; exit 2; }
+  # CINC Auditor reads an inputs file by its extension.
+  case "$CLIENT_INPUTS" in
+    *.yml | *.yaml) ;;
+    *) echo "validate.sh: $CLIENT_INPUTS must be a YAML inputs file named .yml or .yaml" >&2; exit 2 ;;
+  esac
+  # The passwords stay readable by this user only.
+  if [ -z "$(find "$CLIENT_INPUTS" -maxdepth 0 -type f -perm 0600 2>/dev/null)" ]; then
+    echo "validate.sh: $CLIENT_INPUTS must be a file of mode 0600" >&2
+    exit 2
+  fi
+  CLIENT_INPUTS=$(realpath "$CLIENT_INPUTS")
+fi
 
 for tool in cinc-auditor saf; do
   command -v "$tool" >/dev/null || { echo "validate.sh: $tool not found on this machine" >&2; exit 1; }
@@ -58,12 +84,21 @@ chmod 700 "$ROOT/.build"
 find "$ROOT/verify" -name inspec.lock -type f -exec rm -f -- {} +
 
 # The SAF CLI writes saf-cli.log to its working directory; keep it out of
-# the caller's.
+# the caller's. The client profile keeps its files (the certificate the box
+# served, cookie jars, passwords) in a 0700 directory in here.
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
 
-scan() { # profile threshold
-  local profile=$1 threshold=$2 n=1 rc=0 base results
+# scan PROFILE THRESHOLD [INPUT-FILE...] -- EXEC-ARGS...: scan with the
+# context's inputs, then the INPUT-FILEs, and leave the results file in
+# $results.
+scan() {
+  local profile=$1 threshold=$2 n=1 rc=0 base inputs=()
+  shift 2
+  inputs=(${INPUT_ARGS[@]+"${INPUT_ARGS[@]}"})
+  while [ "$1" != -- ]; do inputs+=("$1"); shift; done
+  shift
+  if [ ${#inputs[@]} -gt 0 ]; then inputs=(--input-file "${inputs[@]}"); fi
   base="$ROOT/.build/validate-$LABEL-$profile-$(date -u +%Y%m%dT%H%M%SZ)"
   results="$base.json"
   # Reserve the results file: noclobber makes the create fail if a scan
@@ -74,9 +109,8 @@ scan() { # profile threshold
     results="$base-$n.json"
   done
   echo "validate.sh: $profile against $TARGET ($CONTEXT)"
-  cinc-auditor exec "$ROOT/verify/profiles/$profile" \
-    -t "ssh://$TARGET" -i "$KEY" --sudo ${SSH_ARGS[@]+"${SSH_ARGS[@]}"} \
-    ${INPUT_ARGS[@]+"${INPUT_ARGS[@]}"} --no-create-lockfile \
+  cinc-auditor exec "$ROOT/verify/profiles/$profile" "$@" \
+    ${inputs[@]+"${inputs[@]}"} --no-create-lockfile \
     --reporter cli "json:$results" --no-color --chef-license accept-silent || rc=$?
   # 0 passed, 100 a test failed, 101 a test skipped; anything else is a tool
   # or connection error, not a verdict.
@@ -92,6 +126,16 @@ scan() { # profile threshold
 }
 
 failed=0
-scan safbox "safbox-$CONTEXT.yml"
-scan safbox-rhel10-stig-overlay "stig-$CONTEXT.yml"
+box=(-t "ssh://$TARGET" -i "$KEY" --sudo ${SSH_ARGS[@]+"${SSH_ARGS[@]}"})
+scan safbox "safbox-$CONTEXT.yml" -- "${box[@]}"
+safbox_results=$results
+scan safbox-rhel10-stig-overlay "stig-$CONTEXT.yml" -- "${box[@]}"
+if [ -n "$CLIENT_INPUTS" ]; then
+  # From this machine, as a browser: the box's address is the target's host.
+  address=${TARGET#*@}
+  address=${address%:*}
+  mkdir -m 700 "$scratch/client"
+  scan safbox-client client-release.yml "$CLIENT_INPUTS" -- -t local:// \
+    --input "address=$address" "work_dir=$scratch/client" "hdf_file=$safbox_results"
+fi
 exit "$failed"

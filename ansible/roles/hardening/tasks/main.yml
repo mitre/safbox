@@ -170,6 +170,34 @@
         enabled: true
         daemon_reload: true
 
+    - name: Create the systemd preset directory
+      ansible.builtin.file:
+        path: "{{ hardening_preset_file | dirname }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    # The seal leaves /etc/machine-id "uninitialized", so a clone's first
+    # boot is a systemd First Boot, which may reset every unit to its preset
+    # policy, and the distribution's presets end in "disable *": that would
+    # disable the AIDE unit and usbguard, which the STIG requires
+    # (RHEL-10-200561) and the Lockdown role enables when that rule and its
+    # CAT II rules are on (the safbox profile's usbguard input).
+    - name: Keep the AIDE unit and usbguard enabled through a First Boot preset
+      ansible.builtin.copy:
+        content: |
+          # Written by the SAFBox hardening role: a First Boot preset leaves the
+          # AIDE unit and usbguard enabled.
+          enable {{ hardening_aide_init_unit }}
+          {% if rhel10stig_cat2 | default(true) | bool and rhel10stig_200561 | default(true) | bool %}
+          enable usbguard.service
+          {% endif %}
+        dest: "{{ hardening_preset_file }}"
+        owner: root
+        group: root
+        mode: '0644'
+
     - name: Give the first-boot accounts' dotfiles mode 0740 or less (RHEL-10-400235)
       when: safbox_base_1 | default(true) | bool
       ansible.builtin.copy:

@@ -3,7 +3,7 @@
 seal_package_cache_clean_argv: [dnf, clean, all]
 
 # The proxy's local CA in the system trust store (services role,
-# files/40-proxy.sh), and how the store is rebuilt after it is removed.
+# first boot's proxy_tls role), and how the store is rebuilt after it is removed.
 seal_proxy_ca_anchor: /etc/pki/ca-trust/source/anchors/local-ca-safbox-proxy.crt
 seal_trust_update_argv: [update-ca-trust, extract]
 

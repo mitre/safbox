@@ -1,0 +1,9 @@
+---
+# safuser role of the first-boot play (base role, task group
+# safbox-base-5). Options are described in meta/argument_specs.yml.
+safuser_name: safuser
+safuser_comment: SAFBox tools user
+safuser_env_file: /etc/safbox/safuser.env
+safuser_sudoers_file: /etc/sudoers.d/50-safuser
+safuser_pam_password_file: /etc/pam.d/system-auth
+safuser_generate_attempts: 50

@@ -9,16 +9,16 @@
     name: "{{ services_proxy_image }}"
     state: present
 
-- name: Install the first-boot hook that generates the certificate
-  ansible.builtin.copy:
-    src: 40-proxy.sh
-    dest: "{{ services_proxy_firstboot_hook }}"
-    owner: root
-    group: root
-    mode: '0755'
+# First boot makes the certificate with the first-boot play's proxy_tls
+# role (the base role ships the play; it runs the role while this group is
+# on).
+- name: Remove the hook the proxy_tls role replaced
+  ansible.builtin.file:
+    path: "{{ services_proxy_retired_hook }}"
+    state: absent
 
-# Read by the hook. A certificate already generated keeps the names it was
-# made with; see files/40-proxy.sh to regenerate it.
+# Read by the proxy_tls role. A certificate already generated keeps the
+# names it was made with; docs/reference/services.md says how to regenerate it.
 - name: Record the served names for the certificate
   ansible.builtin.copy:
     content: "{{ services_proxy_names | join('\n') }}\n"
@@ -139,6 +139,29 @@
     name: safbox-site-status.timer
     enabled: true
     state: started
+
+- name: Create the systemd preset directory
+  ansible.builtin.file:
+    path: "{{ services_preset_file | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+# The seal leaves /etc/machine-id "uninitialized", so a clone's first boot
+# is a systemd First Boot, which may reset every unit to its preset policy,
+# and the distribution's presets end in "disable *".
+- name: Keep the status units enabled through a First Boot preset
+  ansible.builtin.copy:
+    content: |
+      # Written by the SAFBox services role: a First Boot preset leaves the
+      # start page's status units enabled.
+      enable safbox-site-status.service
+      enable safbox-site-status.timer
+    dest: "{{ services_preset_file }}"
+    owner: root
+    group: root
+    mode: '0644'
 
 - name: Install the proxy Quadlet unit
   ansible.builtin.template:

@@ -39,6 +39,9 @@ hardening_aide_daily: /etc/cron.daily/aide
 hardening_aide_db: /var/lib/aide/aide.db.gz
 hardening_aide_db_new: /var/lib/aide/aide.db.new.gz
 hardening_aide_init_unit: safbox-aide-init.service
+# Keeps the AIDE unit and usbguard enabled through the preset a First Boot
+# may apply (the seal leaves /etc/machine-id "uninitialized").
+hardening_preset_file: /etc/systemd/system-preset/50-safbox-hardening.preset
 hardening_firstboot_unit: safbox-firstboot.service
 hardening_firstboot_done_marker: /var/lib/safbox/firstboot.done
 # Files under an AIDE-watched directory that the box rewrites by design:

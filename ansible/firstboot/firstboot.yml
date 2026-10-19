@@ -1,0 +1,112 @@
+---
+# SAFBox first boot, as a local play. safbox-firstboot.service runs it once
+# per clone, as root, with no network assumed:
+#
+#   ansible-playbook -c local -i localhost, /usr/local/lib/safbox/firstboot/firstboot.yml
+#
+# Its steps run in name order, as the shell hooks always did: each
+# executable in /etc/safbox/firstboot.d not yet converted to a role, and
+# each role vars.yml names (written by the build from the site's switches,
+# a role per switched-on task group). A step that fails stops the play
+# under its own name; the done marker is the last task, so a failed run
+# writes none and the next boot runs it again. Every step keeps what an
+# earlier run made.
+#
+# To run steps again on a box whose first boot is done (docs/reference/):
+#   -e firstboot_rerun=true                      every step, marker ignored
+#   -e '{"firstboot_only": ["40-proxy"]}'        the named steps only
+# Neither writes the marker.
+- name: SAFBox first boot
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  gather_subset: [min]
+  vars_files:
+    - vars.yml
+  vars:
+    firstboot_etc_dir: /etc/safbox
+    firstboot_hook_dir: /etc/safbox/firstboot.d
+    firstboot_state_dir: /var/lib/safbox
+    firstboot_lib_dir: /usr/local/lib/safbox
+    firstboot_done_marker: "{{ firstboot_state_dir }}/firstboot.done"
+    firstboot_only: []
+    firstboot_rerun: "{{ firstboot_only | length > 0 }}"
+  # What the hooks read, as the shell runner gave them.
+  environment:
+    LC_ALL: C
+    SAFBOX_ETC_DIR: "{{ firstboot_etc_dir }}"
+    SAFBOX_HOOK_DIR: "{{ firstboot_hook_dir }}"
+    SAFBOX_STATE_DIR: "{{ firstboot_state_dir }}"
+    SAFBOX_LIB_DIR: "{{ firstboot_lib_dir }}"
+  tasks:
+    - name: Check whether first boot has already completed
+      ansible.builtin.stat:
+        path: "{{ firstboot_done_marker }}"
+      register: firstboot_marker
+
+    - name: Stop when first boot has already completed
+      when: firstboot_marker.stat.exists and not firstboot_rerun | bool
+      block:
+        - name: Report that first boot has already completed
+          ansible.builtin.debug:
+            msg: "first boot completed before ({{ firstboot_done_marker }}); nothing to do"
+
+        - name: End the play
+          ansible.builtin.meta: end_play
+
+    - name: Create the root-only first-boot directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+      loop:
+        - "{{ firstboot_etc_dir }}"
+        - "{{ firstboot_hook_dir }}"
+        - "{{ firstboot_state_dir }}"
+
+    - name: List the installed hooks
+      ansible.builtin.find:
+        paths: "{{ firstboot_hook_dir }}"
+        file_type: file
+      register: firstboot_hooks_found
+
+    # A hook is a regular file with any execute bit, as the shell runner,
+    # running as root, ran it; unlike that runner, a symbolic link in
+    # firstboot.d is not run (every hook the roles install is a file). A
+    # case-sensitive sort is the byte order the shell runner used
+    # (LC_ALL=C); Jinja's default sort ignores case.
+    - name: Put the hooks and the roles in name order
+      ansible.builtin.set_fact:
+        firstboot_role_by_step: "{{ firstboot_roles | items2dict(key_name='step', value_name='role') }}"
+        firstboot_steps: >-
+          {{ (((firstboot_hooks_found.files | selectattr('xusr') | list)
+               + (firstboot_hooks_found.files | selectattr('xgrp') | list)
+               + (firstboot_hooks_found.files | selectattr('xoth') | list))
+              | map(attribute='path') | map('basename') | list
+              + firstboot_roles | map(attribute='step') | list) | unique | sort(case_sensitive=true) }}
+
+    - name: Check the steps asked for exist
+      ansible.builtin.assert:
+        that: firstboot_only | difference(firstboot_steps) | length == 0
+        fail_msg: >-
+          no first-boot step named {{ firstboot_only | difference(firstboot_steps) | join(', ') }};
+          the steps are {{ firstboot_steps | join(', ') }}
+        quiet: true
+
+    - name: Run each step
+      ansible.builtin.include_tasks: step.yml
+      loop: "{{ firstboot_steps if firstboot_only | length == 0 else firstboot_steps | intersect(firstboot_only) }}"
+      loop_control:
+        loop_var: firstboot_step
+
+    # Last: only a run that got here is complete.
+    - name: Write the done marker
+      when: not firstboot_rerun | bool
+      ansible.builtin.copy:
+        content: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}\n"
+        dest: "{{ firstboot_done_marker }}"
+        owner: root
+        group: root
+        mode: '0600'

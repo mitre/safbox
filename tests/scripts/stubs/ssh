@@ -2,8 +2,12 @@
 # Stub ssh for tests/scripts/build-concurrency.sh: records the keys offered
 # to the build user (packer) in $STUB_DIR/build-user-keys and refuses every
 # login unless STUB_BOOT is set. With STUB_BOOT set, admin and safuser log
-# in and the clone's boot ends in that state (running; degraded: finished
-# with a failed unit; hang: never settles; sshfail: ssh itself fails).
+# in, each remote command is appended to $STUB_DIR/ssh.cmds, and the
+# clone's boot ends in that state (running; degraded: finished with a
+# failed unit; hang: never settles; sshfail: ssh itself fails; units: the
+# clone has the units in STUB_UNITS, space-separated unit:active or
+# unit:starting, and its boot settles running once none is starting; the
+# starting ones are its queued jobs. A switched-off service is left out).
 # STUB_SAFUSER_REFUSED=1 refuses safuser.
 keys=() target="" cmd=""
 while [ $# -gt 0 ]; do
@@ -21,15 +25,28 @@ case "$target" in packer@*) printf '%s\n' "${keys[@]}" > "$STUB_DIR/build-user-k
 case "$target" in admin@192.0.2.50|safuser@192.0.2.50) ;; *) exit 255 ;; esac
 # STUB_SAFUSER_REFUSED=1: first boot did not make safuser, so it never logs in.
 case "$target" in safuser@*) [ "${STUB_SAFUSER_REFUSED:-0}" = 1 ] && exit 255 ;; esac
+printf '%s\n' "$cmd" >> "$STUB_DIR/ssh.cmds"
+starting=()
+read -r -a units <<<"${STUB_UNITS:-}"
+for u in ${units[@]+"${units[@]}"}; do
+  case "$u" in *:starting) starting+=("${u%:starting}") ;; esac
+done
 case "$cmd" in
   *is-system-running*)
     case "$STUB_BOOT" in
       hang) exec /usr/bin/sleep 60 ;;
       sshfail) exit 255 ;;
       running) echo running ;;
+      units) [ ${#starting[@]} -eq 0 ] || exec /usr/bin/sleep 60; echo running ;;
       *) echo "$STUB_BOOT"; exit 1 ;;
     esac ;;
   *--failed*) echo 'abc-123.service loaded failed failed [systemd-run] /usr/bin/podman healthcheck run abc' ;;
-  *list-jobs*) echo '42 vulcan.service start running' ;;
+  *list-jobs*)
+    if [ "$STUB_BOOT" = units ]; then
+      n=40
+      for u in ${starting[@]+"${starting[@]}"}; do n=$((n + 1)); echo "$n $u start running"; done
+    else
+      echo '42 vulcan.service start running'
+    fi ;;
   *) printf 'ok\nfips_enabled=1\nhostname=safbox-clone-9170\n' ;;
 esac

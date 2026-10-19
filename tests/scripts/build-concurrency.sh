@@ -275,7 +275,7 @@ expect "SAFBOX_BUILD_KEY names the run's key" \
 # enforces its own timeout.
 boot() { # state [env...]: "<exit status> <scanned|not scanned>"
   local state=$1 rc=0; shift
-  rm -f "$STUB/scanned"
+  rm -f "$STUB/scanned" "$STUB/ssh.cmds"
   env "$@" STUB_BOOT="$state" HOME="$tmp/home" PATH="$tmp/cbin:$PATH" STUB_DIR="$STUB" SAFBOX_PROXMOX_ENV="$tmp/packer.env" \
     SAFBOX_NODE=node SAFBOX_POOL=pool timeout 15 "$R/scripts/clone-and-ssh.sh" 9000 9170 --keep >"$STUB/clone.out" 2>&1 || rc=$?
   if [ -e "$STUB/scanned" ]; then echo "$rc scanned"; else echo "$rc not scanned"; fi
@@ -292,6 +292,26 @@ check "the ssh failure is not reported as a timeout" grep -q 'ssh failed (exit 2
 expect "a SAFBOX_READY_TIMEOUT that is not a positive number is refused" "$(boot running SAFBOX_READY_TIMEOUT=10m)" "2 not scanned"
 expect "a clone where safuser never logs in fails unscanned" "$(boot running STUB_SAFUSER_REFUSED=1)" "1 not scanned"
 check "the failure names safuser" grep -q 'SSH as safuser with the deployer.s key failed' "$STUB/clone.out"
+
+# A switched-off service has no units on the clone, so it neither holds up
+# the wait nor fails it; a switched-on service that never becomes ready
+# does both. With STUB_BOOT=units the stub clone's boot settles once every
+# unit in STUB_UNITS (unit:active or unit:starting) is active, and its
+# queued jobs are the starting ones; the stub ssh records each remote
+# command in $STUB/ssh.cmds.
+on_units='heimdall.service:active heimdall-db.service:active safbox-proxy.service:active'
+expect "a clone with vulcan switched off is scanned" "$(boot units STUB_UNITS="$on_units")" "0 scanned"
+check "the wait with vulcan switched off ends running" grep -q "clone 9170 finished booting\$" "$STUB/clone.out"
+check "the wait ran over ssh" grep -q "is-system-running --wait" "$STUB/ssh.cmds"
+# The reads of the first-boot passwords for the client profile name each
+# service's file in /etc/safbox/, which a switched-off service lacks.
+check "no remote command but the password reads names the switched-off service" \
+  not grep -q vulcan <(grep -v ' /etc/safbox/' "$STUB/ssh.cmds")
+expect "a clone with vulcan switched on but never ready fails unscanned within SAFBOX_READY_TIMEOUT" \
+  "$(boot units SAFBOX_READY_TIMEOUT=1 STUB_UNITS="$on_units vulcan.service:starting")" "1 not scanned"
+check "the timeout message says it timed out" grep -q 'still booting after 1s (SAFBOX_READY_TIMEOUT); jobs still queued:' "$STUB/clone.out"
+check "the timeout message names the service still starting" grep -q 'vulcan.service start running' "$STUB/clone.out"
+check "the timeout message names no switched-on service that is ready" not grep -q 'heimdall' "$STUB/clone.out"
 
 # clone-and-ssh.sh hands cloud-init the build key, then every *.pub in the
 # checkout's .build/keys/, then every file SAFBOX_EXTRA_SSH_KEYS names

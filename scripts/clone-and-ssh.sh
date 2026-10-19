@@ -2,8 +2,11 @@
 # Acceptance check for the install layer: clone the template, hand the clone
 # a cloud-init user and key, boot it, learn its IP from the guest agent, and
 # prove SSH works, as admin (the deployer's key-only account) and, once
-# first boot has made it, as safuser. Uses only the Proxmox API, so it runs
-# with the same least-privilege token as the build.
+# first boot has made it, as safuser, then run the release gate: the box's
+# profiles over SSH and the safbox-client profile from here, with the
+# passwords first boot generated (scripts/validate.sh --client-inputs).
+# Uses only the Proxmox API, so it runs with the same least-privilege token
+# as the build.
 #
 #   scripts/clone-and-ssh.sh <template-vmid> <clone-vmid> [--keep]
 #
@@ -112,6 +115,9 @@ done
 # reads it from a 0600 config file that is removed on exit.
 umask 077
 CURLCFG=$(mktemp)
+# The client profile's passwords, read from the clone (below), in a
+# directory of their own.
+CLIENT_DIR=""
 printf 'header = "Authorization: PVEAPIToken=%s=%s"\n' "$PROXMOX_USERNAME" "$PROXMOX_TOKEN" > "$CURLCFG"
 CURL=(curl -fsS -K "$CURLCFG")
 if [ -n "${SAFBOX_CA_FILE:-}" ]; then CURL+=(--cacert "$SAFBOX_CA_FILE"); fi
@@ -148,7 +154,7 @@ cleanup() {
     desc=$("${CURL[@]}" "$API/nodes/$NODE/qemu/$CLONE_ID/config" 2>/dev/null | jq -r '.data.description // ""')
     if [ "$desc" != "$RUN_MARK" ]; then
       echo "refusing to destroy VM $CLONE_ID: its description does not match this run ($RUN_ID)" >&2
-      rm -f "$CURLCFG"; return
+      rm -rf "$CURLCFG" ${CLIENT_DIR:+"$CLIENT_DIR"}; return
     fi
     echo "destroying clone $CLONE_ID (run $RUN_ID)"
     u=$("${CURL[@]}" -X POST "$API/nodes/$NODE/qemu/$CLONE_ID/status/stop" | jq -r .data) && wait_task "$u" || echo "stop failed; not deleting a running VM" >&2
@@ -156,7 +162,7 @@ cleanup() {
     # to that and is never used here.
     u=$("${CURL[@]}" -X DELETE "$API/nodes/$NODE/qemu/$CLONE_ID?destroy-unreferenced-disks=1" | jq -r .data) && wait_task "$u" || echo "destroy failed; clone $CLONE_ID left in place" >&2
   fi
-  rm -f "$CURLCFG"
+  rm -rf "$CURLCFG" ${CLIENT_DIR:+"$CLIENT_DIR"}
 }
 trap cleanup EXIT
 
@@ -236,12 +242,30 @@ for _ in $(seq 1 72); do
       exit 1
     fi
     echo "PASS: safuser logs in with the deployer's key"
-    # Release gate: both profiles, from outside, against what a consumer
-    # receives, after first boot.
+    # The passwords first boot generated, for the safbox-client profile:
+    # read over SSH as root may, into a file on this machine readable by
+    # this user only (umask 077), removed on exit, never printed. A switched-
+    # off service has no file, and its value stays empty.
+    CLIENT_DIR=$(mktemp -d)
+    CLIENT_INPUTS=$CLIENT_DIR/inputs.yml
+    secret() { # input-name env-file variable
+      local value
+      value=$(timeout 30 ssh "${SSH_OPTS[@]}" "$USER_NAME@$ip" "sudo -n sed -n 's/^$3=//p' /etc/safbox/$2" 2>/dev/null) || value=""
+      printf "%s: '%s'\n" "$1" "${value//\'/\'\'}"
+    }
+    {
+      echo '---'
+      secret heimdall_admin_password heimdall.env ADMIN_PASSWORD
+      secret vulcan_admin_password vulcan.env VULCAN_ADMIN_PASSWORD
+      secret keycloak_safuser_password keycloak.env SAFUSER_PASSWORD
+    } > "$CLIENT_INPUTS"
+    # Release gate: the box's profiles over SSH and the client profile from
+    # here, against what a consumer receives, after first boot.
     site=()
     if [ -n "${SAFBOX_SITE_INPUTS:-}" ]; then site+=(--site-inputs "$SAFBOX_SITE_INPUTS"); fi
     if [ -n "${SAFBOX_SSH_CONFIG:-}" ]; then site+=(--ssh-config "$SAFBOX_SSH_CONFIG"); fi
-    "$ROOT/scripts/validate.sh" ${site[@]+"${site[@]}"} "$USER_NAME@$ip" "$KEY" release "clone-$CLONE_ID"
+    "$ROOT/scripts/validate.sh" ${site[@]+"${site[@]}"} --client-inputs "$CLIENT_INPUTS" \
+      "$USER_NAME@$ip" "$KEY" release "clone-$CLONE_ID"
     exit 0
   fi
   sleep 5

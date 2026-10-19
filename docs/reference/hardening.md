@@ -167,6 +167,7 @@ the disruptive rules that damage a fresh build:
 | RHEL-10-200646 (SV-280989) | on only with `safbox_remote_log_server`, like RHEL-10-200642 | with no log server it writes `/etc/rsyslog.d/99-forwarding.conf` with `target=""`; rsyslog suspends the action and `/var/log/messages` and `/var/log/secure` stop being written seconds after boot |
 | RHEL-10-400285 (SV-281074) | off | strips setgid from system binaries (above) |
 | RHEL-10-300010 (SV-281008) | follows `rhel10stig_disruption_high` | without it the task fails: it reads a fact it sets only with the setting on |
+| RHEL-10-400140 (SV-281045), RHEL-10-400280 (SV-281073) | off on desktop builds only | their tasks run `find` over every local mount and fail when it exits non-zero; on a desktop the login screen's document-portal mount (`/run/user/42/doc`) refuses even root. Headless builds keep both; the baseline controls still run |
 
 RHEL-10-600600 and 600610 stay on: with `rhel10stig_uses_authselect:
 true` they only check authselect's `with-faillock` feature (above).
@@ -207,8 +208,9 @@ once RHEL-10-600750 writes it:
   directories. On SAFBox these are the four Vulcan gem directories
   described above, inside the image layers under
   `/var/lib/containers/storage`. Vulcan runs as before, so the rule stays
-  on, but the change is made to pulled layers behind podman's back, the
-  same caveat as changing their modes by hand. SV-281045, which checks
+  on for headless builds, but the change is made to pulled layers behind
+  podman's back, the same caveat as changing their modes by hand. On
+  desktop builds it is off (see the table above). SV-281045, which checks
   their owner, still fails.
 
 **On a later run against a deployed box.** The switches above make a
