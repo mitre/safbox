@@ -1,0 +1,24 @@
+---
+# The accounts first boot settles: admin, cloud-init's default user, then
+# safuser. Both start from what the deployer gave cloud-init, read once
+# here. The configuration holds the password a deployment supplied, so
+# every task that reads it is no_log.
+
+- name: Read what the deployer gave cloud-init
+  when: clone_accounts_cloud_config is not defined
+  tags: [admin, safuser]
+  ansible.builtin.command:
+    argv: [cloud-init, query, combined_cloud_config]
+  register: clone_accounts_cloud_config_query
+  changed_when: false
+  no_log: true
+
+- name: Settle admin
+  when: safbox_base_6 | default(true) | bool
+  tags: [admin]
+  ansible.builtin.import_tasks: admin.yml
+
+- name: Make safuser
+  when: safbox_base_5 | default(true) | bool
+  tags: [safuser]
+  ansible.builtin.import_tasks: safuser.yml

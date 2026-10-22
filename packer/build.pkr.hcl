@@ -52,8 +52,14 @@ locals {
   ]
   ansible_extra = concat(
     flatten([for v in var.ansible_extra_vars : ["-e", v]]),
-    var.site_dir == null ? [] : ["-e", "services_site_src=${var.site_dir}/"],
+    var.site_dir == null ? [] : ["-e", "template_services_site_src=${var.site_dir}/"],
   )
+  # The build gate's results (build_scans_dir), which the seal installs in
+  # the template with the run ID.
+  seal_scans_extra = var.build_scans_dir == null ? [] : [
+    "-e", "template_seal_scans_src=${abspath(var.build_scans_dir)}/",
+    "-e", "template_seal_build_run_id=${coalesce(var.build_run_id, "unknown")}",
+  ]
 }
 
 build {
@@ -98,14 +104,17 @@ build {
   # context and gates the build on their thresholds. A site that switches a
   # tool or service off names its inputs through build_gate_site_inputs_file;
   # a runner whose SSH client config CINC Auditor cannot use names another
-  # through build_gate_ssh_config_file. Nothing is installed on the image.
+  # through build_gate_ssh_config_file. With build_scans_dir the gate keeps
+  # the box profiles' results there for the seal to install. Nothing else
+  # reaches the image.
   provisioner "shell-local" {
     environment_vars = [
       "SITE_INPUTS=${var.build_gate_site_inputs_file == null ? "" : abspath(var.build_gate_site_inputs_file)}",
       "SSH_CONFIG=${var.build_gate_ssh_config_file == null ? "" : abspath(var.build_gate_ssh_config_file)}",
+      "RESULTS_DIR=${var.build_scans_dir == null ? "" : abspath(var.build_scans_dir)}",
     ]
     inline = [
-      "'${local.repo_root}/scripts/validate.sh' $${SITE_INPUTS:+--site-inputs \"$SITE_INPUTS\"} $${SSH_CONFIG:+--ssh-config \"$SSH_CONFIG\"} '${build.User}@${build.Host}:${build.Port}' '${var.ssh_private_key_file}' build",
+      "'${local.repo_root}/scripts/validate.sh' $${SITE_INPUTS:+--site-inputs \"$SITE_INPUTS\"} $${SSH_CONFIG:+--ssh-config \"$SSH_CONFIG\"} $${RESULTS_DIR:+--results-dir \"$RESULTS_DIR\"} '${build.User}@${build.Host}:${build.Port}' '${var.ssh_private_key_file}' build",
     ]
   }
 
@@ -121,8 +130,8 @@ build {
     use_proxy        = false
     ansible_env_vars = local.ansible_env
     extra_arguments = concat([
-      "-e", "seal_git_commit=${var.git_revision}",
-      "-e", "seal_mode=${var.seal ? "full" : "development"}",
-    ], local.ansible_extra)
+      "-e", "template_seal_git_commit=${var.git_revision}",
+      "-e", "template_seal_mode=${var.seal ? "full" : "development"}",
+    ], local.seal_scans_extra, local.ansible_extra)
   }
 }

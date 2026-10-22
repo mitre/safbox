@@ -55,8 +55,39 @@ if grep -E '^services ' "$tmp" | grep -Eq 'qemu-guest-agent|cloud-init'; then
 fi
 grep -Eq '^systemctl enable .*qemu-guest-agent' "$tmp" || { echo "FAIL: %post must enable qemu-guest-agent" >&2; exit 1; }
 grep -Eq '^systemctl enable .*cloud-init' "$tmp" || { echo "FAIL: %post must enable cloud-init" >&2; exit 1; }
+# One image for every hypervisor: both guest agents, the VMware one with
+# guest operations and customization scripts off.
+grep -Eq '^dnf -y install .*open-vm-tools' "$tmp" || { echo "FAIL: %post must install open-vm-tools" >&2; exit 1; }
+grep -Eq '^systemctl enable .*vmtoolsd' "$tmp" || { echo "FAIL: %post must enable vmtoolsd" >&2; exit 1; }
+if grep -E '^services ' "$tmp" | grep -Eq 'vmtoolsd'; then
+  echo "FAIL: services line names vmtoolsd, which %post installs" >&2; exit 1
+fi
+tools_conf=$(awk '/^cat > \/etc\/vmware-tools\/tools.conf <</ { on=1; next } on && /^EOC$/ { exit } on' "$tmp")
+grep -A1 -Fx '[guestoperations]' <<<"$tools_conf" | grep -Eq '^disabled *= *true$' \
+  || { echo "FAIL: %post must write tools.conf with [guestoperations] disabled = true" >&2; exit 1; }
+grep -A1 -Fx '[deployPkg]' <<<"$tools_conf" | grep -Eq '^enable-custom-scripts *= *false$' \
+  || { echo "FAIL: %post must write tools.conf with [deployPkg] enable-custom-scripts = false" >&2; exit 1; }
+# The initramfs stays host-only: a generic one (dracut-config-generic)
+# carries every GPU's firmware, and the desktop image's no longer leaves
+# room in /boot for the kernels dnf keeps. A dracut drop-in adds the
+# storage drivers of every supported hypervisor's disk controllers.
+if grep -Eq '^dnf .*dracut-config-generic' "$tmp"; then
+  echo "FAIL: %post must not install dracut-config-generic (the initramfs stays host-only)" >&2; exit 1
+fi
+dropin=/etc/dracut.conf.d/90-safbox-storage-drivers.conf
+dracut_conf=$(awk -v f="$dropin" '$0 == "cat > " f " <<'"'"'EOC'"'"'" { on=1; next } on && /^EOC$/ { exit } on' "$tmp")
+add_drivers=$(sed -nE 's/^add_drivers\+=" (.*) "$/\1/p' <<<"$dracut_conf")
+for driver in ahci nvme virtio_blk virtio_scsi vmw_pvscsi; do
+  grep -Eq "(^| )$driver( |$)" <<<"$add_drivers" \
+    || { echo "FAIL: %post must write $dropin with add_drivers+=\" ... \" naming $driver" >&2; exit 1; }
+done
+grep -Eq "^chmod 0644 $dropin$" "$tmp" || { echo "FAIL: %post must make $dropin mode 0644" >&2; exit 1; }
+# The initramfs anaconda made before %post lacks the added drivers; it is
+# rebuilt after the drop-in is written.
+awk -v f="$dropin" 'index($0, "cat > " f " <<") == 1 { inst=NR } /^dracut -f --regenerate-all/ && inst { ok=1 } END { exit !ok }' "$tmp" \
+  || { echo "FAIL: %post must run dracut -f --regenerate-all after writing $dropin" >&2; exit 1; }
 # Scope: the kickstart puts only FIPS on the kernel line; hardening owns the rest.
 if grep -E '^bootloader ' "$tmp" | grep -Eq 'audit=|audit_backlog'; then
-  echo "FAIL: bootloader line carries hardening arguments that belong to the hardening role" >&2; exit 1
+  echo "FAIL: bootloader line carries hardening arguments that belong to the template_hardening role" >&2; exit 1
 fi
 echo "PASS: kickstart renders and validates for RHEL10"

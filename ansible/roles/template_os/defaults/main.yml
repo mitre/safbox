@@ -1,0 +1,98 @@
+---
+# template_os role: the operating system every SAFBox host is built on, one
+# task file per concern (tasks/main.yml): the OS contract (time, SSH,
+# firewall, the container runtime, the journal), the desktop, the site's
+# trusted CA bundles, the package update, the first-boot play and its unit,
+# the safbox command, the login greeting and safuser's packages. Task groups
+# keep their tags (safbox-platform-<n>, safbox-site-config-1,
+# safbox-base-<n>); the ones a site may turn off have a switch in
+# group_vars/all/main.yml.
+
+# ---------------------------------------------------------------------------
+# Platform
+# ---------------------------------------------------------------------------
+
+# Where journald keeps the journal. persistent survives reboots; see
+# templates/journald-safbox.conf.j2 for why the default needs overriding.
+template_os_journald_storage: persistent
+
+# Rootful Quadlet unit directory. The services drop *.container, *.pod and
+# *.volume files here; systemd generates the units at daemon-reload.
+template_os_container_quadlet_dir: /etc/containers/systemd
+
+# Registry policy. Every image the appliance uses is fully qualified, so
+# unqualified short names are refused rather than searched.
+template_os_container_unqualified_search_registries: []
+template_os_container_short_name_mode: enforcing
+
+# A GNOME desktop on the console, booting to the graphical login (task group
+# 7). Follows the project switch in group_vars/all/main.yml, which also
+# approves the GUI to the STIG hardening.
+template_os_desktop_enabled: "{{ safbox_desktop_enabled }}"
+
+# The desktop console's resolution (task group 7): a mode the console's
+# display adapter offers, at its refresh rate as GNOME lists it (Settings >
+# Displays, or mutter's DisplayConfig). See template_os_desktop_monitors.
+template_os_desktop_console_mode:
+  width: 1920
+  height: 1080
+  rate: "60.000"
+
+# ---------------------------------------------------------------------------
+# Site CA bundles (safbox-site-config-1)
+# ---------------------------------------------------------------------------
+# Each entry of safbox_trust_bundles in group_vars (the DoD PKI bundle by
+# default) is fetched or copied, checked against its sha256, read as
+# certificates, checked against the system crypto policy, and installed in
+# the system trust store, one anchor file per certificate. Certificates of
+# a bundle no longer listed are removed. The group runs at build (baked into
+# the image) or against a deployed box (--tags safbox-site-config-1,
+# docs/reference/site-config.md).
+
+# Downloads and archive members, in /var/tmp, which the seal clears.
+template_os_trust_work_dir: /var/tmp/safbox-trust
+
+# Services that read the trust store when they start. After the store
+# changes, those running are restarted (on a deployed box; at build none
+# runs). Their containers mount the host's store read-only.
+template_os_trust_restart_units:
+  - heimdall.service
+  - vulcan.service
+
+# ---------------------------------------------------------------------------
+# First boot (safbox-base-1)
+# ---------------------------------------------------------------------------
+# The run-once first-boot play owns every per-install secret, generated on
+# first boot and not at build so no two installs share one. Its directory
+# and done marker are safbox_firstboot_dir and safbox_firstboot_done in
+# group_vars.
+template_os_firstboot_play: "{{ safbox_firstboot_dir }}/firstboot.yml"
+# The play's own files in ansible/playbooks/, beside the build's playbooks,
+# and their names on the box. Its configuration is firstboot.cfg there, so
+# that running a build playbook from that directory never picks it up, and
+# ansible.cfg on the box.
+template_os_firstboot_play_src: "{{ role_path }}/../../playbooks"
+template_os_firstboot_play_files:
+  - src: firstboot.yml
+    dest: firstboot.yml
+  - src: firstboot.cfg
+    dest: ansible.cfg
+# The image ships only the roles first boot runs, the clone_ roles of
+# ansible/roles/: the build's own template_ roles have done their work by
+# the seal and would only be dead weight, and code, on every clone.
+template_os_firstboot_roles_src: "{{ role_path }}/.."
+template_os_firstboot_roles_tree: >-
+  {{ query('community.general.filetree', template_os_firstboot_roles_src)
+     | selectattr('path', 'match', 'clone_') | list }}
+template_os_firstboot_unit: safbox-firstboot.service
+
+# ---------------------------------------------------------------------------
+# The safbox command (safbox-base-2) and the login greeting (safbox-base-4)
+# ---------------------------------------------------------------------------
+template_os_cli_bin: /usr/local/bin/safbox
+
+# The SAF logo and a pointer to `safbox status`, shown after every console
+# and SSH login. A drop-in in pam_motd's directory, so /etc/motd stays the
+# site's and the login banner before the password prompt (/etc/issue, a
+# STIG setting) is untouched.
+template_os_motd_file: /etc/motd.d/safbox

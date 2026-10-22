@@ -2,7 +2,7 @@
 # default rules with Proxmox API token secrets: a bare UUID has no
 # recognisable prefix, and the generic rule only flags it when its entropy
 # happens to clear the threshold. These rules match on the context instead.
-# tests/secrets/gitleaks-rules.sh proves both.
+# tests/secrets/gitleaks-rules.bats proves both.
 title = "SAFBox gitleaks configuration"
 
 [extend]

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stub packer for tests/scripts/build-concurrency.sh. packer init: nothing.
+# Stub packer for tests/scripts/*.bats. packer init: nothing.
 # packer build -var vm_name=<n> ...: record what build.sh handed it under
 # $STUB_DIR/<n>/, signal $STUB_DIR/started.<n>, wait for
 # $STUB_DIR/release.<n>, then check that the key and the debug log it was
@@ -11,7 +11,7 @@
 set -u
 [ "$1" = build ] || exit 0
 shift
-name="" key="" galaxy="" site=""
+name="" key="" galaxy="" site="" run_id="" scans=""
 while [ $# -gt 0 ]; do
   case "$1" in
     -var)
@@ -20,6 +20,8 @@ while [ $# -gt 0 ]; do
         ssh_private_key_file=*) key=${2#ssh_private_key_file=} ;;
         galaxy_dir=*) galaxy=${2#galaxy_dir=} ;;
         site_dir=*) site=${2#site_dir=} ;;
+        build_run_id=*) run_id=${2#build_run_id=} ;;
+        build_scans_dir=*) scans=${2#build_scans_dir=} ;;
       esac
       shift 2 ;;
     *) shift ;;
@@ -32,6 +34,8 @@ echo "$key" > "$d/key"
 echo "${PACKER_LOG_PATH:-}" > "$d/debuglog"
 echo "$galaxy" > "$d/galaxy"
 echo "$site" > "$d/site"
+echo "$run_id" > "$d/run_id"
+echo "$scans" > "$d/scans"
 # What ansible-galaxy would install there.
 mkdir -p "$galaxy/roles/RHEL10-STIG"
 sum() { cksum < "$1" 2>/dev/null || echo missing; }

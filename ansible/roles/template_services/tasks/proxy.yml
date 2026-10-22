@@ -1,0 +1,194 @@
+---
+# The nginx TLS proxy in front of the enabled applications: task group
+# safbox-services-3, imported by tasks/main.yml, which applies the group's
+# tag and its switch safbox_services_3.
+
+# Pulled at build so a clone starts the proxy offline.
+- name: Pull the nginx image
+  containers.podman.podman_image:
+    name: "{{ template_services_proxy_image }}"
+    state: present
+
+# First boot makes the certificate with the first-boot play's proxy_tls
+# role (the template_os role ships the play; it runs the role while this group is
+# on), which reads the served names. A certificate already generated keeps
+# the names it was made with; docs/reference/services.md says how to
+# regenerate it.
+- name: Record the served names for the certificate
+  ansible.builtin.copy:
+    content: "{{ template_services_proxy_names | join('\n') }}\n"
+    dest: "{{ template_services_proxy_names_file }}"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Check which hosts files exist
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop: "{{ template_services_proxy_hosts_files }}"
+  register: template_services_proxy_hosts_stat
+
+# One marked block per file, rewritten whole, so an application switched
+# off loses its name.
+- name: Map the served names to the box itself
+  ansible.builtin.blockinfile:
+    path: "{{ item.item }}"
+    marker: "# {mark} SAFBox proxy names (services role)"
+    block: "127.0.0.1 {{ template_services_proxy_names | join(' ') }}"
+  loop: "{{ template_services_proxy_hosts_stat.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: item.stat.exists
+
+# Read before the configuration is written, so the restart handler
+# knows whether this is a deployed box (certificate exists) or a build.
+- name: Check whether first boot has generated the certificate
+  ansible.builtin.stat:
+    path: "{{ template_services_proxy_key }}"
+  register: template_services_proxy_tls
+
+- name: Create the proxy configuration directory
+  ansible.builtin.file:
+    path: "{{ template_services_proxy_conf_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Configure nginx for the enabled applications
+  ansible.builtin.template:
+    src: nginx.conf.j2
+    dest: "{{ template_services_proxy_conf_dir }}/nginx.conf"
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Restart the proxy
+
+- name: Create the start page directory
+  ansible.builtin.file:
+    path: "{{ template_services_proxy_conf_dir }}/html"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+# `is file` is evaluated here, on the machine running Ansible.
+- name: Refuse to go on without the built documentation site
+  ansible.builtin.assert:
+    that: (template_services_site_src ~ 'index.html') is file
+    fail_msg: >-
+      The documentation site is not built: run
+      npm --prefix site ci && npm --prefix site run build
+      (scripts/build.sh does this before Packer).
+    quiet: true
+
+# Read from disk on each request; no restart needed.
+- name: Install the documentation site as the start page
+  ansible.builtin.copy:
+    src: "{{ template_services_site_src }}"
+    dest: "{{ template_services_proxy_conf_dir }}/html/"
+    owner: root
+    group: root
+    mode: '0644'
+    directory_mode: '0755'
+
+- name: Install the start page's status writer
+  ansible.builtin.copy:
+    src: safbox-site-status
+    dest: "{{ template_services_status_script }}"
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: List the services the start page reports
+  ansible.builtin.template:
+    src: site-status.services.j2
+    dest: "{{ template_services_status_list }}"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Install the start page's status units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop:
+    - safbox-site-status.service
+    - safbox-site-status.timer
+  notify: Reload systemd units
+
+- name: Reload systemd for the status units
+  ansible.builtin.meta: flush_handlers
+
+# Enabling it makes each listed service's start pull in a refresh.
+- name: Refresh the start page's status when a service starts
+  ansible.builtin.systemd_service:
+    name: safbox-site-status.service
+    enabled: true
+
+- name: Refresh the start page's status every minute
+  ansible.builtin.systemd_service:
+    name: safbox-site-status.timer
+    enabled: true
+    state: started
+
+# Daily, the first-boot play's clone_proxy_tls role signs the box's own
+# certificate again from its local CA before it expires.
+- name: Install the certificate renewal units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop:
+    - safbox-proxy-renew.service
+    - safbox-proxy-renew.timer
+  notify: Reload systemd units
+
+- name: Reload systemd for the renewal units
+  ansible.builtin.meta: flush_handlers
+
+- name: Check the certificate daily and renew it when it nears expiry
+  ansible.builtin.systemd_service:
+    name: safbox-proxy-renew.timer
+    enabled: true
+    state: started
+
+- name: Install the proxy Quadlet unit
+  ansible.builtin.template:
+    src: safbox-proxy.container.j2
+    dest: "{{ template_os_container_quadlet_dir }}/safbox-proxy.container"
+    owner: root
+    group: root
+    mode: '0644'
+  notify:
+    - Reload systemd units
+    - Restart the proxy
+
+- name: Generate the unit from the Quadlet file
+  ansible.builtin.meta: flush_handlers
+
+# HTTPS for the applications and HTTP for its redirect, in the zone the box
+# ends up in (safbox_firewall_zone), which hardening makes the default.
+- name: Open the firewall for HTTP and HTTPS
+  ansible.posix.firewalld:
+    zone: "{{ safbox_firewall_zone }}"
+    service: "{{ item }}"
+    permanent: true
+    immediate: true
+    state: enabled
+  loop: [http, https]
+
+# Quadlet-generated units are enabled by their [Install] section through
+# the generator; they are started, never enabled, with systemctl. At
+# build there is no certificate and nothing starts: first boot writes
+# it and the unit follows.
+- name: Start the proxy on a deployed box
+  ansible.builtin.systemd_service:
+    name: safbox-proxy.service
+    state: started
+  when: template_services_proxy_tls.stat.exists

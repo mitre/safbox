@@ -1,0 +1,7 @@
+# SAFBox hardening record. Written by the template_hardening role after the Ansible
+# Lockdown role applied the RHEL 10 STIG; read by the validation profile.
+# Deviations are the Not Applicable overrides of the STIG overlay. Not a secret.
+SAFBOX_LOCKDOWN_ROLE={{ safbox_hardening_lockdown.name }}
+SAFBOX_LOCKDOWN_VERSION={{ safbox_hardening_lockdown.version }}
+SAFBOX_LOCKDOWN_COMMIT={{ safbox_hardening_lockdown.commit }}
+SAFBOX_STIG_RELEASE={{ safbox_hardening_lockdown.benchmark }}

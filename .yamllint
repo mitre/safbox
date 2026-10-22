@@ -27,3 +27,9 @@ rules:
     forbid-explicit-octal: true
   truthy:
     allowed-values: ['true', 'false']
+
+# Site validation overrides and the third-party roles installed from
+# ansible/requirements.yml are git-ignored and not project content.
+ignore: |
+  verify/local/
+  ansible/galaxy_roles/

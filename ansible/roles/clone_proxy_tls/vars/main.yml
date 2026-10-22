@@ -1,0 +1,8 @@
+---
+# The local CA's place in the system trust store, how the store is rebuilt
+# and the PEM bundle the rebuild writes, which every client on the box
+# reads. The anchor is not named safbox-*: the template_os role owns those
+# anchors and removes any it was not configured with.
+clone_proxy_tls_anchor: /etc/pki/ca-trust/source/anchors/local-ca-safbox-proxy.crt
+clone_proxy_tls_rebuild: [update-ca-trust, extract]
+clone_proxy_tls_bundle: /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem

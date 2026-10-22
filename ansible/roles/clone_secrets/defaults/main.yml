@@ -1,0 +1,7 @@
+---
+# clone_secrets role of the first-boot play (task groups safbox-services-1,
+# -2 and -5): the services' per-install secrets as podman secrets.
+
+# The secrets to make (name, hex_bytes, suffix, description), written by
+# the template_services role at build from the services switched on.
+clone_secrets_list_file: "{{ safbox_firstboot_dir }}/secrets.yml"

@@ -1,0 +1,10 @@
+# {{ ansible_managed }}
+# Keycloak's own network, like heimdall.network, with a fixed subnet: the
+# proxy's connections to the pod's loopback port arrive from this network's
+# gateway, not from 127.0.0.1, and Keycloak believes forwarded headers from
+# that address alone (KC_PROXY_TRUSTED_ADDRESSES in keycloak.container).
+# Trusting 127.0.0.0/8 instead leaves its cookies without Secure.
+[Network]
+NetworkName=keycloak
+Subnet={{ template_services_keycloak_subnet }}
+Gateway={{ template_services_keycloak_gateway }}

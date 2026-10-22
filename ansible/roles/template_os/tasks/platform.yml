@@ -1,0 +1,102 @@
+---
+# The OS contract the rest of the appliance relies on. The kickstart
+# installs and enables most of it already; on any other host it is made
+# here. SELinux enforcing is the kickstart's, and the STIG baseline checks
+# it.
+
+- name: Base packages and services
+  tags: [safbox-platform-1]
+  block:
+    - name: Install the base packages
+      ansible.builtin.package:
+        name: "{{ template_os_packages }}"
+        state: present
+
+    - name: Enable and start the base services
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        enabled: true
+        state: started
+      loop: "{{ template_os_services_enabled }}"
+
+- name: Firewall
+  tags: [safbox-platform-3]
+  block:
+    # In the zone the box ends up in (safbox_firewall_zone in group_vars).
+    - name: Allow the base services through the firewall
+      ansible.posix.firewalld:
+        zone: "{{ safbox_firewall_zone }}"
+        service: "{{ item }}"
+        permanent: true
+        immediate: true
+        state: enabled
+      loop: "{{ template_os_firewalld_services }}"
+
+- name: Container runtime
+  tags: [safbox-platform-4]
+  block:
+    - name: Install podman from the distribution repositories
+      ansible.builtin.package:
+        name: "{{ template_os_container_packages }}"
+        state: present
+
+    - name: Create the Quadlet unit directory
+      ansible.builtin.file:
+        path: "{{ template_os_container_quadlet_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Create the registries drop-in directory
+      ansible.builtin.file:
+        path: /etc/containers/registries.conf.d
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Apply the registry policy
+      ansible.builtin.template:
+        src: registries-safbox.conf.j2
+        dest: /etc/containers/registries.conf.d/50-safbox.conf
+        owner: root
+        group: root
+        mode: '0644'
+
+    # The service containers mount the host's CA trust store read-only
+    # (template_os_container_trust_volume), so they trust exactly what the
+    # host trusts, the site's CA bundles included. SELinux lets a container
+    # read the host's certificates only with this boolean; the store keeps
+    # its own label, so the host is unaffected.
+    - name: Let containers read the host's CA trust store
+      ansible.posix.seboolean:
+        name: container_read_certs
+        state: true
+        persistent: true
+
+- name: Persistent journal
+  when: safbox_platform_6 | default(true) | bool
+  tags: [safbox-platform-6]
+  block:
+    - name: Create the journald drop-in directory
+      ansible.builtin.file:
+        path: /etc/systemd/journald.conf.d
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Keep the journal on disk
+      ansible.builtin.template:
+        src: journald-safbox.conf.j2
+        dest: /etc/systemd/journald.conf.d/10-safbox.conf
+        owner: root
+        group: root
+        mode: '0644'
+      notify: Restart journald
+
+    # Restart and flush now (handlers) so the journal is on disk before the
+    # build's validation checks for it.
+    - name: Apply the journal setting now
+      ansible.builtin.meta: flush_handlers

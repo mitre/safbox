@@ -1,0 +1,94 @@
+---
+# A new key and a certificate the local CA signs for exactly the served
+# names (clone_proxy_tls_names), put in place of the proxy's. Written beside the
+# final names and moved into place together, so an interrupted run leaves
+# no half pair; the next run starts again. With clone_proxy_tls_staged_must_verify
+# (a renewal, which replaces a certificate in use), the new certificate must
+# verify against the local CA first, or the old pair stays.
+- name: Generate the server key
+  community.crypto.openssl_privatekey:
+    path: "{{ clone_proxy_tls_key }}.new"
+    type: RSA
+    size: 3072
+    force: true
+    owner: root
+    group: root
+    mode: '0600'
+
+- name: Describe the server certificate, exactly the served names
+  community.crypto.openssl_csr_pipe:
+    privatekey_path: "{{ clone_proxy_tls_key }}.new"
+    common_name: "{{ clone_proxy_tls_names[0] }}"
+    subject_alt_name: "{{ clone_proxy_tls_names | map('regex_replace', '^', 'DNS:') | list }}"
+    basic_constraints: ["CA:FALSE"]
+    basic_constraints_critical: true
+    key_usage: [digitalSignature, keyEncipherment]
+    key_usage_critical: true
+    extended_key_usage: [serverAuth]
+  register: clone_proxy_tls_csr
+
+- name: Sign the server certificate with the local CA
+  community.crypto.x509_certificate:
+    path: "{{ clone_proxy_tls_cert }}.new"
+    provider: ownca
+    csr_content: "{{ clone_proxy_tls_csr.csr }}"
+    ownca_path: "{{ clone_proxy_tls_ca_cert }}"
+    ownca_privatekey_path: "{{ clone_proxy_tls_ca_key }}"
+    ownca_digest: sha256
+    ownca_not_after: "+{{ clone_proxy_tls_days }}d"
+    force: true
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Check the new certificate verifies against the local CA
+  when: clone_proxy_tls_staged_must_verify | bool
+  block:
+    - name: Verify the new certificate against the local CA
+      ansible.builtin.command:
+        argv:
+          - openssl
+          - verify
+          - -purpose
+          - sslserver
+          - -CAfile
+          - "{{ clone_proxy_tls_ca_cert }}"
+          - "{{ clone_proxy_tls_cert }}.new"
+      register: clone_proxy_tls_staged_verify
+      changed_when: false
+      failed_when: false
+
+    - name: Keep the certificate in use when the new one does not verify
+      when: clone_proxy_tls_staged_verify.rc != 0
+      block:
+        - name: Remove the new certificate and key
+          ansible.builtin.file:
+            path: "{{ item }}.new"
+            state: absent
+          loop: ["{{ clone_proxy_tls_key }}", "{{ clone_proxy_tls_cert }}"]
+
+        - name: Stop with the reason
+          ansible.builtin.fail:
+            msg: >-
+              the local CA signed a new certificate that does not verify against it
+              ({{ clone_proxy_tls_staged_verify.stdout }} {{ clone_proxy_tls_staged_verify.stderr }});
+              {{ clone_proxy_tls_cert }} is unchanged. After a change of domain the local CA
+              must be replaced (docs/reference/services.md, "Rotating the local CA")
+
+- name: Move the key and certificate into place
+  ansible.builtin.copy:
+    src: "{{ item.path }}.new"
+    dest: "{{ item.path }}"
+    remote_src: true
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - {path: "{{ clone_proxy_tls_key }}", mode: '0600'}
+    - {path: "{{ clone_proxy_tls_cert }}", mode: '0644'}
+
+- name: Remove the staged copies
+  ansible.builtin.file:
+    path: "{{ item }}.new"
+    state: absent
+  loop: ["{{ clone_proxy_tls_key }}", "{{ clone_proxy_tls_cert }}"]

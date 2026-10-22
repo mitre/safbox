@@ -1,0 +1,54 @@
+---
+# Firefox bookmarks for the box's services: task group safbox-services-4,
+# imported by tasks/main.yml, which applies the group's tag, its switch
+# safbox_services_4 and the desktop guard (see defaults).
+
+- name: Create Firefox's system policy directory
+  ansible.builtin.file:
+    path: "{{ template_services_firefox_policies_file | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+# The bookmarks' default icon is the SAF logo the desktop installs
+# (platform task group 7),
+# embedded in the policy as a data: URI.
+- name: Look for the SAF logo the bookmarks use as their icon
+  ansible.builtin.stat:
+    path: "{{ template_services_firefox_bookmark_icon }}"
+    get_checksum: false
+  register: template_services_firefox_icon_stat
+
+- name: Assert the SAF logo is installed
+  ansible.builtin.assert:
+    that: template_services_firefox_icon_stat.stat.isreg | default(false)
+    fail_msg: >-
+      {{ template_services_firefox_bookmark_icon }} is missing: the Firefox bookmarks'
+      icon is the SAF logo the desktop installs (platform task group 7,
+      safbox_platform_7)
+    quiet: true
+
+- name: Read the SAF logo for the bookmarks' icon
+  ansible.builtin.slurp:
+    src: "{{ template_services_firefox_bookmark_icon }}"
+  register: template_services_firefox_icon
+
+# Heimdall's and Keycloak's own logos ship in the role (files/), read on
+# the controller unchanged (rstrip=false keeps every byte).
+- name: Read the applications' logos for their bookmarks' icons
+  ansible.builtin.set_fact:
+    template_services_firefox_app_icon_data: >-
+      {{ template_services_firefox_app_icon_data | default({})
+         | combine({item.key: lookup('ansible.builtin.file', item.value.file, rstrip=false)}) }}
+  loop: "{{ template_services_firefox_app_icons | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+- name: Set the bookmarks through Firefox's enterprise policy
+  ansible.builtin.template:
+    src: policies.json.j2
+    dest: "{{ template_services_firefox_policies_file }}"
+    owner: root
+    group: root
+    mode: '0644'

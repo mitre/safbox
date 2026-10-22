@@ -7,8 +7,11 @@
 # browser here would.
 #
 #   scripts/validate.sh [--site-inputs FILE] [--ssh-config FILE] \
-#     [--client-inputs FILE] <user@host[:port]> <private-key> <build|release> [label]
+#     [--client-inputs FILE [--client-read-only]] [--results-dir DIR] <user@host[:port]> <private-key> <build|release> [label]
 #
+#   Every scan first gets the guest agents the answer file installs, by
+#   hypervisor (packer/answerfiles/el10/guest-agents.yml); the box's
+#   profiles check the one for the hypervisor they detect.
 #   build    the build VM before the seal (verify/inputs/build.yml)
 #   release  a deployed clone of a sealed template (the profiles' defaults)
 #   --site-inputs FILE    a site's inputs, layered after the context's
@@ -23,25 +26,42 @@
 #                         project and changes safuser's Keycloak password,
 #                         so give it for a clone only, never an appliance in
 #                         use.
+#   --client-read-only    with --client-inputs, for a clone kept for a person:
+#                         the client profile skips its controls that change
+#                         the box (read_only), each reported as skipped with
+#                         the reason, so safuser's first Keycloak sign-in is
+#                         left for that person, and its results are held to
+#                         client-release-read-only.yml instead.
+#   --results-dir DIR     also keep the box profiles' results (safbox and
+#                         safbox-rhel10-stig-overlay) as DIR/<profile>.json,
+#                         with the time each scan ended as the file's
+#                         modification time; DIR is made if missing (mode
+#                         0700). scripts/build.sh gives the build gate one,
+#                         and the seal installs what it holds in the
+#                         template.
 #
 # Results land in .build/validate-<label>-<profile>-<UTC time>.json, with
 # -2, -3, ... before .json when another scan took that name first.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 usage() {
-  echo "usage: $0 [--site-inputs FILE] [--ssh-config FILE] [--client-inputs FILE] <user@host[:port]> <private-key> <build|release> [label]" >&2
+  echo "usage: $0 [--site-inputs FILE] [--ssh-config FILE] [--client-inputs FILE [--client-read-only]] [--results-dir DIR] <user@host[:port]> <private-key> <build|release> [label]" >&2
   exit 2
 }
 
 INPUT_ARGS=()
 SITE_INPUTS=""
 CLIENT_INPUTS=""
+CLIENT_READ_ONLY=0
+RESULTS_DIR=""
 SSH_ARGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --site-inputs) [ -n "${2:-}" ] || usage; SITE_INPUTS=$2; shift 2 ;;
     --ssh-config) [ -n "${2:-}" ] || usage; SSH_ARGS=(--ssh-config-file "$2"); shift 2 ;;
     --client-inputs) [ -n "${2:-}" ] || usage; CLIENT_INPUTS=$2; shift 2 ;;
+    --client-read-only) CLIENT_READ_ONLY=1; shift ;;
+    --results-dir) [ -n "${2:-}" ] || usage; RESULTS_DIR=$2; shift 2 ;;
     -*) usage ;;
     *) break ;;
   esac
@@ -51,12 +71,19 @@ TARGET=$1
 KEY=$2
 CONTEXT=$3
 LABEL=${4:-$3}
+AGENT_INPUTS="$ROOT/packer/answerfiles/el10/guest-agents.yml"
+[ -f "$AGENT_INPUTS" ] || { echo "validate.sh: $AGENT_INPUTS is missing" >&2; exit 2; }
+INPUT_ARGS=("$AGENT_INPUTS")
 case "$CONTEXT" in
-  build) INPUT_ARGS=("$ROOT/verify/inputs/build.yml") ;;
+  build) INPUT_ARGS+=("$ROOT/verify/inputs/build.yml") ;;
   release) ;;
   *) usage ;;
 esac
 if [ -n "$SITE_INPUTS" ]; then INPUT_ARGS+=("$(realpath "$SITE_INPUTS")"); fi
+if [ "$CLIENT_READ_ONLY" = 1 ] && [ -z "$CLIENT_INPUTS" ]; then
+  echo "validate.sh: --client-read-only is for the client profile, which runs only with --client-inputs" >&2
+  exit 2
+fi
 if [ -n "$CLIENT_INPUTS" ]; then
   [ "$CONTEXT" = release ] || { echo "validate.sh: --client-inputs is for the release context only" >&2; exit 2; }
   # CINC Auditor reads an inputs file by its extension.
@@ -77,6 +104,10 @@ for tool in cinc-auditor saf; do
 done
 mkdir -p "$ROOT/.build"
 chmod 700 "$ROOT/.build"
+if [ -n "$RESULTS_DIR" ]; then
+  (umask 077 && mkdir -p "$RESULTS_DIR")
+  RESULTS_DIR=$(realpath "$RESULTS_DIR")
+fi
 
 # A lockfile left by a manual scan pins the dependency refs it resolved then
 # and is read even after inspec.yml changes. Remove any and write none. rm -f,
@@ -125,17 +156,33 @@ scan() {
   fi
 }
 
+# keep PROFILE: with --results-dir, copy the results the last scan left as
+# DIR/PROFILE.json, keeping the time the scan ended.
+keep() {
+  if [ -n "$RESULTS_DIR" ]; then cp -p -- "$results" "$RESULTS_DIR/$1.json"; fi
+}
+
 failed=0
 box=(-t "ssh://$TARGET" -i "$KEY" --sudo ${SSH_ARGS[@]+"${SSH_ARGS[@]}"})
 scan safbox "safbox-$CONTEXT.yml" -- "${box[@]}"
+keep safbox
 safbox_results=$results
 scan safbox-rhel10-stig-overlay "stig-$CONTEXT.yml" -- "${box[@]}"
+keep safbox-rhel10-stig-overlay
 if [ -n "$CLIENT_INPUTS" ]; then
   # From this machine, as a browser: the box's address is the target's host.
   address=${TARGET#*@}
   address=${address%:*}
   mkdir -m 700 "$scratch/client"
-  scan safbox-client client-release.yml "$CLIENT_INPUTS" -- -t local:// \
-    --input "address=$address" "work_dir=$scratch/client" "hdf_file=$safbox_results"
+  client=(--input "address=$address" "work_dir=$scratch/client" "hdf_file=$safbox_results")
+  threshold="client-release.yml"
+  if [ "$CLIENT_READ_ONLY" = 1 ]; then
+    # A clone kept for a person: the controls that change the box are
+    # skipped, so safuser's first Keycloak sign-in is left for that person.
+    echo "validate.sh: safbox-client read-only (--client-read-only): its controls that change the box are skipped, each reported as skipped (Not Reviewed) with the reason"
+    client+=(read_only=true)
+    threshold="client-release-read-only.yml"
+  fi
+  scan safbox-client "$threshold" "$CLIENT_INPUTS" -- -t local:// "${client[@]}"
 fi
 exit "$failed"

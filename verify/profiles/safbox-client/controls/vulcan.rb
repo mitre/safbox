@@ -10,6 +10,12 @@ client = safbox_client(input('address'), domain, input('work_dir'))
 vulcan = client.url('vulcan')
 on = services.include?('vulcan') && services.include?('proxy')
 admin = "admin@#{domain}"
+# read_only, for a box kept for a person: the controls that change the box
+# are skipped, each with the reason. Their read_only only_if comes after
+# the switched-off one, and only when that one passes, because a control's
+# last only_if names its skip: a switched-off service stays Not Applicable
+# under its own reason. The body stops too, before any request.
+read_only = input('read_only')
 
 control 'safbox-client-vulcan-1' do
   impact 1.0
@@ -51,7 +57,9 @@ control 'safbox-client-vulcan-2' do
     this control's impact to 1.0.
   JUSTIFICATION
   only_if('Vulcan or the proxy is switched off', impact: 0.0) { on }
+  only_if('read_only: the box is kept for a person, and the sign-up this control posts makes a Vulcan account') { !read_only } if on
   next unless on
+  next if read_only
 
   client.new_session('vulcan-signup')
   sign_up = client.request("-w '%{stderr}%{http_code}' #{vulcan}/users/sign_up")
@@ -79,7 +87,9 @@ control 'safbox-client-vulcan-3' do
   title "Vulcan's administrator signs in through the sign-in form and creates a project"
   desc "admin@<domain>, Vulcan's only local account, signs in through the sign-in form with the password first boot generated and is redirected to the root; the session is the administrator's, which may list the users, and creates a discoverable project that is then listed. Creates a project on the box."
   only_if('Vulcan or the proxy is switched off', impact: 0.0) { on }
+  only_if('read_only: the box is kept for a person, and this control creates a Vulcan project') { !read_only } if on
   next unless on
+  next if read_only
 
   client.new_session('vulcan-admin')
   token = client.csrf_token(client.request("#{vulcan}/users/sign_in").stdout)

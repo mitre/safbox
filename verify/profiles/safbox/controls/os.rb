@@ -24,7 +24,7 @@ end
 control 'safbox-os-3' do
   impact 1.0
   title 'The console boots to the interface the image was built for'
-  desc 'A SAFBox is headless unless it was built with the desktop: no display manager, booting to the text console. A desktop SAFBox boots to the GNOME login screen, which shows the SAF logo, and gives every new user the SAF wallpaper, profile picture and terminal palette as defaults the user can change.'
+  desc 'A SAFBox is headless unless it was built with the desktop: no display manager, booting to the text console. A desktop SAFBox boots to the GNOME login screen, which shows the SAF logo, and gives every new user the SAF wallpaper, profile picture and terminal palette, and Firefox in the dash beside the distribution\'s default favourites, as defaults the user can change.'
 
   if input('desktop')
     describe package('gdm') do
@@ -48,6 +48,7 @@ control 'safbox-os-3' do
      '/etc/dconf/db/gdm.d/10-safbox-logo',
      '/etc/dconf/db/local.d/10-safbox-background',
      '/etc/dconf/db/local.d/10-safbox-terminal',
+     '/etc/dconf/db/local.d/10-safbox-shell',
      '/etc/accountsservice/user-templates/standard',
      '/etc/accountsservice/user-templates/administrator'].each do |path|
       describe file(path) do
@@ -75,8 +76,21 @@ control 'safbox-os-3' do
       its(["org/gnome/Ptyxis/Profiles/#{terminal_profile}", 'palette']) { should eq "'saf'" }
     end
 
-    # Defaults, not locks: a user may choose another wallpaper or palette.
-    describe command('grep -rhxE "/org/gnome/(desktop/background|Ptyxis)/.*" /etc/dconf/db/local.d/locks') do
+    # The dash: GNOME Shell's default favourites on EL10, in order, with the
+    # RPM Firefox's desktop file first (the default names only the Flatpak's).
+    favorites = %w[firefox.desktop org.mozilla.Firefox.desktop org.gnome.Calendar.desktop
+                   org.gnome.Nautilus.desktop org.gnome.Software.desktop org.gnome.Ptyxis.desktop
+                   org.gnome.TextEditor.desktop org.gnome.Calculator.desktop]
+    describe ini('/etc/dconf/db/local.d/10-safbox-shell') do
+      its(['org/gnome/shell', 'favorite-apps']) { should eq "[#{favorites.map { |app| "'#{app}'" }.join(', ')}]" }
+    end
+    describe file('/usr/share/applications/firefox.desktop') do
+      it { should be_file }
+    end
+
+    # Defaults, not locks: a user may choose another wallpaper or palette,
+    # and pin or unpin apps in the dash.
+    describe command('grep -rhxE "/org/gnome/((desktop/background|Ptyxis)/.*|shell/favorite-apps)" /etc/dconf/db/local.d/locks') do
       its('stdout') { should be_empty }
     end
   else
@@ -86,6 +100,32 @@ control 'safbox-os-3' do
     describe command('systemctl get-default') do
       its('stdout.strip') { should eq 'multi-user.target' }
     end
+  end
+end
+
+control 'safbox-os-4' do
+  impact 0.3
+  title 'The desktop console starts at 1920x1080'
+  desc "The console's display adapter prefers 1024x768 until a console client sends its window size, and GNOME cannot follow the client's window on it. GNOME's system-wide monitor configuration gives the login screen and every session 1920x1080 on that display (Virtual-1, which has no EDID), in physical layout mode; a user may choose another size in Settings, which GNOME keeps in the user's own configuration."
+  only_if('This is not a desktop build', impact: 0.0) { input('desktop') }
+
+  monitors = '/etc/xdg/monitors.xml'
+  describe file(monitors) do
+    it { should be_file }
+    its('owner') { should eq 'root' }
+    its('group') { should eq 'root' }
+    its('mode') { should cmp '0644' }
+  end
+  describe xml(monitors) do
+    its(['/monitors/@version']) { should eq ['2'] }
+    its(['//configuration/layoutmode']) { should eq ['physical'] }
+    its(['//monitorspec/connector']) { should eq ['Virtual-1'] }
+    its(['//monitorspec/vendor']) { should eq ['unknown'] }
+    its(['//monitorspec/product']) { should eq ['unknown'] }
+    its(['//monitorspec/serial']) { should eq ['unknown'] }
+    its(['//monitor/mode/width']) { should eq ['1920'] }
+    its(['//monitor/mode/height']) { should eq ['1080'] }
+    its(['//monitor/mode/rate']) { should eq ['60.000'] }
   end
 end
 
@@ -123,6 +163,38 @@ control 'safbox-secureboot-1' do
   end
 end
 
+control 'safbox-initramfs-1' do
+  impact 0.5
+  title 'Every kernel boots from a host-only initramfs that adds each supported hypervisor\'s disk drivers'
+  desc 'A host-only initramfs carries only the drivers of the machine it was made on, the build VM\'s, so a clone on another hypervisor\'s disk controller never finds its root disk. A dracut drop-in adds the drivers in input initramfs_drivers to every initramfs dracut makes, now and for later kernels, and each installed kernel\'s holds them. The initramfs stays host-only: a generic one (dracut-config-generic) also carries every GPU\'s firmware, and the desktop image\'s then leaves no room in /boot for the kernels dnf keeps.'
+
+  drivers = input('initramfs_drivers')
+  describe package('dracut-config-generic') do
+    it { should_not be_installed }
+  end
+  describe file('/etc/dracut.conf.d/90-safbox-storage-drivers.conf') do
+    it { should be_file }
+    it { should be_owned_by 'root' }
+    its('mode') { should cmp '0644' }
+    drivers.each do |driver|
+      its('content') { should match(/^add_drivers\+=" (.* )?#{Regexp.escape(driver)}( .*)? "$/) }
+    end
+  end
+  images = command("find /boot -maxdepth 1 -name 'initramfs-*.img'").stdout.split.reject { |path| path.match?(/rescue|kdump/) }
+  describe 'Initramfs images of the installed kernels' do
+    subject { images }
+    it { should_not be_empty }
+  end
+  images.each do |image|
+    describe command("lsinitrd #{image}") do
+      its('exit_status') { should eq 0 }
+      drivers.each do |driver|
+        its('stdout') { should match(%r{/#{Regexp.escape(driver)}\.ko(\.[a-z]+)?$}) }
+      end
+    end
+  end
+end
+
 control 'safbox-fips-1' do
   impact 1.0
   title 'The kernel runs in FIPS mode, enabled at install'
@@ -156,17 +228,41 @@ control 'safbox-fips-3' do
   end
 end
 
+# The guest agents the image ships, keyed by the hypervisor each serves
+# (input guest_agents, from the install layer's answer file), with string
+# keys whichever way the inputs were read; and the hypervisor this box runs
+# on, as systemd detects it.
+guest_agents = input('guest_agents').to_h { |virt, agent| [virt.to_s, agent.to_h.transform_keys(&:to_s)] }
+detected_virt = command('systemd-detect-virt').stdout.strip
+
 control 'safbox-system-1' do
   impact 1.0
-  title 'The guest agent, cloud-init, sshd and chronyd are enabled and the firewall allows SSH'
-  desc 'A clone is configured by cloud-init, reports its address through the guest agent, keeps time and is reached over SSH through the firewall.'
+  title 'The guest agent for this hypervisor, cloud-init, sshd and chronyd are enabled and running, and the firewall allows SSH'
+  desc 'A clone is configured by cloud-init, reports its address through the guest agent, keeps time and is reached over SSH through the firewall. The image carries a guest agent for each hypervisor it runs on (input guest_agents); the one for the hypervisor systemd detects must run, and every one is installed and enabled, so it starts when the image moves to its hypervisor.'
 
-  %w[qemu-guest-agent cloud-init sshd chronyd].each do |name|
+  describe "The guest agent for the detected hypervisor (#{detected_virt})" do
+    subject { guest_agents[detected_virt] }
+    it { should_not be_nil }
+  end
+  guest_agents.each_value do |agent|
+    describe package(agent['package']) do
+      it { should be_installed }
+    end
+    describe service(agent['service']) do
+      it { should be_enabled }
+    end
+  end
+  if guest_agents.key?(detected_virt)
+    describe service(guest_agents[detected_virt]['service']) do
+      it { should be_running }
+    end
+  end
+  %w[cloud-init sshd chronyd].each do |name|
     describe service(name) do
       it { should be_enabled }
     end
   end
-  %w[qemu-guest-agent sshd chronyd].each do |name|
+  %w[sshd chronyd].each do |name|
     describe service(name) do
       it { should be_running }
     end
@@ -231,16 +327,36 @@ end
 
 control 'safbox-guest-agent-1' do
   impact 1.0
-  title 'The guest agent cannot run commands or touch files in the guest'
-  desc 'With guest-exec or guest-file-* enabled, a hypervisor administrator could run commands and read or write files inside the appliance. The distribution allow list leaves them out and must be unmodified.'
+  title 'No guest agent can run commands or touch files in the guest'
+  desc 'A guest agent that runs programs or reads and writes files on request (qemu-guest-agent\'s guest-exec and guest-file-*, open-vm-tools\' guest operations) would let a hypervisor administrator into the appliance. Each agent the image ships (input guest_agents) is the package as shipped, its own configuration unmodified, and keeps those off: by the command line the running agent was given (the distribution\'s allow list), or by the settings of the configuration file the install layer writes, which hold on every hypervisor because the image moves between them.'
 
-  agent = service('qemu-guest-agent').params['MainPID']
-  describe file("/proc/#{agent}/cmdline") do
-    its('content') { should match(/--allow-rpcs=/) }
-    its('content') { should_not match(/guest-exec|guest-file-/) }
-  end
-  describe command('rpm -V qemu-guest-agent') do
-    its('stdout') { should be_empty }
+  guest_agents.each do |virt, agent|
+    describe command("rpm -V #{agent['package']}") do
+      its('stdout') { should be_empty }
+    end
+    if agent['config_file']
+      describe file(agent['config_file']) do
+        it { should be_file }
+      end
+      describe ini(agent['config_file']) do
+        agent['settings'].to_h.each do |section, keys|
+          keys.to_h.each do |key, value|
+            its([section.to_s, key.to_s]) { should cmp value.to_s }
+          end
+        end
+      end
+    end
+    next unless virt == detected_virt && (agent['cmdline_includes'] || agent['cmdline_excludes'])
+
+    pid = service(agent['service']).params['MainPID']
+    describe file("/proc/#{pid}/cmdline") do
+      Array(agent['cmdline_includes']).each do |pattern|
+        its('content') { should include pattern }
+      end
+      Array(agent['cmdline_excludes']).each do |pattern|
+        its('content') { should_not include pattern }
+      end
+    end
   end
 end
 
@@ -257,19 +373,6 @@ control 'safbox-podman-1' do
   end
   describe selinux.booleans.where(name: 'container_read_certs') do
     it { should be_on }
-  end
-end
-
-control 'safbox-podman-2' do
-  impact 1.0
-  title 'The example Quadlet unit runs'
-  desc 'A build that installs the example container proves Quadlet units start at boot.'
-  only_if('The example container is not installed', impact: 0.0) do
-    file('/etc/containers/systemd/safbox-example.container').exist?
-  end
-
-  describe service('safbox-example') do
-    it { should be_running }
   end
 end
 

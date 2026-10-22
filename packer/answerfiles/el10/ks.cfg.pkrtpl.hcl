@@ -27,9 +27,9 @@ firstboot --disable
 # space is shared 40/40/10/10 between /home (automation content, rootless
 # container storage), /var (container images), /var/log and /var/log/audit:
 # --percent is a share of the space left after the fixed volumes (blivet
-# grow_lvm), and --size cannot be given with it. The first-boot hook
-# 10-grow-disk.sh (base role) hands a clone's enlarged disk out by the same
-# shares; keep the two in step.
+# grow_lvm), and --size cannot be given with it. The first-boot play's
+# clone_grow_disk role (ansible/roles/clone_grow_disk) hands a clone's enlarged
+# disk out by the same shares; keep the two in step.
 zerombr
 clearpart --all --initlabel --disklabel=gpt
 part /boot/efi --fstype=efi --size=600
@@ -80,8 +80,46 @@ mokutil
 # which works unchanged for Rocky and AlmaLinux. --erroronfail turns a missing
 # network route into an immediate, visible install failure instead of a
 # silent template with no guest agent.
-dnf -y install qemu-guest-agent cloud-init
-systemctl enable qemu-guest-agent cloud-init
+#
+# One image runs on every supported hypervisor, so it carries each one's
+# guest agent: qemu-guest-agent (Proxmox, KVM) and open-vm-tools (vSphere),
+# which cloud-init's VMware datasource also needs to read guestinfo. Each
+# starts only on its own hypervisor: qemu-guest-agent is bound to its virtio
+# port, vmtoolsd has ConditionVirtualization=vmware.
+# packer/answerfiles/el10/guest-agents.yml describes them to the gates.
+dnf -y install qemu-guest-agent open-vm-tools cloud-init
+systemctl enable qemu-guest-agent vmtoolsd cloud-init
+
+# open-vm-tools: no guest operations, which would let a vCenter user with
+# guest credentials run programs and move files in the guest (the same
+# exposure qemu-guest-agent's guest-exec and guest-file-* would open), and
+# no customization scripts from a vSphere customization spec. Not a file of
+# the package, so rpm -V still checks the package as shipped.
+cat > /etc/vmware-tools/tools.conf <<'EOC'
+[guestoperations]
+disabled = true
+
+[deployPkg]
+enable-custom-scripts = false
+EOC
+chmod 0644 /etc/vmware-tools/tools.conf
+
+# The initramfs stays host-only, which carries only the build VM's disk
+# drivers (virtio, ahci): a clone on vSphere's PVSCSI or NVMe controller
+# would never find its root disk. This drop-in adds every supported
+# hypervisor's disk drivers to each initramfs dracut makes, now and for
+# later kernels. A generic initramfs (dracut-config-generic) would carry
+# them too, but also every GPU's firmware: the desktop image's grew to
+# about 245 MB per kernel, too big for the kernels dnf keeps in /boot.
+# Network drivers load from the root filesystem and are not needed here.
+cat > /etc/dracut.conf.d/90-safbox-storage-drivers.conf <<'EOC'
+add_drivers+=" ahci nvme virtio_blk virtio_scsi vmw_pvscsi "
+EOC
+chmod 0644 /etc/dracut.conf.d/90-safbox-storage-drivers.conf
+
+# Anaconda made the installed kernel's initramfs before the drop-in
+# existed; rebuild every installed kernel's now.
+dracut -f --regenerate-all
 
 # Passwordless sudo for the build user during the build only. The seal step
 # removes the build user.
@@ -89,8 +127,10 @@ echo "${build_user} ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/90-${build_user}
 chmod 0440 /etc/sudoers.d/90-${build_user}
 visudo -cf /etc/sudoers.d/90-${build_user}
 
-# Which cloud-init datasources the image will consult; the Packer source for
-# each platform passes its own list (Proxmox: NoCloud). The 'None' fallback
+# Which cloud-init datasources the image will consult, in order (the
+# variable datasource_list; by default NoCloud, ConfigDrive, VMware, so one
+# image takes Proxmox's cloud-init drive, a seed ISO or vSphere guestinfo).
+# ds-identify enables only those whose source it finds. The 'None' fallback
 # is required: without it, a boot with no datasource (the build VM's own
 # first boot) never completes cloud-init, and sshd, which is ordered after
 # it, never starts (observed on two builds). The price is that the None

@@ -1,0 +1,45 @@
+{% from 'secrets.j2' import secret_lines, secret_conditions with context %}
+# {{ ansible_managed }}
+# Keycloak's PostgreSQL, in the shape of heimdall-db.container and from the
+# same pinned image, the sclorg PostgreSQL 18 image on CentOS Stream 9
+# (Keycloak's database guide lists PostgreSQL 18 as supported). Keycloak
+# signs in as a role of its own that owns its database, not as the
+# superuser postgres. As there: POSTGRESQL_* variables (the password from
+# the database password secret first boot makes, which Keycloak reads
+# too), data in /var/lib/pgsql/data owned by uid 26, and readiness checked
+# over TCP because the image's first-start server listens on its socket
+# only.
+# Settings and access list: keycloak-postgresql.conf
+# and keycloak-pg_hba.conf (templates/postgresql.conf.j2, pg_hba.conf.j2).
+[Unit]
+Description=Keycloak PostgreSQL
+After=safbox-firstboot.service
+
+[Container]
+Image={{ template_services_keycloak_db_image }}
+ContainerName=keycloak-db
+Pod=keycloak.pod
+Volume=keycloak-db.volume:/var/lib/pgsql/data
+Volume={{ template_services_postgresql_conf_dir }}/keycloak-postgresql.conf:/opt/app-root/src/postgresql-cfg/safbox.conf:ro,Z
+Volume={{ template_services_postgresql_conf_dir }}/keycloak-pg_hba.conf:/opt/app-root/src/pg_hba.conf:ro,Z
+Environment=POSTGRESQL_USER={{ template_services_keycloak_db_user }}
+Environment=POSTGRESQL_DATABASE={{ template_services_keycloak_db_name }}
+{{ secret_lines('keycloak-db') -}}
+HealthCmd=pg_isready -h 127.0.0.1 -U {{ template_services_keycloak_db_user }} -d {{ template_services_keycloak_db_name }}
+HealthInterval=30s
+HealthTimeout=60s
+HealthRetries=5
+HealthStartPeriod=80s
+Notify=healthy
+Memory={{ template_services_keycloak_db_memory }}
+NoNewPrivileges=true
+
+[Service]
+Restart=always
+# Started only once first boot has made the secret it reads.
+{{ secret_conditions(['keycloak-db']) -}}
+# The first start initialises the database and waits for a healthy check.
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target

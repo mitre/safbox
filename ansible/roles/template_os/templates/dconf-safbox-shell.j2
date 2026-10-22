@@ -1,0 +1,6 @@
+# {{ ansible_managed }}
+# A new user's dash (Activities favourites): the distribution's default
+# list with the installed Firefox added. A default, not a lock (no locks/
+# entry), so the user may pin and unpin apps.
+[org/gnome/shell]
+favorite-apps=[{% for app in template_os_desktop_favorite_apps %}'{{ app }}'{{ ', ' if not loop.last }}{% endfor %}]

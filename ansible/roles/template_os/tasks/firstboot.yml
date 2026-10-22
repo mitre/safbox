@@ -1,0 +1,125 @@
+---
+# The first-boot play and its unit: task group safbox-base-1, imported by
+# tasks/main.yml, which applies its tag.
+
+# First boot is a local play run by the box's own ansible-core and its
+# collections (community.crypto for the proxy's certificate), which the
+# template_tools role installs; there is no network to fetch them then.
+- name: Refuse first boot without the box's ansible-core
+  ansible.builtin.assert:
+    that: safbox_tools_3 | default(true) | bool
+    fail_msg: >-
+      The first-boot play runs on the box's ansible-core and collections
+      (tools task group 3): leave safbox_tools_3 on.
+    quiet: true
+
+- name: Install the packages first boot uses
+  ansible.builtin.package:
+    name: "{{ template_os_firstboot_packages }}"
+    state: present
+
+- name: Create the root-only first-boot directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0700'
+  loop:
+    - "{{ safbox_etc_dir }}"
+    - "{{ safbox_state_dir }}"
+
+# It runs as root: root's alone to change. Only the play's YAML, its
+# configuration and the clone_ roles' YAML and the files they run
+# (grow_disk's script), so nothing else in the checkout reaches the
+# image.
+- name: Create the first-boot play's directories
+  ansible.builtin.file:
+    path: "{{ safbox_firstboot_dir }}/{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  loop: >-
+    {{ ['', 'roles'] + template_os_firstboot_roles_tree | selectattr('state', 'eq', 'directory')
+       | map(attribute='path') | map('regex_replace', '^', 'roles/') | list }}
+  loop_control:
+    label: "{{ safbox_firstboot_dir }}/{{ item }}"
+
+- name: Install the first-boot play
+  ansible.builtin.copy:
+    src: "{{ template_os_firstboot_play_src }}/{{ item.src }}"
+    dest: "{{ safbox_firstboot_dir }}/{{ item.dest }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop: "{{ template_os_firstboot_play_files }}"
+  loop_control:
+    label: "{{ safbox_firstboot_dir }}/{{ item.dest }}"
+
+- name: Install the first-boot play's roles
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ safbox_firstboot_dir }}/roles/{{ item.path }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop: >-
+    {{ template_os_firstboot_roles_tree | selectattr('state', 'eq', 'file')
+       | selectattr('path', 'search', '[.]yml$|^[^/]+/files/') | list }}
+  loop_control:
+    label: "{{ safbox_firstboot_dir }}/roles/{{ item.path }}"
+
+- name: Write the first-boot play's vars from the site's switches
+  ansible.builtin.template:
+    src: firstboot-vars.yml.j2
+    dest: "{{ safbox_firstboot_dir }}/vars.yml"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Install the first-boot unit
+  ansible.builtin.template:
+    src: safbox-firstboot.service.j2
+    dest: "/etc/systemd/system/{{ template_os_firstboot_unit }}"
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Reload systemd units
+
+- name: Register the unit with systemd before enabling it
+  ansible.builtin.meta: flush_handlers
+
+# Enabled, never started here: starting it in the build would run first
+# boot inside the template and bake per-install state into the image.
+- name: Enable the first-boot unit
+  ansible.builtin.systemd_service:
+    name: "{{ template_os_firstboot_unit }}"
+    enabled: true
+
+# The seal leaves /etc/machine-id "uninitialized", so a clone's first boot
+# is a systemd First Boot, which may reset every unit to its preset policy,
+# and the distribution's presets end in "disable *". One preset file keeps
+# every SAFBox unit the build enables enabled; units without an [Install]
+# section, and the units Quadlet generates, are not touched by a preset.
+# A marked block, so the template_hardening role can add usbguard to the
+# same file.
+- name: Create the systemd preset directory
+  ansible.builtin.file:
+    path: "{{ safbox_preset_file | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Keep every SAFBox unit enabled through a First Boot preset
+  ansible.builtin.blockinfile:
+    path: "{{ safbox_preset_file }}"
+    marker: "# {mark} SAFBox units (template_os role)"
+    block: |
+      enable safbox-*.service
+      enable safbox-*.timer
+    create: true
+    owner: root
+    group: root
+    mode: '0644'

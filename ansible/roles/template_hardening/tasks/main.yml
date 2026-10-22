@@ -1,0 +1,277 @@
+---
+- name: RHEL 10 STIG with Ansible Lockdown
+  when: safbox_hardening_1 | default(true) | bool
+  tags: [safbox-hardening-1]
+  vars:
+    template_hardening_lockdown_record: >-
+      {{ lookup('ansible.builtin.first_found',
+                lookup('ansible.builtin.config', 'DEFAULT_ROLES_PATH')
+                | map('regex_replace', '$',
+                      '/' ~ safbox_hardening_lockdown.name ~ '/' ~ template_hardening_lockdown_install_info)
+                | list, errors='ignore') }}
+  block:
+    # ansible-galaxy records the commit it installed from; a role installed
+    # some other way, or left over at another version, is refused.
+    - name: Refuse any Lockdown role but the pinned release
+      ansible.builtin.assert:
+        that:
+          - template_hardening_lockdown_record | length > 0
+          - (lookup('ansible.builtin.file', template_hardening_lockdown_record) | from_yaml).version
+            == safbox_hardening_lockdown.commit
+        fail_msg: >-
+          {{ safbox_hardening_lockdown.name }} {{ safbox_hardening_lockdown.version }}
+          ({{ safbox_hardening_lockdown.commit }}) is not installed on this machine;
+          run 'ansible-galaxy install -r requirements.yml' in the ansible/ directory.
+        quiet: true
+
+    # 700410 is off, so Lockdown's prelim no longer installs these (defaults).
+    - name: Install the packages Lockdown's tasks need
+      ansible.builtin.package:
+        name: "{{ template_hardening_lockdown_packages }}"
+        state: present
+
+    # Account lockout. Lockdown puts pam_faillock in the PAM stacks
+    # (RHEL-10-600600, 600610) and holds a lock until an administrator
+    # releases it (RHEL-10-600425) only with rhel10stig_disruption_high,
+    # which a site may turn off; without them no failed password locks any
+    # account. They are applied here, before Lockdown, whichever way that
+    # is set, the stacks through authselect, the distribution's tool for
+    # them; rhel10stig_uses_authselect tells Lockdown so, and 600600 and
+    # 600610 then only check the with-faillock feature
+    # (ansible/group_vars/all/main.yml). Lockdown sets the rest
+    # of /etc/security/faillock.conf (3 failures in 15 minutes, no
+    # even_deny_root: root's lockout is a deviation in the STIG overlay).
+    # admin, which logs in with a key and has passwordless sudo, runs no
+    # PAM authentication and so is never locked out; admin releases a
+    # locked account with faillock --reset.
+    - name: Read the authselect configuration
+      ansible.builtin.command: authselect current
+      changed_when: false
+      register: template_hardening_authselect
+
+    # Password hashing (RHEL-10-600700, 600710, 600720): the distribution's
+    # local authselect profile hashes with yescrypt, and Lockdown's tasks
+    # cannot change that (600710 is off, group_vars). SAFBox selects its own
+    # copy of the profile whose pam_unix password lines in system-auth and
+    # password-auth hash with SHA-512 and rhel10stig_pam_rounds rounds, with
+    # the features already enabled plus with-faillock. --force: Lockdown's
+    # rules edit the authselect-made stacks directly, and authselect
+    # otherwise refuses to replace edited files; Lockdown runs after this
+    # and applies its edits again.
+    - name: Create SAFBox's authselect profile from the distribution's local one
+      ansible.builtin.command:
+        argv: [authselect, create-profile, "{{ template_hardening_authselect_profile }}",
+               --base-on, "{{ template_hardening_authselect_base }}"]
+        creates: "/etc/authselect/custom/{{ template_hardening_authselect_profile }}"
+
+    - name: Hash passwords with SHA-512 and the STIG's rounds in the profile
+      ansible.builtin.replace:
+        path: "/etc/authselect/custom/{{ template_hardening_authselect_profile }}/{{ item }}"
+        regexp: '^(password\s+sufficient\s+pam_unix\.so) (yescrypt|sha512 rounds=\d+) '
+        replace: '\1 sha512 rounds={{ rhel10stig_pam_rounds }} '
+      loop: [system-auth, password-auth]
+      register: template_hardening_authselect_hashing
+
+    - name: Select the profile with pam_faillock
+      when: >-
+        template_hardening_authselect_hashing is changed
+        or ('custom/' ~ template_hardening_authselect_profile) not in template_hardening_authselect.stdout
+        or 'with-faillock' not in template_hardening_authselect.stdout
+      ansible.builtin.command:
+        argv: >-
+          {{ ['authselect', 'select', 'custom/' ~ template_hardening_authselect_profile]
+             + (template_hardening_authselect.stdout_lines | select('match', '^- ')
+                | map('regex_replace', '^- ', '') | union(['with-faillock']))
+             + ['--force'] }}
+      changed_when: true
+
+    - name: Hold an account lock until an administrator releases it
+      ansible.builtin.lineinfile:
+        path: /etc/security/faillock.conf
+        regexp: '^#?\s*unlock_time\s*='
+        line: unlock_time = 0
+
+    - name: Apply the RHEL 10 STIG with the pinned Lockdown role
+      ansible.builtin.include_role:
+        name: "{{ safbox_hardening_lockdown.name }}"
+        apply:
+          tags: [safbox-hardening-1]
+
+    # STIG settings SAFBox applies itself, where Lockdown's task is off
+    # because it fails or is harmful (the Lockdown section of group_vars)
+    # or cannot reach accounts first boot makes.
+
+    - name: Read the setup package's account declarations
+      ansible.builtin.slurp:
+        src: "{{ template_hardening_sysusers_vendor }}"
+      register: template_hardening_sysusers_vendor_file
+
+    - name: Create the local sysusers.d directory
+      ansible.builtin.file:
+        path: "{{ template_hardening_sysusers_override | dirname }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    # Replaces the package's file, so neither systemd-sysusers nor rpm
+    # recreates the accounts removed below.
+    - name: Declare the setup package's accounts without the removed ones
+      ansible.builtin.copy:
+        content: |
+          # Written by the SAFBox template_hardening role: {{ template_hardening_sysusers_vendor }}
+          # without {{ template_hardening_unneeded_accounts | join(', ') }} (RHEL-10-600450).
+          {% for line in (template_hardening_sysusers_vendor_file.content | b64decode).splitlines()
+             | reject('match', '^u\s+(' ~ (template_hardening_unneeded_accounts | join('|')) ~ ')\s') %}
+          {{ line }}
+          {% endfor %}
+        dest: "{{ template_hardening_sysusers_override }}"
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Remove accounts that have no purpose on SAFBox (RHEL-10-600450)
+      ansible.builtin.user:
+        name: "{{ item }}"
+        state: absent
+      loop: "{{ template_hardening_unneeded_accounts }}"
+
+    # AIDE: the configuration and the daily check; the database is made on
+    # a deployed box's first boot (template_hardening_aide_init_unit), and the seal
+    # removes any the build left.
+    - name: Configure AIDE (RHEL-10-200631, 200632, 200634, 200635)
+      ansible.builtin.template:
+        src: aide.conf.j2
+        dest: "{{ template_hardening_aide_conf }}"
+        owner: root
+        group: root
+        mode: '0600'
+
+    - name: Check file integrity every day and mail root the report (RHEL-10-200633)
+      ansible.builtin.template:
+        src: aide-daily.j2
+        dest: "{{ template_hardening_aide_daily }}"
+        owner: root
+        group: root
+        mode: '0700'
+
+    - name: Install the unit that makes the AIDE database on first boot
+      ansible.builtin.template:
+        src: safbox-aide-init.service.j2
+        dest: "/etc/systemd/system/{{ template_hardening_aide_init_unit }}"
+        owner: root
+        group: root
+        mode: '0644'
+
+    # Enabled, not started: it runs on a clone, once its first boot is done.
+    - name: Enable the unit that makes the AIDE database on first boot
+      ansible.builtin.systemd_service:
+        name: "{{ template_hardening_aide_init_unit }}"
+        enabled: true
+        daemon_reload: true
+
+    # The seal leaves /etc/machine-id "uninitialized", so a clone's first
+    # boot is a systemd First Boot, which may reset every unit to its preset
+    # policy, and the distribution's presets end in "disable *": that would
+    # disable usbguard, which the STIG requires (RHEL-10-200561) and the
+    # Lockdown role enables when that rule and its CAT II rules are on (the
+    # safbox profile's usbguard input). SAFBox's one preset file (the
+    # template_os role's, which covers the AIDE unit) keeps it enabled.
+    - name: Keep usbguard enabled through a First Boot preset
+      ansible.builtin.lineinfile:
+        path: "{{ safbox_preset_file }}"
+        line: enable usbguard.service
+        state: "{{ 'present' if template_hardening_usbguard_enabled else 'absent' }}"
+      vars:
+        template_hardening_usbguard_enabled: >-
+          {{ rhel10stig_cat2 | default(true) | bool and rhel10stig_200561 | default(true) | bool }}
+
+    # useradd -m, which cloud-init uses for admin and first boot for
+    # safuser, copies /etc/skel with its modes, and the packages that own
+    # its dotfiles install them 0644. Set here, after every package install,
+    # and again on every run, since an update of the owning package
+    # restores its mode.
+    - name: Find the dotfiles new accounts start with
+      ansible.builtin.find:
+        paths: "{{ template_hardening_skel_dir }}"
+        patterns: ['.*']
+        hidden: true
+        file_type: file
+      register: template_hardening_skel_dotfiles
+
+    - name: Give new accounts' dotfiles mode 0740 or less (RHEL-10-400235)
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        mode: g-wx,o-rwx
+      loop: "{{ template_hardening_skel_dotfiles.files }}"
+      loop_control:
+        label: "{{ item.path }}"
+
+    - name: Create the systemd manager's drop-in directory
+      ansible.builtin.file:
+        path: "{{ template_hardening_ctrlaltdel_dropin | dirname }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Ignore Ctrl-Alt-Delete pressed repeatedly (RHEL-10-700950)
+      ansible.builtin.copy:
+        content: "[Manager]\nCtrlAltDelBurstAction=none\n"
+        dest: "{{ template_hardening_ctrlaltdel_dropin }}"
+        owner: root
+        group: root
+        mode: '0644'
+      notify: Re-execute the systemd manager
+
+    - name: Keep the bluetooth module from loading (RHEL-10-700860)
+      ansible.builtin.copy:
+        content: "install bluetooth /bin/false\nblacklist bluetooth\n"
+        dest: "{{ template_hardening_bluetooth_modprobe }}"
+        owner: root
+        group: root
+        mode: '0644'
+
+    # USBGuard's implicit policy blocks every device no rule allows. This
+    # rule allows USB hubs alone (a single interface of class 09), so the
+    # rule list is the STIG's policy and every other device, keyboards and
+    # storage included, stays blocked until a site allows it.
+    - name: Allow USB hubs only (RHEL-10-200562)
+      ansible.builtin.copy:
+        content: |
+          # Written by the SAFBox template_hardening role. USB hubs only; every other
+          # device stays blocked (ImplicitPolicyTarget=block).
+          allow with-interface equals { 09:*:* }
+        dest: "{{ template_hardening_usbguard_rules }}"
+        owner: root
+        group: root
+        mode: '0600'
+      notify: Restart usbguard with the SAFBox rules
+
+    # Loaded at the next boot by audit-rules.service; from then on no audit
+    # rule changes until the box reboots. augenrules puts -e last.
+    - name: Make the audit rules immutable (RHEL-10-900100)
+      ansible.builtin.copy:
+        content: "# Written by the SAFBox template_hardening role: audit rules immutable until reboot.\n-e 2\n"
+        dest: "{{ template_hardening_audit_immutable_rules }}"
+        owner: root
+        group: root
+        mode: '0600'
+
+    # Written only after the Lockdown role completed; the validation profile
+    # checks it names the pinned release (safbox-hardening-1).
+    - name: Create the directory of the SAFBox records
+      ansible.builtin.file:
+        path: "{{ template_hardening_record_path | dirname }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Record the hardening that was applied
+      ansible.builtin.template:
+        src: hardening.j2
+        dest: "{{ template_hardening_record_path }}"
+        owner: root
+        group: root
+        mode: '0644'

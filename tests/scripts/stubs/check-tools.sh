@@ -1,4 +1,4 @@
 #!/bin/sh
-# Stub scripts/check-tools.sh for tests/scripts/build-concurrency.sh: every
+# Stub scripts/check-tools.sh for tests/scripts/*.bats: every
 # prerequisite is taken as present.
 exit 0

@@ -7,19 +7,12 @@
 #   scripts/build.sh -var vm_memory=4096
 #   scripts/build.sh -var vga=std      # standard VGA instead of the default qxl (SPICE)
 set -euo pipefail
-ROOT=$(cd "$(dirname "$0")/.." && pwd)
+# shellcheck source=scripts/lib.sh
+. "$(dirname "$0")/lib.sh"
 cd "$ROOT"
 
 umask 077
-ENV_FILE="${SAFBOX_PROXMOX_ENV:-$HOME/.config/proxmox/packer.env}"
-if [ -f "$ENV_FILE" ]; then
-  perm=$(stat -c %a "$ENV_FILE" 2>/dev/null || stat -f %Lp "$ENV_FILE")
-  [ "$perm" = 600 ] || { echo "refusing $ENV_FILE: mode $perm, must be 600" >&2; exit 1; }
-  set -a
-  # shellcheck disable=SC1090
-  . "$ENV_FILE"
-  set +a
-fi
+load_env
 # Development-only conveniences (installer SSH, keeping the build key) need an
 # explicit opt-in so a release build cannot carry them by accident.
 if [ "${SAFBOX_DEV:-0}" != 1 ] && grep -Eqs '^\s*installer_ssh\s*=\s*true' packer/*.auto.pkrvars.hcl; then
@@ -31,8 +24,10 @@ fi
 
 # Each run keeps its state in its own directory, .build/runs/<UTC time>-<random>
 # (mode 0700, from mktemp): the build log, the ephemeral key pair, Packer's
-# debug log and the galaxy install. Two runs on one workstation share none of
-# it, so they can build at the same time (with distinct vm_id and vm_name).
+# debug log, the galaxy install and the build gate's results (scans/, which
+# the seal installs in the template; the run ID is the directory's name).
+# Two runs on one workstation share none of it, so they can build at the
+# same time (with distinct vm_id and vm_name).
 mkdir -p "$ROOT/.build/runs"
 chmod 700 "$ROOT/.build"
 RUN_DIR=$(mktemp -d "$ROOT/.build/runs/$(date -u +%Y%m%dT%H%M%SZ)-XXXXXX")
@@ -137,4 +132,6 @@ packer build \
   -var "galaxy_dir=$GALAXY_DIR" \
   -var "site_dir=$SITE_DIR" \
   -var "git_revision=$REVISION" \
+  -var "build_run_id=$RUN_ID" \
+  -var "build_scans_dir=$RUN_DIR/scans" \
   "$@" packer/

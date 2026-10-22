@@ -1,0 +1,19 @@
+---
+# The safbox-client profile on a clone kept for a person, run from the
+# runner with read_only true (scripts/clone-and-ssh.sh --keep, validate.sh
+# --client-read-only). The controls that change the box are skipped and
+# reported as Not Reviewed: safbox-client-heimdall-2, -vulcan-3 and
+# -keycloak-2 to -5, six of impact 1.0 (safbox-client-vulcan-2, also
+# skipped, is an accepted deviation of impact 0.0, Not Applicable). No
+# more may be skipped, so every other control that applies runs and must
+# pass, as in client-release.yml; the full gate on a clone that is not
+# kept covers the six.
+failed:
+  total:
+    max: 0
+skipped:
+  total:
+    max: 6
+error:
+  total:
+    max: 0

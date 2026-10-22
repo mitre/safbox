@@ -1,0 +1,28 @@
+---
+# Every installed package up to date: task group safbox-base-3, imported by
+# tasks/main.yml, which applies its tag and its switch. Before the
+# first-boot unit is enabled: a reboot after that would run first boot
+# inside the template.
+
+# dnf needs-restarting (the reboot check) comes from dnf-plugins-core.
+- name: Install the reboot check
+  ansible.builtin.dnf:
+    name: dnf-plugins-core
+    state: present
+
+# An update can pull in new kernels and dependencies; packages the STIG
+# removes stay out through excludepkgs in /etc/dnf/dnf.conf. update_only
+# states the intent (update, don't install by name); with name '*' dnf
+# upgrades everything either way.
+- name: Update every installed package
+  ansible.builtin.dnf:
+    name: '*'
+    state: latest
+    update_only: true
+    update_cache: true
+  notify: Packages updated
+
+# Reboot now, when the update needs it, so the rest of the play runs on
+# the updated system.
+- name: Reboot if the update needs it
+  ansible.builtin.meta: flush_handlers

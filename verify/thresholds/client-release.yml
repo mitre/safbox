@@ -3,8 +3,13 @@
 # (release gate). Controls that do not apply there (a service switched
 # off) and SAFBox's accepted deviations (impact 0.0, with a justification
 # in the profile) are Not Applicable and do not count. Every control that
-# applies must pass.
+# applies must pass, and none may be skipped (Not Reviewed): a skipped
+# control, such as a read-only run's (client-release-read-only.yml), is
+# not a pass.
 failed:
+  total:
+    max: 0
+skipped:
   total:
     max: 0
 error:

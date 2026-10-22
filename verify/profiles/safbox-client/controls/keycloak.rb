@@ -23,6 +23,12 @@ oidc = "#{keycloak}/realms/safbox/protocol/openid-connect"
 safuser = "safuser@#{domain}"
 on = services.include?('keycloak') && services.include?('proxy')
 sso = on && services.include?('heimdall') && services.include?('vulcan')
+# read_only, for a box kept for a person: the controls that change the box
+# are skipped, each with the reason. Their read_only only_if comes after
+# the switched-off one, and only when that one passes, because a control's
+# last only_if names its skip: a switched-off service stays Not Applicable
+# under its own reason. The body stops too, before any request.
+read_only = input('read_only')
 # safuser's password: first boot's one-time password, then the one this
 # profile gives it, kept in password_file (0600; a new one is written to
 # <file>.new first, so a run stopped mid-change leaves it there).
@@ -30,6 +36,26 @@ generated = client.secret_file('safuser-generated', input('keycloak_safuser_pass
 password_file = input('keycloak_safuser_password_file')
 password_file = File.join(work, 'safuser-password') if password_file.empty?
 first_run = !File.exist?(password_file)
+# The template's build-gate scans the box imported into Heimdall: each
+# evaluation's name, safbox-build-<run>-<profile>.json, with its run. They
+# come from the box's own check of them, safbox-heimdall-8, in the safbox
+# profile's results (hdf_file). None when there are no results or that
+# control did not run (Heimdall switched off, or a template built without
+# them: the safbox profile's input build_scans).
+build_scans_imported = {}
+hdf_file = input('hdf_file')
+if !hdf_file.empty? && File.file?(hdf_file) && File.readable?(hdf_file)
+  hdf_controls = JSON.parse(File.read(hdf_file))['profiles'].to_a.flat_map { |profile| profile['controls'].to_a }
+  imported = hdf_controls.find { |hdf_control| hdf_control['id'] == 'safbox-heimdall-8' }
+  if imported && !imported['results'].to_a.all? { |result| result['status'] == 'skipped' }
+    imported['results'].to_a.each do |result|
+      name = result['code_desc'].to_s[/\AHeimdall's evaluation (safbox-build-\S+\.json):/, 1]
+      next unless name
+
+      build_scans_imported[name] = name.delete_prefix('safbox-build-').sub(/-safbox(-rhel10-stig-overlay)?\.json\z/, '')
+    end
+  end
+end
 
 # The sign-in form's action in a page, and posting safuser's password in
 # SECRET to it with the redirects followed: the page and URL it ends at.
@@ -114,9 +140,11 @@ end
 control 'safbox-client-keycloak-2' do
   impact 1.0
   title "safuser's generated Keycloak password is one-time: its first sign-in asks for a new one, under the realm's policy"
-  desc "On a fresh box, safuser's first sign-in (to Heimdall, through Keycloak) with the password first boot generated lands on Keycloak's update-password form instead of the application. A new password of 14 characters, or the user name, is refused there by the realm's policy; a valid one completes the sign-in to Heimdall as safuser, a regular user. With keycloak_safuser_password_file left from an earlier run, that change is done: the password in it signs in without being asked again. Changes safuser's password on the box."
+  desc "On a fresh box, safuser's first sign-in (to Heimdall, through Keycloak) with the password first boot generated lands on Keycloak's update-password form instead of the application. A new password of 14 characters, or the user name, is refused there by the realm's policy; a valid one completes the sign-in to Heimdall as safuser, a regular user. With keycloak_safuser_password_file left from an earlier run, that change is done: the password in it signs in without being asked again. Signed in, safuser sees each of the template's build-gate scans the box imported (those safbox-heimdall-8 checked, named in the safbox profile's results, hdf_file) as a public evaluation tagged with its build run (the STIG overlay's also STIG), and fetches each one's content: the HDF itself, with its profiles and their controls, as Heimdall's viewer loads it. Changes safuser's password on the box."
   only_if('Keycloak, Heimdall, Vulcan or the proxy is switched off', impact: 0.0) { sso }
+  only_if("read_only: the box is kept for a person, and this control takes safuser's first sign-in and completes its forced password change") { !read_only } if sso
   next unless sso
+  next if read_only
 
   client.new_session('keycloak-first')
   form = client.request("-L #{heimdall}/authn/oidc").stdout
@@ -168,6 +196,47 @@ control 'safbox-client-keycloak-2' do
     its('email') { should eq safuser }
     its('role') { should eq 'user' }
   end
+  # The template's build-gate scans, which the box imports into Heimdall
+  # as public evaluations: safuser, just signed in, sees each one, tagged
+  # with its build run. Nothing to look for when the box's
+  # safbox-heimdall-8 did not run (build_scans_imported).
+  unless build_scans_imported.empty?
+    auth = client.secret_file('keycloak-first-list-auth', "Authorization: Bearer #{client.cookie('accessToken')}\n")
+    query = ['offset=0', 'limit=100', 'order[]=createdAt', 'order[]=DESC'].map { |param| "--data-urlencode #{client.quote(param)}" }.join(' ')
+    listed = json(content: client.request("-G -H @#{auth} #{query} #{heimdall}/evaluations").stdout).params
+    listed = listed.is_a?(Hash) ? listed['evaluations'].to_a : []
+    build_scans_imported.each do |name, run|
+      evaluation = listed.find { |listed_one| listed_one['filename'] == name } || {}
+      describe "The template's build scan #{name} in Heimdall, as safuser sees it: public" do
+        subject { evaluation['public'] }
+        it { should eq true }
+      end
+      describe "The tags of the template's build scan #{name}, as safuser sees them" do
+        subject { evaluation['evaluationTags'].to_a.map { |tag| tag['value'] } }
+        it { should include 'safbox-build-scan' }
+        it { should include "run #{run}" }
+        it { should include 'STIG' } if name.end_with?('-safbox-rhel10-stig-overlay.json')
+      end
+      # The evaluation's content, as Heimdall's viewer fetches it: the HDF
+      # itself, not the uploaded file's text, which Heimdall keeps under
+      # originalResultsData when it cannot parse it as JSON.
+      fetched = {}
+      if evaluation['id']
+        fetched = json(content: client.request("-H @#{auth} #{heimdall}/evaluations/#{evaluation['id'].to_i}").stdout).params
+      end
+      data = fetched.is_a?(Hash) && fetched['data'].is_a?(Hash) ? fetched['data'] : {}
+      describe "The content of the template's build scan #{name}, as safuser fetches it: its HDF fields" do
+        subject { data.keys }
+        it { should include('platform', 'profiles', 'statistics', 'version') }
+        it { should_not include 'originalResultsData' }
+      end
+      describe "The controls in each profile of the template's build scan #{name}, as safuser fetches it" do
+        subject { data['profiles'].is_a?(Array) ? data['profiles'].map { |profile| profile.is_a?(Hash) ? profile['controls'].to_a.length : 0 } : [] }
+        it { should_not be_empty }
+        its('sum') { should be_positive }
+      end
+    end
+  end
 end
 
 control 'safbox-client-keycloak-3' do
@@ -175,7 +244,9 @@ control 'safbox-client-keycloak-3' do
   title 'safuser signs in to Vulcan through Keycloak as a regular user'
   desc "Vulcan's OIDC sign-in, posted with the CSRF token of its sign-in page in a fresh session, leads to Keycloak's sign-in form; safuser's password posted there, and the redirects followed, bring the browser back to Vulcan, whose session is safuser@<domain>'s, not an administrator's. Makes safuser's Vulcan account on the first run."
   only_if('Keycloak, Heimdall, Vulcan or the proxy is switched off', impact: 0.0) { sso }
+  only_if("read_only: the box is kept for a person, and this control signs safuser in with a password only safbox-client-keycloak-2 gives it, and makes its Vulcan account") { !read_only } if sso
   next unless sso
+  next if read_only
 
   client.new_session('keycloak-vulcan')
   token = client.csrf_token(client.request("#{vulcan}/users/sign_in").stdout)
@@ -199,7 +270,9 @@ control 'safbox-client-keycloak-4' do
   title "safuser signs in to Keycloak's account console and changes its password there"
   desc "The account console's sign-in (the authorization code flow with PKCE, as its page does it) gives safuser a token for the Account API (audience account), which answers the two calls the page makes first with safuser's profile. The console's password Update (kc_action=UPDATE_PASSWORD) shows Keycloak's update-password form; a new password there returns the browser to the account page with kc_action_status=success, and then signs in. Changes safuser's password on the box."
   only_if('Keycloak, Heimdall, Vulcan or the proxy is switched off', impact: 0.0) { sso }
+  only_if("read_only: the box is kept for a person, and this control changes safuser's password") { !read_only } if sso
   next unless sso
+  next if read_only
 
   current = File.exist?(password_file) ? password_file : generated
   back, claims, auth = account_sign_in.call('keycloak-account', current)
@@ -252,7 +325,9 @@ control 'safbox-client-keycloak-5' do
   title "The generated password, once changed, and a wrong one are refused, and safuser's own password still signs in"
   desc "Each refused password leaves the browser on Keycloak's sign-in form, with no Heimdall session. The refusal of the generated password counts only once it has been changed, so the file of the password given in its place must exist; and safuser's current password, from that file, must still reach Heimdall afterwards, so neither refusal comes from a locked or broken account. Keycloak's brute-force protection locks an account for a minute after quick failures (two within a second count as an attack), so each sign-in runs once, 2 s apart, after every other sign-in."
   only_if('Keycloak, Heimdall, Vulcan or the proxy is switched off', impact: 0.0) { sso }
+  only_if("read_only: the box is kept for a person, and this control needs the password safbox-client-keycloak-2 gives safuser, and its refused sign-ins count towards a lockout") { !read_only } if sso
   next unless sso
+  next if read_only
 
   results = { 'The generated password, once changed,' => generated, 'A wrong password' => client.secret_file('safuser-wrong', client.random_password) }
   results = results.each_with_index.to_h do |(what, secret), i|

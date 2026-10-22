@@ -1,10 +1,12 @@
 # Site CA bundles
 
-The `site_config` role adds CA certificates to the system trust store, so
-the box, its tools, and the Heimdall and Vulcan containers trust servers
-those CAs sign. It runs right after `platform`, so the roles after it
-(the tools downloads, the container image pulls) already use the new
-store; `platform`'s own package installs, and the role's install of
+Task group `safbox-site-config-1` of the `template_os` role adds CA
+certificates to the system trust store, so the box, its tools, and the
+Heimdall and Vulcan containers trust servers those CAs sign. It runs right
+after the OS contract (the base packages, firewall, container runtime,
+journal and desktop), so everything after it (the package update, the tools downloads, the
+container image pulls) already uses the new store; the base package
+installs before it, and the group's own install of
 OpenSSL and unzip, use the store the box had before. No certificate is
 kept in the repository: each bundle is downloaded by the box or copied
 from your workstation when the role runs.
@@ -73,8 +75,7 @@ before anything is fetched.
 
 **What the role does.** It reads each bundle with OpenSSL, writes one
 anchor file per certificate (`safbox-<bundle>-<id>.pem` in
-`/etc/pki/ca-trust/source/anchors`; one per certificate because the
-Debian family's mechanism needs it), runs `update-ca-trust`, and removes
+`/etc/pki/ca-trust/source/anchors`), runs `update-ca-trust`, and removes
 the anchors of any certificate no longer configured, so dropping a bundle
 from the list untrusts it. Before installing anything it verifies every
 certificate under the system crypto policy (`openssl verify` at the
@@ -92,7 +93,7 @@ trusts. When the store changes on a running box, the role restarts
 `heimdall.service` and `vulcan.service`, which read it at start.
 
 SELinux labels the host's certificate files `cert_t`, which a container
-(`container_t`) may not read; the `platform` role turns on the
+(`container_t`) may not read; the `template_os` role turns on the
 container-selinux boolean `container_read_certs` to allow it. The boolean
 is host-wide: it lets every container read every `cert_t` file mounted
 into it, and `cert_t` covers private keys too (`/etc/pki/tls/private`,

@@ -7,8 +7,8 @@ left in the template.
 
 | Account | Made by | For | Logs in with | Password | sudo |
 | --- | --- | --- | --- | --- | --- |
-| `admin` | cloud-init, as its default user (`/etc/cloud/cloud.cfg.d/80-safbox-users.cfg`); first boot settles it (`/etc/safbox/firstboot.d/12-admin.sh`, task group `safbox-base-6`) | deploying and automation: Ansible, the release gate, recovering `safuser` | the deployer's SSH key only | none, ever: the field is a lock with no hash | passwordless |
-| `safuser` | first boot (the first-boot play's `safuser` role, task group `safbox-base-5`; see [First boot](appliance.md#first-boot)) | using the tools day to day, at the console, over SSH and at the desktop login screen | the deployer's SSH key, or its password at the console and on the desktop | the deployer's, or one first boot generates; it expires and can be locked out | asks for its password (`/etc/sudoers.d/50-safuser`) |
+| `admin` | cloud-init, as its default user (`/etc/cloud/cloud.cfg.d/80-safbox-users.cfg`); first boot settles it (the first-boot play's `clone_accounts` role, task group `safbox-base-6`) | deploying and automation: Ansible, the release gate, recovering `safuser` | the deployer's SSH key only | none, ever: the field is a lock with no hash | passwordless |
+| `safuser` | first boot (the first-boot play's `clone_accounts` role, task group `safbox-base-5`; see [First boot](appliance.md#first-boot)) | using the tools day to day, at the console, over SSH and at the desktop login screen | the deployer's SSH key, or its password at the console and on the desktop | the deployer's, or one first boot generates; it expires and can be locked out | asks for its password (`/etc/sudoers.d/50-safuser`) |
 
 SSH never accepts passwords (`PasswordAuthentication no` in
 `/etc/ssh/sshd_config.d/40-safbox.conf`, written at install); a password is
@@ -113,8 +113,8 @@ console only; first boot logs a warning.
 **A generated password.** With no password given (cloud-init's `RANDOM`
 counts as none), first boot generates one that meets the box's password
 quality policy (the STIG's 15 characters and four character classes), sets
-it with a SHA-512 hash, and keeps it, like the services' first-boot
-secrets, in a root-only file. Read it as `admin`:
+it with a SHA-512 hash, and keeps it in a root-only file (the services'
+first-boot secrets are podman secrets). Read it as `admin`:
 
 ```
 sudo cat /etc/safbox/safuser.env      # SAFUSER_PASSWORD=...
@@ -123,8 +123,8 @@ sudo cat /etc/safbox/safuser.env      # SAFUSER_PASSWORD=...
 `pwmake` makes the password and `pwscore` checks it against the policy.
 `pwmake` gives up now and then under the STIG's rules ("required entropy
 too low for settings"), so first boot tries again, up to 50 times. If no
-attempt succeeds, first boot stops at this step before it creates
-`safuser`, and runs the step again at the next boot.
+attempt succeeds, first boot stops there before it creates `safuser`,
+and runs again at the next boot.
 
 `/etc/safbox/safuser.env` keeps the generated password and is not updated
 by a change: delete it once the password is changed or noted.
@@ -190,11 +190,16 @@ on: without it `admin`'s key login ends when its password ages out.
 `safuser` also has a Keycloak account, which signs it in to Heimdall and
 Vulcan (single sign-on). Its Keycloak password is its own, not the OS
 password above: first boot generates it, and an administrator reads it
-with `sudo grep '^SAFUSER_PASSWORD=' /etc/safbox/keycloak.env`. That
-password is one-time: at `safuser`'s first Keycloak sign-in (to Heimdall,
-Vulcan or the account page), Keycloak asks for a new one, of 15
-characters or more and not the user name, before it goes on. The file
-keeps the initial password only, as a comment in it says: it is not
+from its podman secret, `keycloak-safuser-password`:
+
+```
+sudo podman secret inspect --showsecret --format '{{.SecretData}}' keycloak-safuser-password
+```
+
+That password is one-time: at `safuser`'s first Keycloak sign-in (to
+Heimdall, Vulcan or the account page), Keycloak asks for a new one, of 15
+characters or more and not the user name, before it goes on. The secret
+keeps the initial password only, as its description label says: it is not
 updated when the password changes.
 
 `safuser` signs in to Keycloak at its account page,
@@ -204,7 +209,7 @@ never at Keycloak's administration console, whose sign-in is the master
 realm's, where `safuser` does not exist. The administration console is for
 the box's administrator: `https://keycloak.safbox.internal/admin/master/console/`,
 reachable from the box's own browser only, signed in to as `temp-admin`
-with `KC_BOOTSTRAP_ADMIN_PASSWORD` from `/etc/safbox/keycloak.env` (see
+with the password in the `keycloak-bootstrap-admin-password` secret (see
 "Single sign-on" in [the services reference](services.md)). To change its Keycloak password
 later, `safuser` opens the account page, signs in, and chooses **Account
 security**, then **Signing in**, then **Update** beside **Password**;

@@ -1,0 +1,41 @@
+---
+# The guest agents this answer file installs (ks.cfg.pkrtpl.hcl, %post),
+# as inputs for the safbox validation profile; scripts/validate.sh passes
+# this file to every scan, before a site's inputs. One image runs on every
+# hypervisor listed, so it carries every agent. Each is keyed by the
+# hypervisor it serves, as systemd-detect-virt names it: the profile's
+# controls safbox-system-1 and safbox-guest-agent-1 expect the detected
+# hypervisor's agent to run, and every agent here to be installed,
+# unmodified and enabled, so it starts when the image moves.
+#
+#   package           the package that ships the agent
+#   service           its systemd unit
+#   cmdline_includes  when it runs: patterns its command line must match
+#   cmdline_excludes  when it runs: patterns its command line must not match
+#   config_file       an INI file the answer file writes
+#   settings          section => key => value that config_file must hold
+#
+# Each agent is kept from running programs or touching files in the guest
+# on a hypervisor administrator's request.
+guest_agents:
+  # Proxmox VE and other KVM hosts. The distribution's allow list
+  # (/etc/sysconfig/qemu-ga, unmodified) leaves out guest-exec and
+  # guest-file-*.
+  kvm:
+    package: qemu-guest-agent
+    service: qemu-guest-agent
+    cmdline_includes: ['--allow-rpcs=']
+    cmdline_excludes: ['guest-exec', 'guest-file-']
+  # vSphere (ESXi). The unit runs only there (ConditionVirtualization).
+  # Guest operations would let a vCenter user with guest credentials run
+  # programs and move files in the guest; customization scripts would run
+  # a script from a vSphere customization spec as root.
+  vmware:
+    package: open-vm-tools
+    service: vmtoolsd
+    config_file: /etc/vmware-tools/tools.conf
+    settings:
+      guestoperations:
+        disabled: 'true'
+      deployPkg:
+        enable-custom-scripts: 'false'

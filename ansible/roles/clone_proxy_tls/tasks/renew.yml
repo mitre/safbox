@@ -1,0 +1,123 @@
+---
+# Renewal of the box's own certificate, the role's renew entry point. The
+# first-boot play includes it only when run with --tags renew, which
+# safbox-proxy-renew.service does daily (safbox-proxy-renew.timer):
+#
+#   ansible-playbook -c local -i localhost, /usr/local/lib/safbox/firstboot/firstboot.yml --tags renew
+#
+# A certificate the local CA signed is signed again from the same CA, with a
+# new key, for the names the proxy serves now, once it is valid for less
+# than clone_proxy_tls_renew_days more (or at once with clone_proxy_tls_renew_force),
+# and the proxy, when running, is restarted to serve it. The CA does not
+# change, so whatever trusts it (the box, the applications, a machine that
+# imported it) trusts the new certificate. A certificate the local CA did
+# not sign is a site's own: it is never replaced here; the site renews it.
+# Nothing is made where first boot has not made the certificate.
+
+- name: Find what exists
+  ansible.builtin.import_tasks: existing.yml
+
+- name: Report that there is no certificate to renew
+  when: not (clone_proxy_tls_have_cert and clone_proxy_tls_have_key)
+  ansible.builtin.debug:
+    msg: "{{ clone_proxy_tls_cert }} or its key is missing: nothing to renew (first boot makes them)"
+
+- name: Renew the certificate when it is due
+  when: clone_proxy_tls_have_cert and clone_proxy_tls_have_key
+  block:
+    - name: Read the certificate and whether it is still valid at the renewal threshold
+      community.crypto.x509_certificate_info:
+        path: "{{ clone_proxy_tls_cert }}"
+        valid_at:
+          threshold: "+{{ clone_proxy_tls_renew_days }}d"
+      register: clone_proxy_tls_renew_cert
+
+    - name: Read the local CA and whether it outlives a new certificate
+      when: clone_proxy_tls_have_ca
+      community.crypto.x509_certificate_info:
+        path: "{{ clone_proxy_tls_ca_cert }}"
+        valid_at:
+          new_cert_end: "+{{ clone_proxy_tls_days }}d"
+      register: clone_proxy_tls_renew_ca
+
+    # Its signature, not the time: an expired certificate the local CA
+    # signed is still the box's own, to renew.
+    - name: Check the local CA signed the certificate
+      when:
+        - clone_proxy_tls_have_ca
+        - clone_proxy_tls_renew_cert.issuer_ordered == clone_proxy_tls_renew_ca.subject_ordered
+      ansible.builtin.command:
+        argv:
+          - openssl
+          - verify
+          - -no_check_time
+          - -purpose
+          - sslserver
+          - -CAfile
+          - "{{ clone_proxy_tls_ca_cert }}"
+          - "{{ clone_proxy_tls_cert }}"
+      register: clone_proxy_tls_renew_signed
+      changed_when: false
+      failed_when: false
+
+    - name: Decide whether to renew
+      ansible.builtin.set_fact:
+        clone_proxy_tls_renew_ours: >-
+          {{ clone_proxy_tls_renew_signed is not skipped and clone_proxy_tls_renew_signed.rc == 0 }}
+        clone_proxy_tls_renew_due: >-
+          {{ clone_proxy_tls_renew_force | bool or not clone_proxy_tls_renew_cert.valid_at.threshold }}
+
+    - name: Report a site's own certificate
+      when: not clone_proxy_tls_renew_ours
+      ansible.builtin.debug:
+        msg: >-
+          {{ clone_proxy_tls_cert }} is not signed by a local CA on this box: a site's own certificate,
+          valid until {{ clone_proxy_tls_renew_cert.not_after }}; left as it is, for the site to renew
+
+    - name: Report a certificate not yet due
+      when: clone_proxy_tls_renew_ours and not clone_proxy_tls_renew_due
+      ansible.builtin.debug:
+        msg: >-
+          {{ clone_proxy_tls_cert }} is valid until {{ clone_proxy_tls_renew_cert.not_after }}, more than
+          {{ clone_proxy_tls_renew_days }} days more: not renewed
+
+    - name: Sign a new certificate from the local CA
+      when: clone_proxy_tls_renew_ours and clone_proxy_tls_renew_due
+      block:
+        - name: Report the renewal
+          ansible.builtin.debug:
+            msg: >-
+              renewing {{ clone_proxy_tls_cert }} (valid until {{ clone_proxy_tls_renew_cert.not_after }})
+              for {{ clone_proxy_tls_days }} days from the local CA
+
+        - name: Warn when the local CA expires before the new certificate
+          when: not clone_proxy_tls_renew_ca.valid_at.new_cert_end
+          ansible.builtin.debug:
+            msg: >-
+              WARNING: the local CA {{ clone_proxy_tls_ca_cert }} expires on {{ clone_proxy_tls_renew_ca.not_after }},
+              before the new certificate; clients stop trusting it then. Rotate the local CA
+              (docs/reference/services.md, "Rotating the local CA")
+
+        - name: Read the served names
+          ansible.builtin.import_tasks: names.yml
+
+        - name: Make the new certificate
+          ansible.builtin.import_tasks: server_cert.yml
+          vars:
+            clone_proxy_tls_staged_must_verify: true
+
+        - name: Check the box trusts the new certificate
+          ansible.builtin.import_tasks: trust.yml
+
+        - name: Read the proxy's state
+          ansible.builtin.systemd_service:
+            name: "{{ clone_proxy_tls_proxy_unit }}"
+          register: clone_proxy_tls_proxy_state
+
+        # nginx reads its certificate when it starts. A proxy someone
+        # stopped stays stopped.
+        - name: Restart the proxy to serve the new certificate
+          when: clone_proxy_tls_proxy_state.status.ActiveState == 'active'
+          ansible.builtin.systemd_service:
+            name: "{{ clone_proxy_tls_proxy_unit }}"
+            state: restarted

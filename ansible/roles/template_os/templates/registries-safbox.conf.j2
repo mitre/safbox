@@ -1,0 +1,4 @@
+# {{ ansible_managed }}
+# SAFBox registry policy. Drop-in values override /etc/containers/registries.conf.
+unqualified-search-registries = {{ template_os_container_unqualified_search_registries | to_json }}
+short-name-mode = "{{ template_os_container_short_name_mode }}"

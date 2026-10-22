@@ -1,0 +1,14 @@
+{#- The build gate's results in this template (tasks/scans.yml): the build
+    run and commit, and each scan's profile, file, when it ended (UTC) and
+    sha256. Read by the first-boot play's clone_heimdall_scans role. JSON has no
+    comments, so this one stays in the template. -#}
+{% set scans = [] %}
+{% for found in template_seal_scans_found.results %}
+{%   set _ = scans.append({
+       'profile': found.item,
+       'file': found.item ~ '.json',
+       'scanned': '%Y-%m-%dT%H:%M:%SZ' | strftime(found.stat.mtime | int, utc=true),
+       'sha256': (template_seal_scans_installed.results | selectattr('item', 'eq', found.item) | first).stat.checksum,
+     }) %}
+{% endfor %}
+{{ {'run_id': template_seal_build_run_id, 'git_commit': template_seal_git_commit, 'scans': scans} | to_nice_json(indent=2) }}

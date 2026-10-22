@@ -3,7 +3,7 @@
 # SAFBox deviations from the RHEL 10 STIG baseline. This file is the record
 # of them. Every baseline control is included; a requirement SAFBox
 # deliberately does not apply is set Not Applicable here: impact 0.0, a
-# justification, and a deliberate skip. The hardening role switches the
+# justification, and a deliberate skip. The template_hardening role switches the
 # matching Lockdown rule off (rhel10stig_<n> in ansible/group_vars/all/main.yml)
 # where that rule would undo the deviation. SV-281170's (RHEL-10-600110)
 # stays on: it changes accounts only under rhel10stig_disruption_high, and
@@ -244,7 +244,7 @@ include_controls 'redhat-enterprise-linux-10-stig-baseline' do
       forwarding so that the containers can reach the box and the network
       through the host. The box is not a router: it has one network
       interface, and forwarding serves only its own containers. The
-      hardening role leaves Lockdown's rule RHEL-10-800210 off: applied to
+      template_hardening role leaves Lockdown's rule RHEL-10-800210 off: applied to
       a running box, its setting turns forwarding off under the pods until
       the next boot.
     JUSTIFICATION

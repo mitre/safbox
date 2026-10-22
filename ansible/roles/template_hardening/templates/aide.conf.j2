@@ -1,0 +1,108 @@
+# AIDE configuration, written by the SAFBox template_hardening role (RHEL-10-200631,
+# 200632, 200634, 200635). Lockdown's selection list, with its errors
+# corrected: macros are @@define, and every group carries acl, xattrs and
+# sha512 (or no content hash). Only named groups are used, no built-in
+# ones, so each line states what it checks.
+@@define DBDIR /var/lib/aide
+@@define LOGDIR /var/log/aide
+
+database_in=file:@@{DBDIR}/aide.db.gz
+database_out=file:@@{DBDIR}/aide.db.new.gz
+gzip_dbout=yes
+log_level=warning
+report_level=changed_attributes
+report_url=file:@@{LOGDIR}/aide.log
+report_url=stdout
+
+FIPSR = p+i+n+u+g+s+m+ftype+growing+acl+selinux+xattrs+sha512
+NORMAL = FIPSR
+LSPP = FIPSR
+DATAONLY = p+n+u+g+s+acl+selinux+xattrs+sha512
+PERMS = p+i+u+g+acl+selinux+xattrs
+LOG = p+ftype+i+l+n+u+g+s+acl+selinux+xattrs+growing
+
+/boot   NORMAL
+/bin    NORMAL
+/sbin   NORMAL
+/lib    NORMAL
+/lib64  NORMAL
+/opt    NORMAL
+/usr    NORMAL
+/root   NORMAL
+!/usr/src
+!/usr/tmp
+!/boot/grub2/grubenv
+
+/etc    PERMS
+!/etc/mtab
+!/etc/.*~
+{% for path in template_hardening_aide_excludes %}
+!{{ path }}$
+{% endfor %}
+/etc/exports  NORMAL
+/etc/fstab    NORMAL
+/etc/passwd   NORMAL
+/etc/group    NORMAL
+/etc/gshadow  NORMAL
+/etc/shadow   NORMAL
+/etc/security/opasswd   NORMAL
+/etc/sudoers NORMAL
+/etc/sudoers.d NORMAL
+/etc/skel NORMAL
+/etc/logrotate.d NORMAL
+/etc/resolv.conf DATAONLY
+/etc/profile NORMAL
+/etc/bashrc NORMAL
+/etc/profile.d/ NORMAL
+/etc/login.defs NORMAL
+/etc/yum.repos.d/ NORMAL
+/etc/dnf NORMAL
+/etc/audit/ LSPP
+/etc/libaudit.conf LSPP
+/etc/cron.allow LSPP
+/etc/cron.deny LSPP
+/etc/cron.d/ LSPP
+/etc/cron.daily/ LSPP
+/etc/cron.hourly/ LSPP
+/etc/cron.monthly/ LSPP
+/etc/cron.weekly/ LSPP
+/etc/crontab LSPP
+/var/spool/cron/root LSPP
+/etc/hosts LSPP
+/etc/sysconfig LSPP
+/etc/ld.so.conf LSPP
+/etc/localtime LSPP
+/etc/sysctl.conf LSPP
+/etc/sysctl.d LSPP
+/etc/modprobe.d LSPP
+/etc/pam.d LSPP
+/etc/security LSPP
+/etc/authselect LSPP
+/etc/aliases LSPP
+/etc/postfix LSPP
+/etc/ssh/sshd_config LSPP
+/etc/ssh/sshd_config.d LSPP
+/etc/ssh/ssh_config LSPP
+/etc/issue LSPP
+/etc/issue.net LSPP
+/etc/selinux LSPP
+/etc/systemd LSPP
+/etc/usbguard LSPP
+/etc/containers LSPP
+
+/var/log   LOG
+/var/run/utmp LOG
+!/var/log/sa
+!/var/log/aide
+!/var/log/journal
+/var/log/faillog LSPP
+/var/log/lastlog LSPP
+
+/usr/sbin/auditctl p+i+n+u+g+s+b+acl+xattrs+sha512
+/usr/sbin/auditd p+i+n+u+g+s+b+acl+xattrs+sha512
+/usr/sbin/ausearch p+i+n+u+g+s+b+acl+xattrs+sha512
+/usr/sbin/aureport p+i+n+u+g+s+b+acl+xattrs+sha512
+/usr/sbin/augenrules p+i+n+u+g+s+b+acl+xattrs+sha512
+/usr/sbin/rsyslogd p+i+n+u+g+s+b+acl+xattrs+sha512
+
+/root/\..* PERMS

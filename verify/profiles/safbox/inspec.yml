@@ -52,6 +52,30 @@ inputs:
       for an image built with any of them off.
     type: Boolean
     value: true
+  - name: guest_agents
+    description: >-
+      The guest agents the image ships, keyed by the hypervisor each
+      serves as systemd-detect-virt names it: each one's package and
+      systemd unit, and how it is kept from running programs or touching
+      files in the guest (patterns its running command line must or must
+      not match, or settings an INI file must hold). The install layer
+      installs them and describes them in its answer file's
+      guest-agents.yml, which scripts/validate.sh passes to every scan;
+      empty here, so a scan without it fails safbox-system-1.
+    type: Hash
+    value: {}
+  - name: initramfs_drivers
+    description: >-
+      Storage drivers every installed kernel's initramfs must carry, so
+      the image finds its root disk on each supported hypervisor's
+      virtual disk controllers: SATA (ahci), NVMe, virtio and the
+      paravirtual SCSI controller (vmw_pvscsi). The install layer's
+      dracut drop-in /etc/dracut.conf.d/90-safbox-storage-drivers.conf
+      adds them to the host-only initramfs and must name each one.
+      Network drivers are not needed until the root filesystem is
+      mounted, so they are not listed.
+    type: Array
+    value: [ahci, nvme, virtio_blk, virtio_scsi, vmw_pvscsi]
   - name: expected_tools
     description: Tools the image ships. Remove one a site switches off.
     type: Array
@@ -60,6 +84,14 @@ inputs:
     description: Services the image ships. Remove one a site switches off.
     type: Array
     value: [heimdall, vulcan, keycloak, proxy]
+  - name: build_scans
+    description: >-
+      True when the template holds the build gate's scan results, which
+      scripts/build.sh packages and first boot imports into Heimdall. False
+      for a box built without them, such as one the playbooks were applied
+      to directly.
+    type: Boolean
+    value: true
   - name: domain
     description: >-
       The domain the TLS proxy serves (safbox_domain in group_vars): the

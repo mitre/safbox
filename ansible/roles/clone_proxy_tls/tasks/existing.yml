@@ -1,0 +1,20 @@
+---
+# What exists of the certificate, its key and the local CA:
+# clone_proxy_tls_have_key, clone_proxy_tls_have_cert and clone_proxy_tls_have_ca (both of
+# the CA's files).
+- name: Look for an existing certificate, key and local CA
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ clone_proxy_tls_key }}"
+    - "{{ clone_proxy_tls_cert }}"
+    - "{{ clone_proxy_tls_ca_key }}"
+    - "{{ clone_proxy_tls_ca_cert }}"
+  register: clone_proxy_tls_existing
+
+- name: Name what exists
+  ansible.builtin.set_fact:
+    clone_proxy_tls_have_key: "{{ clone_proxy_tls_existing.results[0].stat.exists }}"
+    clone_proxy_tls_have_cert: "{{ clone_proxy_tls_existing.results[1].stat.exists }}"
+    clone_proxy_tls_have_ca: >-
+      {{ clone_proxy_tls_existing.results[2].stat.exists and clone_proxy_tls_existing.results[3].stat.exists }}

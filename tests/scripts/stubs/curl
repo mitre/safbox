@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stub curl for tests/scripts/build-concurrency.sh: answers the Proxmox API
+# Stub curl for tests/scripts/*.bats: answers the Proxmox API
 # calls scripts/clone-and-ssh.sh makes (clone, start, task status, the guest
 # agent's interfaces), appends each call's URL to $STUB_DIR/curl.calls, and
 # writes the cloud-init sshkeys it was sent, URL-decoded, to

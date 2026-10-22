@@ -1,0 +1,54 @@
+{% from 'secrets.j2' import secret_lines, secret_conditions with context %}
+# {{ ansible_managed }}
+# Vulcan: the web service of upstream's docker-compose.yml
+# (https://github.com/mitre/vulcan/blob/master/docker-compose.yml); how
+# each of its settings maps here is in docs/reference/services.md,
+# "Upstream compose files". RAILS_FORCE_SSL stays on: the TLS proxy
+# terminates HTTPS and sends X-Forwarded-Proto, and /up then answers plain
+# HTTP with a redirect, which the healthcheck's curl -f accepts. The unit is
+# ready once the healthcheck passes (Notify=healthy), so units ordered
+# after it, and the end of boot, wait for a Vulcan that serves.
+[Unit]
+Description=Vulcan
+Documentation=https://github.com/mitre/vulcan
+Requires=vulcan-db.service
+After=vulcan-db.service safbox-firstboot.service
+
+[Container]
+Image={{ template_services_vulcan_image }}
+ContainerName=vulcan
+Pod=vulcan.pod
+Environment=NODE_ENV=production
+Environment=DATABASE_HOST=127.0.0.1
+Environment=POSTGRES_USER={{ template_services_vulcan_db_user }}
+{% for name, value in template_services_vulcan_settings | dictsort %}
+Environment={{ name }}={{ value }}
+{% endfor %}
+{% if template_services_keycloak_enabled | bool %}
+# Everyone but the administrator signs in through Keycloak; the client
+# secret is a podman secret Keycloak reads too (Secret= below).
+{% for name, value in template_services_vulcan_oidc_settings | dictsort %}
+Environment={{ name }}={{ value }}
+{% endfor %}
+{% endif %}
+{{ secret_lines('vulcan') -}}
+HealthCmd=curl -f http://localhost:3000/up || exit 1
+HealthInterval=30s
+HealthTimeout=10s
+HealthRetries=3
+HealthStartPeriod=60s
+Notify=healthy
+Memory={{ template_services_vulcan_memory }}
+Volume={{ template_os_container_trust_volume }}
+NoNewPrivileges=true
+DropCapability=all
+
+[Service]
+Restart=always
+# Started only once first boot has made the secrets it reads.
+{{ secret_conditions(['vulcan']) -}}
+# The first start prepares the database before it answers.
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target

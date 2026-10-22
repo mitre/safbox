@@ -1,0 +1,12 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Check the SAFBox TLS proxy's certificate daily and renew it when it nears expiry
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=1h
+# A day missed while the box was off runs at the next boot.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

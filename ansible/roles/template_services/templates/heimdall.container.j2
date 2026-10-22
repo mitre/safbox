@@ -1,0 +1,58 @@
+{% from 'secrets.j2' import secret_lines, secret_conditions with context %}
+# {{ ansible_managed }}
+# Heimdall: the server service of upstream's docker-compose.yml
+# (https://github.com/mitre/heimdall2/blob/master/docker-compose.yml); how
+# each of its settings maps here is in docs/reference/services.md,
+# "Upstream compose files". In production mode Heimdall trusts the proxy's
+# X-Forwarded-* headers itself. Upstream has no healthcheck for the
+# server: here one fetches its page on the pod address, and the unit is
+# ready only once it answers (Notify=healthy), so units ordered after it,
+# and the end of boot, wait for a Heimdall that serves.
+[Unit]
+Description=Heimdall
+Documentation=https://github.com/mitre/heimdall2
+Requires=heimdall-db.service
+After=heimdall-db.service safbox-firstboot.service
+
+[Container]
+Image={{ template_services_heimdall_image }}
+ContainerName=heimdall
+Pod=heimdall.pod
+Environment=NODE_ENV=production
+Environment=DATABASE_HOST=127.0.0.1
+Environment=DATABASE_USERNAME={{ template_services_heimdall_db_user }}
+Environment=JWT_EXPIRE_TIME={{ template_services_heimdall_jwt_expire_time }}
+Environment=EXTERNAL_URL=https://{{ template_services_heimdall_host }}
+# The one local account is the administrator, made on the first start
+# from ADMIN_PASSWORD (a podman secret); nobody registers (.env-example).
+Environment=REGISTRATION_DISABLED=true
+Environment=ADMIN_EMAIL=admin@{{ safbox_domain }}
+{% if template_services_keycloak_enabled | bool %}
+# Everyone else signs in through Keycloak: Heimdall's custom OIDC provider
+# (.env-example, "Custom OIDC Service"), with PKCE; the client secret is a
+# podman secret Keycloak reads too (Secret= below).
+{% for name, value in template_services_heimdall_oidc_settings | dictsort %}
+Environment={{ name }}={{ value }}
+{% endfor %}
+{% endif %}
+{{ secret_lines('heimdall') -}}
+HealthCmd=curl -fsS -o /dev/null http://localhost:3000/
+HealthInterval=30s
+HealthTimeout=10s
+HealthRetries=3
+HealthStartPeriod=60s
+Notify=healthy
+Memory={{ template_services_heimdall_memory }}
+Volume={{ template_os_container_trust_volume }}
+NoNewPrivileges=true
+DropCapability=all
+
+[Service]
+Restart=always
+# Started only once first boot has made the secrets it reads.
+{{ secret_conditions(['heimdall']) -}}
+# The first start migrates the database before it answers.
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target

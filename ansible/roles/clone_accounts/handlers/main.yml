@@ -1,0 +1,19 @@
+---
+# try-restart: a stopped AccountsService reads the file when it starts. A
+# failure is reported, not fatal: the login screen reads the file at the
+# next boot.
+- name: Restart AccountsService so the login screen reads the change
+  ansible.builtin.command:
+    argv: [systemctl, try-restart, "{{ clone_accounts_admin_accounts_service }}"]
+  register: clone_accounts_admin_accounts_restart
+  changed_when: true
+  failed_when: false
+  notify: Report an AccountsService that did not restart
+
+- name: Report an AccountsService that did not restart
+  when: clone_accounts_admin_accounts_restart.rc != 0
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: {{ clone_accounts_admin_accounts_service }} did not restart
+      ({{ clone_accounts_admin_accounts_restart.stderr }}); the login screen may list
+      {{ clone_accounts_admin_name }} until the next boot

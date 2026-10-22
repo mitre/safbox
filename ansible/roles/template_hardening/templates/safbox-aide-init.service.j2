@@ -1,0 +1,16 @@
+# Written by the SAFBox template_hardening role. Makes the AIDE database of this box
+# once, after its first boot has configured it, so the database describes
+# the deployed box, never the template it was cloned from.
+[Unit]
+Description=Make the AIDE database of this box
+After=safbox-firstboot.service
+ConditionPathExists={{ safbox_firstboot_done }}
+ConditionPathExists=!{{ template_hardening_aide_db }}
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/aide --init
+ExecStart=/usr/bin/mv -f {{ template_hardening_aide_db_new }} {{ template_hardening_aide_db }}
+
+[Install]
+WantedBy=multi-user.target

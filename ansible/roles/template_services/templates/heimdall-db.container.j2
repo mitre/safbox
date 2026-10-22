@@ -1,0 +1,43 @@
+{% from 'secrets.j2' import secret_lines, secret_conditions with context %}
+# {{ ansible_managed }}
+# Heimdall's PostgreSQL: the database service of upstream's
+# docker-compose.yml, from the sclorg PostgreSQL 18 image on CentOS Stream
+# 9, whose OpenSSL runs its FIPS provider on a FIPS host (mapping:
+# docs/reference/services.md, "Upstream compose files"). Heimdall signs in
+# as a role of its own that owns its database, not as the superuser
+# postgres. The healthcheck uses TCP because the image's first start runs
+# a socket-only server first; the unit is ready once healthy, so Heimdall
+# starts after it. Settings and access list: heimdall-postgresql.conf and
+# heimdall-pg_hba.conf (templates/postgresql.conf.j2, pg_hba.conf.j2).
+[Unit]
+Description=Heimdall PostgreSQL
+After=safbox-firstboot.service
+
+[Container]
+Image={{ template_services_heimdall_db_image }}
+ContainerName=heimdall-db
+Pod=heimdall.pod
+Volume=heimdall-db.volume:/var/lib/pgsql/data
+Volume={{ template_services_postgresql_conf_dir }}/heimdall-postgresql.conf:/opt/app-root/src/postgresql-cfg/safbox.conf:ro,Z
+Volume={{ template_services_postgresql_conf_dir }}/heimdall-pg_hba.conf:/opt/app-root/src/pg_hba.conf:ro,Z
+Environment=POSTGRESQL_USER={{ template_services_heimdall_db_user }}
+Environment=POSTGRESQL_DATABASE={{ template_services_heimdall_db_name }}
+{{ secret_lines('heimdall-db') -}}
+HealthCmd=pg_isready -h 127.0.0.1 -U {{ template_services_heimdall_db_user }} -d {{ template_services_heimdall_db_name }}
+HealthInterval=30s
+HealthTimeout=60s
+HealthRetries=5
+HealthStartPeriod=80s
+Notify=healthy
+Memory={{ template_services_heimdall_db_memory }}
+NoNewPrivileges=true
+
+[Service]
+Restart=always
+# Started only once first boot has made the secret it reads.
+{{ secret_conditions(['heimdall-db']) -}}
+# The first start initialises the database and waits for a healthy check.
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target

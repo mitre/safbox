@@ -1,0 +1,28 @@
+---
+# clone_proxy_tls role of the first-boot play (task group safbox-services-3):
+# a local CA limited to server certificates for names under the box's
+# domain, a certificate it signs for exactly the names the proxy serves,
+# and the box's trust in that CA. Existing files are kept.
+
+# Days the server certificate and the local CA are valid.
+clone_proxy_tls_days: 365
+clone_proxy_tls_ca_days: 3650
+# SAFBox's root-only configuration directory.
+clone_proxy_tls_etc_dir: "{{ safbox_etc_dir }}"
+# The directory the proxy container mounts, holding its certificate and key.
+clone_proxy_tls_dir: "{{ safbox_tls_dir }}"
+# The local CA's root-only directory, which the proxy container does not mount.
+clone_proxy_tls_ca_dir: "{{ clone_proxy_tls_etc_dir }}/ca"
+clone_proxy_tls_key: "{{ clone_proxy_tls_dir }}/safbox.key"
+clone_proxy_tls_cert: "{{ clone_proxy_tls_dir }}/safbox.crt"
+clone_proxy_tls_ca_key: "{{ clone_proxy_tls_ca_dir }}/ca.key"
+clone_proxy_tls_ca_cert: "{{ clone_proxy_tls_ca_dir }}/ca.crt"
+# The names the proxy serves, one per line, the domain first (written by
+# the template_services role at build).
+clone_proxy_tls_names_file: "{{ clone_proxy_tls_etc_dir }}/proxy-names"
+# Renewal (tasks/renew.yml): renew when the certificate expires within this
+# many days, or now with clone_proxy_tls_renew_force; then restart the
+# proxy's unit.
+clone_proxy_tls_renew_days: 30
+clone_proxy_tls_renew_force: false
+clone_proxy_tls_proxy_unit: safbox-proxy.service

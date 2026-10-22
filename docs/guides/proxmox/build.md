@@ -93,8 +93,8 @@ but isn't. Use the same name in the `/nodes/<node>` ACL in step 6.
 
 Two network prerequisites on the bridge the VM will use: a DHCP server
 (the kickstart and the clone test both use DHCP), and outbound HTTPS to the
-distribution's mirrors, because the minimal ISO lacks the guest agent and
-cloud-init and the install fetches them. Without egress the install fails
+distribution's mirrors, because the minimal ISO lacks the guest agents
+and cloud-init, and the install fetches them. Without egress the install fails
 early and visibly (`%post --erroronfail`) rather than leaving a silent
 template.
 
@@ -287,7 +287,8 @@ converts the VM to a template.
 
 Add `SAFBOX_CA_FILE=<cluster-ca.pem>` (or, for a throwaway lab,
 `SAFBOX_INSECURE_TLS=1`) to the clone command. Pass `--keep` as a third
-argument to leave the clone running. Set `SAFBOX_CLONE_PASSWORD` to an
+argument to leave the clone running for you; its release gate then runs
+the client profile read-only (below). Set `SAFBOX_CLONE_PASSWORD` to an
 `openssl passwd -6` hash to give `safuser` its password (see
 [Accounts on a clone](#accounts-on-a-clone)); without it first boot
 generates `safuser`'s. To log in to the clones it makes with your own key,
@@ -329,6 +330,18 @@ A switched-off service has no units, so it neither holds up the wait nor
 fails it. `SAFBOX_SKIP_VALIDATE=1` stops after the SSH check, before the
 wait.
 
+A clone kept with `--keep` is for a person, so its release gate leaves
+`safuser`'s first Keycloak sign-in alone: the client profile runs
+read-only (`validate.sh --client-read-only`), its controls that would sign
+in as `safuser`, change its password or create accounts and data are
+reported as skipped with the reason, and its other controls must pass
+(`client-release-read-only.yml`). Your first sign-in to Heimdall or Vulcan
+through Keycloak, with the password first boot generated (see
+[Accounts in the applications](../../reference/accounts.md#accounts-in-the-applications)),
+then asks for a new one, as it will for the box's users. The full gate, those controls
+included, runs on every clone that is not kept; prove a template with
+one. See [How SAFBox is validated](../../reference/validation.md).
+
 The clone test only destroys a VM it created itself: each run writes a
 unique run ID into the clone's description and refuses to delete any VM
 whose description does not carry that ID, so a pre-existing VM with the
@@ -359,6 +372,10 @@ Set them before the clone's first boot: first boot runs once, so a
 password or key changed afterwards does not reach `safuser` (as `admin`,
 `sudo passwd safuser` sets its password). See
 [Deploying a clone](../../reference/accounts.md#deploying-a-clone).
+
+Clone the sealed template, never a box that has already booted: a clone
+of a deployed box keeps that box's secrets, keys and databases (see
+**Cloning a deployed box** in [Services on the box](../../reference/services.md)).
 
 `safuser`'s password follows the STIG: it expires 60 days after it is set,
 and three wrong passwords in 15 minutes lock the account until an

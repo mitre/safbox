@@ -1,0 +1,257 @@
+---
+# safuser, the account for using the tools day to day, beside admin, the
+# key-only account cloud-init creates for the deployer (its default user).
+# What the deployer gave cloud-init (its top-level ssh_authorized_keys and
+# password) is read from cloud-init's combined configuration:
+#   - the SSH keys become safuser's too;
+#   - a password, when one was given, is safuser's alone (cloud-init does
+#     not run set_passwords, so admin never gets it): a crypt hash as it
+#     is, a plain password hashed with SHA-512;
+#   - with no password given (or cloud-init's RANDOM, which is not a
+#     password), a password that meets the system's password quality
+#     policy (the STIG's length and complexity) is generated, hashed with
+#     SHA-512 and kept for root only in /etc/safbox/safuser.env.
+# A plain or generated password is hashed with the rounds the PAM stack
+# uses, as passwd would, and reaches chpasswd on its standard input, never
+# in a process argument; every task that holds it is no_log. The password
+# is not expired, so the first login does not force a change; from then on
+# it follows the STIG's ageing that useradd takes from /etc/login.defs (60
+# days at most, then 35 inactive), and pam_faillock can lock the account
+# until admin releases it (faillock --user safuser --reset).
+#
+# A deployment's own users list may create safuser itself. Its keys and a
+# usable password (a hash) are then kept; a locked one ('!' before any
+# hash, which cloud-init stores unless the entry sets lock_passwd: false)
+# or none ('!!', '*') is not usable, and safuser gets the supplied or
+# generated password as above. A second run keeps everything the first
+# made, the generated password included.
+#
+# A password is generated before the account is made, so a run that cannot
+# generate one stops with nothing made but the empty root-only file, and
+# the next boot runs it again.
+
+- name: Keep the deployer's keys and password
+  ansible.builtin.set_fact:
+    clone_accounts_safuser_keys: "{{ clone_accounts_safuser_cfg.ssh_authorized_keys | default([]) }}"
+    # cloud-init reads RANDOM (or R) as "generate one", not as a password.
+    clone_accounts_safuser_supplied: >-
+      {{ '' if clone_accounts_safuser_cfg.password | default('') in ['RANDOM', 'R']
+         else clone_accounts_safuser_cfg.password | default('') }}
+  vars:
+    clone_accounts_safuser_cfg: >-
+      {{ clone_accounts_cloud_config if clone_accounts_cloud_config is defined
+         else clone_accounts_cloud_config_query.stdout | from_json }}
+  no_log: true
+
+- name: Look for the account
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ clone_accounts_safuser_name }}"
+    fail_key: false
+
+- name: Read its password field
+  ansible.builtin.getent:
+    database: shadow
+    key: "{{ clone_accounts_safuser_name }}"
+    fail_key: false
+  no_log: true
+
+# A crypt hash starts with '$'; '!' (locked), '!!' or '*' (none) is not usable.
+- name: Decide whether it needs a password
+  ansible.builtin.set_fact:
+    clone_accounts_safuser_needs_password: >-
+      {{ getent_shadow[clone_accounts_safuser_name] is none
+         or not getent_shadow[clone_accounts_safuser_name][0].startswith('$') }}
+
+- name: Generate a password and keep it for root
+  when: clone_accounts_safuser_needs_password and clone_accounts_safuser_supplied | length == 0
+  block:
+    - name: Create the root-only password file
+      ansible.builtin.file:
+        path: "{{ clone_accounts_safuser_env_file }}"
+        state: touch
+        owner: root
+        group: root
+        mode: '0600'
+        access_time: preserve
+        modification_time: preserve
+
+    - name: Read a password an interrupted run generated
+      ansible.builtin.slurp:
+        src: "{{ clone_accounts_safuser_env_file }}"
+      register: clone_accounts_safuser_env
+      no_log: true
+
+    - name: Keep that password
+      ansible.builtin.set_fact:
+        clone_accounts_safuser_password: >-
+          {{ clone_accounts_safuser_env.content | b64decode | split('\n')
+             | select('match', 'SAFUSER_PASSWORD=') | map('regex_replace', '^SAFUSER_PASSWORD=', '')
+             | first | default('') }}
+      no_log: true
+
+    # pwmake draws from the kernel's random source and gives up, with
+    # "required entropy too low for settings", when three passwords in a
+    # row fail the system's policy. Its passwords alternate vowels and
+    # consonants, and the STIG's maxclassrepeat = 4 rejects about a third
+    # of them for a run of five letters of one case; so about 1 call in 22
+    # fails at 128 bits (more bits make longer passwords and fail more
+    # often; fewer often miss a class). A failed call is retried, like a
+    # password pwscore rejects; pwscore applies the policy with the user
+    # name. The counts, never a password, reach the log on failure.
+    - name: Generate a password that meets the password quality policy
+      when: clone_accounts_safuser_password | length == 0
+      ansible.builtin.shell:
+        cmd: |
+          failed=0 rejected=0
+          for _ in $(seq 1 {{ clone_accounts_safuser_generate_attempts }}); do
+            if ! p=$(pwmake 128 2>/dev/null); then failed=$((failed + 1)); continue; fi
+            if pwscore {{ clone_accounts_safuser_name }} <<<"$p" >/dev/null 2>&1; then
+              printf '%s' "$p"
+              exit 0
+            fi
+            rejected=$((rejected + 1))
+          done
+          echo "{{ clone_accounts_safuser_generate_attempts }} attempts:" \
+            "pwmake failed $failed, pwscore rejected $rejected" >&2
+          exit 1
+        executable: /bin/bash
+      register: clone_accounts_safuser_generated
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    # Not no_log, so the failure names its cause; stderr holds counts only.
+    - name: Stop when no generated password met the password quality policy
+      when: clone_accounts_safuser_password | length == 0 and clone_accounts_safuser_generated.rc != 0
+      ansible.builtin.fail:
+        msg: >-
+          could not generate a password for {{ clone_accounts_safuser_name }} that meets the password
+          quality policy ({{ clone_accounts_safuser_generated.stderr }}); nothing was set, so the next run tries again
+
+    # Kept before the account is made, so a run stopped after this sets the
+    # same password next time.
+    - name: Keep the generated password for root
+      when: clone_accounts_safuser_password | length == 0
+      ansible.builtin.lineinfile:
+        path: "{{ clone_accounts_safuser_env_file }}"
+        line: "SAFUSER_PASSWORD={{ clone_accounts_safuser_generated.stdout }}"
+        regexp: '^SAFUSER_PASSWORD='
+      no_log: true
+
+    - name: Use the generated password
+      when: clone_accounts_safuser_password | length == 0
+      ansible.builtin.set_fact:
+        clone_accounts_safuser_password: "{{ clone_accounts_safuser_generated.stdout }}"
+      no_log: true
+
+- name: Create the account
+  when: getent_passwd[clone_accounts_safuser_name] is none
+  ansible.builtin.user:
+    name: "{{ clone_accounts_safuser_name }}"
+    comment: "{{ clone_accounts_safuser_comment }}"
+    create_home: true
+
+- name: Read the account
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ clone_accounts_safuser_name }}"
+
+- name: Name its home and group
+  ansible.builtin.set_fact:
+    clone_accounts_safuser_home: "{{ getent_passwd[clone_accounts_safuser_name][4] }}"
+    clone_accounts_safuser_gid: "{{ getent_passwd[clone_accounts_safuser_name][2] }}"
+
+- name: Look for its authorized keys
+  ansible.builtin.stat:
+    path: "{{ clone_accounts_safuser_home }}/.ssh/authorized_keys"
+  register: clone_accounts_safuser_authorized_keys
+
+- name: Give it the deployer's SSH keys unless it has some
+  when: not clone_accounts_safuser_authorized_keys.stat.exists or clone_accounts_safuser_authorized_keys.stat.size == 0
+  block:
+    - name: Report that cloud-init was given no SSH key
+      when: clone_accounts_safuser_keys | length == 0
+      ansible.builtin.debug:
+        msg: >-
+          WARNING: cloud-init was given no SSH key, so {{ clone_accounts_safuser_name }} has none;
+          it logs in with its password at the console only
+
+    - name: Create its SSH directory
+      when: clone_accounts_safuser_keys | length > 0
+      ansible.builtin.file:
+        path: "{{ clone_accounts_safuser_home }}/.ssh"
+        state: directory
+        owner: "{{ clone_accounts_safuser_name }}"
+        group: "{{ clone_accounts_safuser_gid }}"
+        mode: '0700'
+        setype: _default
+
+    - name: Give it the deployer's SSH keys
+      when: clone_accounts_safuser_keys | length > 0
+      ansible.builtin.copy:
+        content: "{{ clone_accounts_safuser_keys | join('\n') }}\n"
+        dest: "{{ clone_accounts_safuser_home }}/.ssh/authorized_keys"
+        owner: "{{ clone_accounts_safuser_name }}"
+        group: "{{ clone_accounts_safuser_gid }}"
+        mode: '0600'
+        setype: _default
+
+- name: Set its password
+  when: clone_accounts_safuser_needs_password
+  block:
+    # pam_unix's rounds= (the template_hardening role's authselect profile); without
+    # it chpasswd uses its own default of 5000. No backslashes in the
+    # pattern: escapes in Jinja strings differ between ansible-core releases.
+    - name: Read the PAM stack's password hashing
+      ansible.builtin.slurp:
+        src: "{{ clone_accounts_safuser_pam_password_file }}"
+      register: clone_accounts_safuser_pam
+      failed_when: false
+
+    - name: Hash as the PAM stack does
+      ansible.builtin.set_fact:
+        clone_accounts_safuser_chpasswd: >-
+          {{ ['chpasswd', '-c', 'SHA512']
+             + (['-s', clone_accounts_safuser_rounds] if clone_accounts_safuser_rounds | length > 0 else []) }}
+      vars:
+        clone_accounts_safuser_rounds: >-
+          {{ (clone_accounts_safuser_pam.content | default('') | b64decode
+              | regex_findall('(?m)^password[^a-z_-].*pam_unix[.]so.*[^a-z_-]rounds=([0-9]+)') or ['']) | first }}
+
+    - name: Set the password the deployer supplied
+      when: clone_accounts_safuser_supplied | length > 0
+      ansible.builtin.command:
+        argv: >-
+          {{ ['chpasswd', '-e'] if clone_accounts_safuser_supplied is match('^[$][0-9a-z]+[$]')
+             else clone_accounts_safuser_chpasswd }}
+        stdin: "{{ clone_accounts_safuser_name }}:{{ clone_accounts_safuser_supplied }}"
+      changed_when: true
+      no_log: true
+
+    - name: Warn about a supplied hash that is not SHA-512
+      when: >-
+        clone_accounts_safuser_supplied is match('^[$][0-9a-z]+[$]')
+        and not clone_accounts_safuser_supplied.startswith('$6$')
+      ansible.builtin.debug:
+        msg: >-
+          WARNING: the supplied password hash is not SHA-512 ($6$), which the STIG
+          requires; supply one made with 'openssl passwd -6'
+
+    - name: Set the generated password
+      when: clone_accounts_safuser_supplied | length == 0
+      ansible.builtin.command:
+        argv: "{{ clone_accounts_safuser_chpasswd }}"
+        stdin: "{{ clone_accounts_safuser_name }}:{{ clone_accounts_safuser_password }}"
+      changed_when: true
+      no_log: true
+
+# Only admin, the account cloud-init creates, has passwordless sudo.
+- name: Give safuser sudo that asks for its password
+  ansible.builtin.copy:
+    content: "{{ clone_accounts_safuser_name }} ALL=(ALL) ALL\n"
+    dest: "{{ clone_accounts_safuser_sudoers_file }}"
+    owner: root
+    group: root
+    mode: '0440'
+    validate: /usr/sbin/visudo -cf %s

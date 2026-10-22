@@ -1,7 +1,0 @@
-# {{ ansible_managed }}
-# Heimdall's own network. Upstream's docker-compose.yml
-# (https://github.com/mitre/heimdall2/blob/master/docker-compose.yml) puts
-# its services on the project's default network; here the heimdall pod is
-# alone on this one, so no other container can reach its database.
-[Network]
-NetworkName=heimdall

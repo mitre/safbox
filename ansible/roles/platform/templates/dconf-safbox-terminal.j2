@@ -1,9 +1,0 @@
-# {{ ansible_managed }}
-# A new user's terminal: one Ptyxis profile, the default, with the SAF Navy
-# palette (from /etc/skel). Defaults, not locks: the user may change them.
-[org/gnome/Ptyxis]
-profile-uuids=['{{ platform_desktop_terminal_profile }}']
-default-profile-uuid='{{ platform_desktop_terminal_profile }}'
-
-[org/gnome/Ptyxis/Profiles/{{ platform_desktop_terminal_profile }}]
-palette='{{ platform_desktop_palette.dest | basename | splitext | first }}'

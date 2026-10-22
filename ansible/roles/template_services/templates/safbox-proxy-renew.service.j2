@@ -1,0 +1,28 @@
+# {{ ansible_managed }}
+# Signs the proxy's certificate again from the box's local CA once it is
+# near expiry (the role's clone_proxy_tls_renew_days, 30), and restarts the proxy: the
+# first-boot play run with --tags renew, which runs only the proxy_tls
+# role's renew entry point. A site's own certificate, which the local CA
+# did not sign, is left as it is. safbox-proxy-renew.timer starts it daily;
+# start it by hand to renew a certificate that is due now.
+#
+# The play's configuration, with Ansible's temporary files in this unit's
+# own runtime directory, so a first boot running at the same time keeps
+# its own.
+[Unit]
+Description=Renew the SAFBox TLS proxy's certificate when it nears expiry
+Documentation=file:{{ template_services_firstboot_play }}
+After=safbox-firstboot.service
+ConditionPathExists={{ template_services_firstboot_play }}
+ConditionPathExists={{ template_services_proxy_cert }}
+
+[Service]
+Type=oneshot
+Environment=ANSIBLE_CONFIG={{ template_services_firstboot_play | dirname }}/ansible.cfg HOME=/root
+Environment=ANSIBLE_LOCAL_TEMP=/run/safbox-proxy-renew/ansible ANSIBLE_REMOTE_TEMP=/run/safbox-proxy-renew/ansible
+RuntimeDirectory=safbox-proxy-renew
+ExecStart=/usr/bin/ansible-playbook -c local -i localhost, {{ template_services_firstboot_play }} --tags renew
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=safbox-proxy-renew
+UMask=0077

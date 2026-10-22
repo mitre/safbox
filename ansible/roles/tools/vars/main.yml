@@ -1,9 +1,0 @@
----
-# Names common to every OS family. A vars/<os_family>.yml file, loaded by
-# the role, overrides a name here only where that family differs.
-
-tools_cinc_auditor_package: cinc-auditor
-
-# unarchive needs unzip to unpack the Packer release zip.
-tools_packer_packages:
-  - unzip

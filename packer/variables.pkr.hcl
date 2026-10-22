@@ -142,8 +142,8 @@ variable "vlan_tag" {
 
 variable "datasource_list" {
   type        = string
-  description = "cloud-init datasources the image consults, comma separated, platform specific. Proxmox presents a NoCloud volume."
-  default     = "NoCloud"
+  description = "cloud-init datasources the image consults, comma separated, in order; the answer file adds the None fallback. One image for every hypervisor: NoCloud (Proxmox's cloud-init drive, or a seed ISO), ConfigDrive, and VMware (vSphere guestinfo, read with open-vm-tools). Each is consulted only when ds-identify finds its source."
+  default     = "NoCloud, ConfigDrive, VMware"
 }
 
 variable "http_bind_address" {
@@ -172,13 +172,25 @@ variable "galaxy_dir" {
 
 variable "site_dir" {
   type        = string
-  description = "The built documentation site (VitePress output) the services role copies to the box as its start page. scripts/build.sh builds it into the run's own directory so concurrent builds never share one. Null uses the role's default, site/.vitepress/dist in the checkout."
+  description = "The built documentation site (VitePress output) the template_services role copies to the box as its start page. scripts/build.sh builds it into the run's own directory so concurrent builds never share one. Null uses the role's default, site/.vitepress/dist in the checkout."
+  default     = null
+}
+
+variable "build_run_id" {
+  type        = string
+  description = "The ID of the scripts/build.sh run that builds the template (its directory under .build/runs/), recorded with the build gate's results the template holds. Null when Packer is run by hand."
+  default     = null
+}
+
+variable "build_scans_dir" {
+  type        = string
+  description = "Directory the build gate keeps the box profiles' results in (scripts/validate.sh --results-dir); the seal installs them in the template, where first boot imports them into Heimdall. scripts/build.sh passes one inside the run's own directory. Null keeps none, and the template holds no scan results."
   default     = null
 }
 
 variable "ansible_extra_vars" {
   type        = list(string)
-  description = "Extra variables passed to every appliance playbook as key=value, e.g. [\"safbox_example_quadlet_enabled=true\"] for the acceptance build."
+  description = "Extra variables passed to every appliance playbook as key=value, e.g. [\"safbox_services_2=false\"]."
   default     = []
 }
 

@@ -13,7 +13,8 @@ summary: >-
   included. Runs on this machine (-t local), never on the box: checks
   that need a shell on the box are in the safbox profile. It creates
   accounts and data and changes safuser's Keycloak password, so run it
-  against a clone, never an appliance in use.
+  against a clone, never an appliance in use. With read_only true it
+  skips the controls that do that and runs the rest.
 version: 1.0.0
 inspec_version: ">= 5.0"
 inputs:
@@ -47,28 +48,31 @@ inputs:
   - name: hdf_file
     description: >-
       An HDF results file to upload to Heimdall, such as the safbox
-      profile's results from the same gate.
+      profile's results from the same gate. When they are the safbox
+      profile's, safbox-client-keycloak-2 also reads from them which of
+      the template's build-gate scans the box imported (safbox-heimdall-8)
+      and checks that safuser sees each one.
     type: String
     value: ""
   - name: heimdall_admin_password
     description: >-
       The password of Heimdall's administrator, admin@<domain>:
-      ADMIN_PASSWORD in /etc/safbox/heimdall.env on the box.
+      the heimdall-admin-password podman secret on the box.
     type: String
     sensitive: true
     value: ""
   - name: vulcan_admin_password
     description: >-
       The password of Vulcan's administrator, admin@<domain>:
-      VULCAN_ADMIN_PASSWORD in /etc/safbox/vulcan.env on the box.
+      the vulcan-admin-password podman secret on the box.
     type: String
     sensitive: true
     value: ""
   - name: keycloak_safuser_password
     description: >-
       safuser's Keycloak password generated at first boot, a one-time
-      password its first sign-in changes: SAFUSER_PASSWORD in
-      /etc/safbox/keycloak.env on the box.
+      password its first sign-in changes: the keycloak-safuser-password
+      podman secret on the box.
     type: String
     sensitive: true
     value: ""
@@ -82,3 +86,16 @@ inputs:
       box; while a change is under way the new password is in <file>.new.
     type: String
     value: ""
+  - name: read_only
+    description: >-
+      true for a box kept for a person (scripts/clone-and-ssh.sh --keep,
+      validate.sh --client-read-only): the controls that change the box
+      are skipped, each reported as skipped with the reason, and every
+      other control runs. Skipped: safbox-client-heimdall-2 (uploads an
+      evaluation), safbox-client-vulcan-2 (its sign-up makes an account),
+      safbox-client-vulcan-3 (creates a project) and
+      safbox-client-keycloak-2 to -5 (take safuser's first sign-in and
+      change its password), so safuser's first Keycloak sign-in is left
+      for that person. false, the default: every control runs.
+    type: Boolean
+    value: false

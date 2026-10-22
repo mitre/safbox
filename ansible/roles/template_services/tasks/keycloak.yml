@@ -1,0 +1,155 @@
+---
+# Keycloak and its PostgreSQL as a podman pod of Quadlet units, the single
+# sign-on for Heimdall and Vulcan: task group safbox-services-5, imported
+# by tasks/main.yml, which applies the group's tag and its switch
+# safbox_services_5.
+
+# The image is built here, at image build, so a clone starts Keycloak
+# offline and fetches nothing.
+- name: Create Keycloak's configuration directory
+  ansible.builtin.file:
+    path: "{{ template_services_keycloak_conf_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Create the Keycloak image's build context
+  ansible.builtin.file:
+    path: "{{ template_services_keycloak_build_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+# get_url checks each jar against its pinned sha256: a changed upstream
+# file fails the build.
+- name: Download the Bouncy Castle FIPS jars and verify their checksums
+  ansible.builtin.get_url:
+    url: >-
+      {{ template_services_keycloak_jar_url }}/{{ item.name }}/{{ item.version }}/{{ item.name }}-{{ item.version }}.jar
+    dest: "{{ template_services_keycloak_build_dir }}/{{ item.name }}-{{ item.version }}.jar"
+    checksum: "sha256:{{ item.sha256 }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop: "{{ safbox_keycloak_fips_jars }}"
+  loop_control:
+    label: "{{ item.name }}-{{ item.version }}"
+
+- name: Record the jars' checksums
+  ansible.builtin.template:
+    src: keycloak-providers.sha256.j2
+    dest: "{{ template_services_keycloak_conf_dir }}/providers.sha256"
+    owner: root
+    group: root
+    mode: '0644'
+  register: template_services_keycloak_sums
+
+- name: Install the Containerfile of Keycloak's FIPS image
+  ansible.builtin.template:
+    src: keycloak.Containerfile.j2
+    dest: "{{ template_services_keycloak_conf_dir }}/Containerfile"
+    owner: root
+    group: root
+    mode: '0644'
+  register: template_services_keycloak_containerfile
+
+# The tag is Keycloak's version, so new jars under the same Keycloak need
+# a rebuild: forced whenever the Containerfile or the sums change.
+- name: Build Keycloak's FIPS image
+  containers.podman.podman_image:
+    name: "{{ template_services_keycloak_image }}"
+    path: "{{ template_services_keycloak_build_dir }}"
+    build:
+      file: "{{ template_services_keycloak_conf_dir }}/Containerfile"
+      format: oci
+    force: "{{ template_services_keycloak_containerfile is changed or template_services_keycloak_sums is changed }}"
+    state: build
+
+# Pulled at build so a clone starts its pod offline.
+- name: Pull Keycloak's PostgreSQL image
+  containers.podman.podman_image:
+    name: "{{ template_services_keycloak_db_image }}"
+    state: present
+
+# Read before the units are written, so the restart handler knows
+# whether this is a deployed box (secrets exist) or a build: the secret
+# the database container reads exists once first boot has made Keycloak's.
+- name: Check whether first boot has made Keycloak's secrets
+  ansible.builtin.command:
+    argv:
+      - podman
+      - secret
+      - exists
+      - "{{ (template_services_secrets | selectattr('env.keycloak-db', 'defined') | first).name }}"
+  register: template_services_keycloak_secrets
+  changed_when: false
+  failed_when: template_services_keycloak_secrets.rc not in [0, 1]
+
+# Imported on Keycloak's first start only; a change here reaches a
+# deployed box's realm through Keycloak's admin console, not this file.
+- name: Install the safbox realm
+  ansible.builtin.template:
+    src: safbox-realm.json.j2
+    dest: "{{ template_services_keycloak_conf_dir }}/safbox-realm.json"
+    owner: root
+    group: root
+    mode: '0644'
+
+# The PostgreSQL settings and access list the database container mounts
+# (defaults/main.yml, PostgreSQL).
+- name: Create the directory of the PostgreSQL configuration
+  ansible.builtin.file:
+    path: "{{ template_services_postgresql_conf_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Install the configuration of Keycloak's PostgreSQL
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "{{ template_services_postgresql_conf_dir }}/keycloak-{{ item }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop:
+    - postgresql.conf
+    - pg_hba.conf
+  vars:
+    template_services_postgresql_app: Keycloak
+    template_services_postgresql_user: "{{ template_services_keycloak_db_user }}"
+  notify:
+    - Restart Keycloak
+
+- name: Install the Keycloak Quadlet units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "{{ template_os_container_quadlet_dir }}/{{ item }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop:
+    - keycloak.network
+    - keycloak.pod
+    - keycloak-db.volume
+    - keycloak-db.container
+    - keycloak.container
+  notify:
+    - Reload systemd units
+    - Restart Keycloak
+
+- name: Generate the units from the Quadlet files
+  ansible.builtin.meta: flush_handlers
+
+# As for Heimdall: started, never enabled, and only on a deployed box.
+- name: Start Keycloak on a deployed box
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    state: started
+  loop:
+    - keycloak-pod.service
+    - keycloak-db.service
+    - keycloak.service
+  when: template_services_keycloak_secrets.rc == 0

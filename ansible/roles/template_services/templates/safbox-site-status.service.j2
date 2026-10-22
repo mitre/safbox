@@ -1,0 +1,17 @@
+# {{ ansible_managed }}
+{% set units = (template_services_proxy_apps | selectattr('enabled') | map(attribute='name') | map('regex_replace', '$', '.service') | list) + ['safbox-proxy.service'] %}
+[Unit]
+Description=Write the SAFBox start page's service status (status.json)
+# Not on the build VM: like the proxy, only once first boot has made its key.
+ConditionPathExists={{ template_services_proxy_key }}
+# Each listed service's start pulls this in (Install below) and it runs
+# once their start jobs are done, so the status is current at the end of
+# boot and after a restart; the timer catches a service going down.
+After={{ units | join(' ') }}
+
+[Service]
+Type=oneshot
+ExecStart={{ template_services_status_script }} {{ template_services_status_list }} {{ template_services_proxy_conf_dir }}/html/status.json
+
+[Install]
+WantedBy={{ units | join(' ') }}

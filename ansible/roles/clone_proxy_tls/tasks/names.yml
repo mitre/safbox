@@ -1,0 +1,17 @@
+---
+# The names the proxy serves, one per line, the domain first (written by
+# the template_services role at build): clone_proxy_tls_names.
+- name: Read the names the proxy serves
+  ansible.builtin.slurp:
+    src: "{{ clone_proxy_tls_names_file }}"
+  register: clone_proxy_tls_names_raw
+
+- name: Take the domain from the first name
+  ansible.builtin.set_fact:
+    clone_proxy_tls_names: "{{ clone_proxy_tls_names_raw.content | b64decode | split('\n') | select | list }}"
+
+- name: Check the names file names something
+  ansible.builtin.assert:
+    that: clone_proxy_tls_names | length > 0
+    fail_msg: "{{ clone_proxy_tls_names_file }} names nothing"
+    quiet: true

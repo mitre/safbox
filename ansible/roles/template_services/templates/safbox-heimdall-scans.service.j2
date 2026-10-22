@@ -1,0 +1,37 @@
+# {{ ansible_managed }}
+# Imports the template's build-gate scan results into Heimdall, once per
+# box. It runs the first-boot play with --tags heimdall-scans, which runs
+# only the clone_heimdall_scans role. That role uploads each scan as a public
+# evaluation, signed in as Heimdall's administrator with the password first
+# boot made, then writes the marker. With the marker in place, the unit
+# does not run again.
+#
+# Ordered after heimdall.service, which is active only once Heimdall
+# answers its healthcheck (Notify=healthy), and so after first boot. Not a
+# first-boot role: Heimdall starts after first boot, so it would wait on
+# itself. With Heimdall not running, the role skips without a marker,
+# and the next boot tries again. A template without scan results (built
+# without the build gate's) has nothing to import.
+#
+# The play's temporary files are in this unit's own runtime directory.
+[Unit]
+Description=Import the SAFBox template's build-gate scan results into Heimdall
+Documentation=file:{{ template_services_firstboot_play }}
+After=heimdall.service safbox-firstboot.service
+ConditionPathExists=!{{ template_services_heimdall_scans_marker }}
+ConditionPathExists={{ template_services_heimdall_scans_dir }}/manifest.json
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Environment=ANSIBLE_CONFIG={{ template_services_firstboot_play | dirname }}/ansible.cfg HOME=/root
+Environment=ANSIBLE_LOCAL_TEMP=/run/safbox-heimdall-scans/ansible ANSIBLE_REMOTE_TEMP=/run/safbox-heimdall-scans/ansible
+RuntimeDirectory=safbox-heimdall-scans
+ExecStart=/usr/bin/ansible-playbook -c local -i localhost, {{ template_services_firstboot_play }} --tags heimdall-scans
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=safbox-heimdall-scans
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

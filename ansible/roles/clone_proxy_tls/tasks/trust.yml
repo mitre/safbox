@@ -1,0 +1,98 @@
+---
+# Trust the local CA only while it signed the certificate the proxy serves
+# and that certificate verifies against it, so a site's own certificate
+# never brings the local CA back into the trust store.
+- name: Look for the local CA
+  ansible.builtin.stat:
+    path: "{{ clone_proxy_tls_ca_cert }}"
+  register: clone_proxy_tls_ca_stat
+
+- name: Trust the local CA
+  when: clone_proxy_tls_ca_stat.stat.exists
+  block:
+    - name: Read the certificate and the local CA
+      community.crypto.x509_certificate_info:
+        path: "{{ item }}"
+      loop: ["{{ clone_proxy_tls_cert }}", "{{ clone_proxy_tls_ca_cert }}"]
+      register: clone_proxy_tls_info
+
+    - name: Verify the certificate against the local CA
+      when: clone_proxy_tls_info.results[0].issuer_ordered == clone_proxy_tls_info.results[1].subject_ordered
+      ansible.builtin.command:
+        argv:
+          - openssl
+          - verify
+          - -purpose
+          - sslserver
+          - -CAfile
+          - "{{ clone_proxy_tls_ca_cert }}"
+          - "{{ clone_proxy_tls_cert }}"
+      register: clone_proxy_tls_verify
+      changed_when: false
+      failed_when: false
+
+    - name: Report a certificate the local CA did not sign
+      when: clone_proxy_tls_verify is skipped
+      ansible.builtin.debug:
+        msg: "{{ clone_proxy_tls_cert }} is not signed by the local CA; not trusting it"
+
+    - name: Report a certificate the local CA signed that does not verify
+      when: clone_proxy_tls_verify is not skipped and clone_proxy_tls_verify.rc != 0
+      ansible.builtin.debug:
+        msg: >-
+          WARNING: {{ clone_proxy_tls_cert }} is signed by the local CA but does not verify
+          ({{ clone_proxy_tls_verify.stdout }} {{ clone_proxy_tls_verify.stderr }}); not trusting it.
+          Regenerate it (and the CA after a change of domain), docs/reference/services.md
+
+    - name: Add the local CA to the system trust store
+      when: clone_proxy_tls_verify is not skipped and clone_proxy_tls_verify.rc == 0
+      block:
+        - name: Add the local CA to the system trust anchors
+          ansible.builtin.copy:
+            src: "{{ clone_proxy_tls_ca_cert }}"
+            dest: "{{ clone_proxy_tls_anchor }}"
+            remote_src: true
+            owner: root
+            group: root
+            mode: '0644'
+          register: clone_proxy_tls_anchor_copy
+
+        # The anchor alone proves nothing: a run stopped between copying
+        # it and rebuilding the store leaves an anchor the store lacks. The
+        # store every client reads must verify the certificate.
+        - name: Check the system trust store verifies the certificate
+          ansible.builtin.command:
+            argv:
+              - openssl
+              - verify
+              - -purpose
+              - sslserver
+              - -CAfile
+              - "{{ clone_proxy_tls_bundle }}"
+              - "{{ clone_proxy_tls_cert }}"
+          register: clone_proxy_tls_store_verify
+          changed_when: false
+          failed_when: false
+
+        # The rebuilt store is read by every user: not under the unit's
+        # umask.
+        - name: Rebuild the system trust store
+          when: clone_proxy_tls_anchor_copy is changed or clone_proxy_tls_store_verify.rc != 0
+          ansible.builtin.command:
+            argv: >-
+              {{ ['sh', '-c', 'umask 022 && exec "$0" "$@"']
+                 + clone_proxy_tls_rebuild }}
+          changed_when: true
+
+        - name: Check the rebuilt trust store verifies the certificate
+          when: clone_proxy_tls_anchor_copy is changed or clone_proxy_tls_store_verify.rc != 0
+          ansible.builtin.command:
+            argv:
+              - openssl
+              - verify
+              - -purpose
+              - sslserver
+              - -CAfile
+              - "{{ clone_proxy_tls_bundle }}"
+              - "{{ clone_proxy_tls_cert }}"
+          changed_when: false

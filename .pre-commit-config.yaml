@@ -8,15 +8,18 @@ repos:
     hooks:
       - id: trailing-whitespace
       - id: end-of-file-fixer
+        # Upstream logos kept byte for byte; Heimdall's has no final
+        # newline.
+        exclude: ^ansible/roles/template_services/files/firefox/
       - id: check-yaml
       - id: check-added-large-files
   - repo: https://github.com/shellcheck-py/shellcheck-py
     rev: a23f6b85d0fdd5bb9d564e2579e678033debbdff  # frozen: v0.10.0.1
     hooks:
       - id: shellcheck
-        # Follow sourced files (the first-boot hooks source the base role's
-        # secrets.sh), as tests/ansible/lint.sh does with --external-sources,
-        # so a commit that stages a hook without its library still passes.
+        # Follow sourced files, as tests/ansible/lint.sh does with
+        # --external-sources, so a commit that stages a script without the
+        # file it sources still passes.
         args: [--external-sources]
   - repo: local
     hooks:
@@ -32,3 +35,12 @@ repos:
         language: system
         pass_filenames: false
         files: ks\.cfg\.pkrtpl\.hcl$|ks-lint\.sh$
+      - id: bats
+        name: bats (script tests)
+        # The suites under tests/ (tests/bats/run.sh fetches the pinned bats
+        # first), when a script they test, a suite, a stub or a fixture
+        # changes. The gitleaks rules suite needs gitleaks on PATH.
+        entry: tests/bats/run.sh
+        language: system
+        pass_filenames: false
+        files: ^(scripts/(build|clone-and-ssh|validate|lib)\.sh|tests/(bats|scripts|secrets)/.*|\.gitleaks\.toml)$

@@ -71,14 +71,17 @@ end
 
 control 'safbox-client-proxy-3' do
   impact 1.0
-  title 'Plain HTTP to each name is redirected to HTTPS with the same name and path'
-  desc 'Port 80 answers a request for each name with a permanent redirect to https:// on the same name and path (safbox-proxy-6 checks the same on the box).'
+  title 'Plain HTTP to each name and to the address is redirected to HTTPS with the same name and path'
+  desc 'Port 80 answers a request for each name, and for the bare address, with a permanent redirect to https:// on the same name and path, and a plain HTTP request sent to port 443 is redirected the same way instead of being refused with 400.'
   only_if('The proxy is switched off', impact: 0.0) { services.include?('proxy') }
 
-  ([domain] + names).each do |name|
-    describe "http://#{name}/safbox/check?probe=1 from here" do
-      subject { command("curl -sS -o /dev/null -w '%{http_code} %{redirect_url}' --resolve #{name}:80:#{address} 'http://#{name}/safbox/check?probe=1'") }
-      its('stdout') { should eq "301 https://#{name}/safbox/check?probe=1" }
+  ([domain, address] + names).each do |name|
+    [80, 443].each do |port|
+      url = port == 80 ? "http://#{name}/safbox/check?probe=1" : "http://#{name}:443/safbox/check?probe=1"
+      describe "#{url} from here" do
+        subject { command("curl -sS -o /dev/null -w '%{http_code} %{redirect_url}' --resolve #{name}:#{port}:#{address} '#{url}'") }
+        its('stdout') { should eq "301 https://#{name}/safbox/check?probe=1" }
+      end
     end
   end
 end

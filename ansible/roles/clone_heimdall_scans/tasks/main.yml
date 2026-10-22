@@ -1,0 +1,256 @@
+---
+# The template's build-gate scan results, the safbox and STIG overlay
+# profiles' results from the build VM just before the seal, imported into
+# the box's own Heimdall once, so a fresh box shows its own scans.
+# safbox-heimdall-scans.service runs this after Heimdall answers its
+# healthcheck, with the first-boot play's --tags heimdall-scans:
+#
+#   ansible-playbook -c local -i localhost, /usr/local/lib/safbox/firstboot/firstboot.yml --tags heimdall-scans
+#
+#   - Heimdall's administrator uploads each scan as a public evaluation.
+#     Heimdall makes an account for a user who signs in through Keycloak
+#     only at that user's first sign-in, so an evaluation cannot be
+#     safuser's before then; a public one is shown to every user who signs
+#     in, safuser included (docs/reference/services.md).
+#   - The administrator's password is the one first boot made, a podman
+#     secret. It is read into this play and sent in the sign-in request's
+#     body, never in a process argument. The session token Heimdall returns
+#     goes in the requests' headers. Every task that holds either is
+#     no_log, and a failure names the HTTP status only. No API key is made.
+#   - Idempotent: a scan whose evaluation name Heimdall already lists is not
+#     uploaded again. Once every scan is there, the marker keeps the unit
+#     from running again, so an evaluation an operator deletes stays
+#     deleted. To import again, remove the marker and restart the unit.
+#   - With Heimdall not running, nothing is imported and no marker is
+#     written: the unit tries again at the next boot.
+
+- name: Read the role's settings
+  ansible.builtin.include_vars:
+    file: "{{ clone_heimdall_scans_settings_file }}"
+
+- name: Look for the manifest of the template's scan results
+  ansible.builtin.stat:
+    path: "{{ clone_heimdall_scans_dir }}/manifest.json"
+  register: clone_heimdall_scans_manifest_stat
+
+- name: Report that the template holds no scan results
+  when: not clone_heimdall_scans_manifest_stat.stat.exists
+  ansible.builtin.debug:
+    msg: >-
+      {{ clone_heimdall_scans_dir }}/manifest.json is missing: the template was built
+      without the build gate's results; nothing to import
+
+- name: Check whether Heimdall is running
+  when: clone_heimdall_scans_manifest_stat.stat.exists
+  ansible.builtin.command:
+    argv: [systemctl, is-active, "{{ clone_heimdall_scans_service }}"]
+  register: clone_heimdall_scans_active
+  changed_when: false
+  failed_when: false
+
+- name: Report that Heimdall is not running
+  when:
+    - clone_heimdall_scans_manifest_stat.stat.exists
+    - clone_heimdall_scans_active.rc != 0
+  ansible.builtin.debug:
+    msg: >-
+      {{ clone_heimdall_scans_service }} is {{ clone_heimdall_scans_active.stdout | default('not running', true) }}:
+      the build's scan results are not imported; the next boot tries again
+
+- name: Import the scan results into Heimdall
+  when:
+    - clone_heimdall_scans_manifest_stat.stat.exists
+    - clone_heimdall_scans_active.rc == 0
+  block:
+    - name: Read the manifest
+      ansible.builtin.slurp:
+        src: "{{ clone_heimdall_scans_dir }}/manifest.json"
+      register: clone_heimdall_scans_manifest_raw
+
+    - name: Name each scan's evaluation and tags
+      ansible.builtin.set_fact:
+        clone_heimdall_scans_run: "{{ clone_heimdall_scans_manifest.run_id }}"
+        clone_heimdall_scans_all: >-
+          {%- set out = [] -%}
+          {%- for scan in clone_heimdall_scans_manifest.scans -%}
+          {%-   set _ = out.append(scan | combine({
+                  'path': clone_heimdall_scans_dir ~ '/' ~ scan.file,
+                  'name': 'safbox-build-' ~ clone_heimdall_scans_run_id ~ '-' ~ scan.profile ~ '.json',
+                  'tags': (['safbox-build-scan', 'run ' ~ clone_heimdall_scans_run_id, 'scanned ' ~ scan.scanned]
+                           + clone_heimdall_scans_profile_tags.get(scan.profile, [])) | join(',')})) -%}
+          {%- endfor -%}
+          {{ out }}
+      vars:
+        clone_heimdall_scans_manifest: "{{ clone_heimdall_scans_manifest_raw.content | b64decode | from_json }}"
+        clone_heimdall_scans_run_id: "{{ clone_heimdall_scans_manifest.run_id }}"
+
+    - name: Read each scan's sha256
+      ansible.builtin.stat:
+        path: "{{ item.path }}"
+        checksum_algorithm: sha256
+      loop: "{{ clone_heimdall_scans_all }}"
+      loop_control:
+        label: "{{ item.file }}"
+      register: clone_heimdall_scans_files
+
+    - name: Check each scan is the one the manifest lists
+      ansible.builtin.assert:
+        that:
+          - item.stat.exists
+          - item.stat.checksum | default('') == item.item.sha256
+        fail_msg: "{{ item.item.path }} is missing or not the file the manifest lists (sha256 {{ item.item.sha256 }})"
+        quiet: true
+      loop: "{{ clone_heimdall_scans_files.results }}"
+      loop_control:
+        label: "{{ item.item.file }}"
+
+    - name: Read the administrator's first-boot password
+      ansible.builtin.command:
+        argv:
+          - podman
+          - secret
+          - inspect
+          - --showsecret
+          - --format
+          - "{{ '{{' }}.SecretData{{ '}}' }}"
+          - "{{ clone_heimdall_scans_admin_secret }}"
+      register: clone_heimdall_scans_admin_password
+      changed_when: false
+      no_log: true
+
+    # The password travels in the module's arguments and the request's
+    # body only.
+    - name: Sign in to Heimdall as its administrator
+      ansible.builtin.uri:
+        url: "{{ clone_heimdall_scans_url }}/authn/login"
+        method: POST
+        body_format: json
+        body:
+          email: "{{ clone_heimdall_scans_admin_email }}"
+          password: "{{ clone_heimdall_scans_admin_password.stdout }}"
+        status_code: [201]
+      register: clone_heimdall_scans_login
+      failed_when: false
+      no_log: true
+
+    # Not no_log, so the failure names its cause: the status alone.
+    - name: Stop when Heimdall refused the sign-in
+      when: clone_heimdall_scans_login.status != 201
+      ansible.builtin.fail:
+        msg: >-
+          Heimdall answered the administrator's sign-in with HTTP {{ clone_heimdall_scans_login.status }}
+          {{- (': the password of the administrator is no longer the one first boot made '
+               ~ '(podman secret ' ~ clone_heimdall_scans_admin_secret ~ '); upload the scans from '
+               ~ clone_heimdall_scans_dir ~ ' by hand')
+              if clone_heimdall_scans_login.status == 401 else '' }};
+          nothing was imported and no marker written
+
+    - name: Keep the session token
+      ansible.builtin.set_fact:
+        clone_heimdall_scans_auth: "Bearer {{ clone_heimdall_scans_login.json.accessToken }}"
+      no_log: true
+
+    # The administrator sees every evaluation; the newest first.
+    - name: List the evaluations Heimdall holds
+      ansible.builtin.uri:
+        url: "{{ clone_heimdall_scans_url }}/evaluations?{{ clone_heimdall_scans_query }}"
+        headers:
+          Authorization: "{{ clone_heimdall_scans_auth }}"
+        status_code: [200]
+      register: clone_heimdall_scans_list
+      failed_when: false
+      no_log: true
+      vars:
+        clone_heimdall_scans_query: >-
+          offset=0&limit={{ clone_heimdall_scans_list_limit }}&order[]=createdAt&order[]=DESC
+
+    - name: Stop when Heimdall did not list its evaluations
+      when: clone_heimdall_scans_list.status != 200
+      ansible.builtin.fail:
+        msg: >-
+          Heimdall answered the list of evaluations with HTTP {{ clone_heimdall_scans_list.status }};
+          nothing was imported and no marker written
+
+    - name: Name the scans Heimdall does not hold yet
+      ansible.builtin.set_fact:
+        clone_heimdall_scans_missing: >-
+          {{ clone_heimdall_scans_all | rejectattr('name', 'in', clone_heimdall_scans_held) | list }}
+      vars:
+        clone_heimdall_scans_held: "{{ clone_heimdall_scans_list.json.evaluations | map(attribute='filename') | list }}"
+
+    - name: Report the scans Heimdall holds already
+      when: clone_heimdall_scans_missing | length < clone_heimdall_scans_all | length
+      ansible.builtin.debug:
+        msg: >-
+          Heimdall holds
+          {{ clone_heimdall_scans_all | difference(clone_heimdall_scans_missing) | map(attribute='name') | join(', ') }}
+          already; not uploaded again
+
+    - name: Read each scan to upload
+      ansible.builtin.slurp:
+        src: "{{ item.path }}"
+      loop: "{{ clone_heimdall_scans_missing }}"
+      loop_control:
+        label: "{{ item.file }}"
+      register: clone_heimdall_scans_contents
+
+    # Heimdall stores what it can parse as JSON, and keeps anything else as
+    # text under originalResultsData, which its viewer cannot load. So each
+    # file goes as the form part's content: given a path instead, the uri
+    # module base64-encodes the part (Content-Transfer-Encoding: base64),
+    # which form uploads do not decode (RFC 7578), and ansible-core before
+    # 2.19 has no multipart_encoding to turn that off. The string filter keeps
+    # the JSON text from being read back into a dictionary by the templating.
+    - name: Upload each scan as a public evaluation
+      ansible.builtin.uri:
+        url: "{{ clone_heimdall_scans_url }}/evaluations"
+        method: POST
+        headers:
+          Authorization: "{{ clone_heimdall_scans_auth }}"
+        body_format: form-multipart
+        body:
+          data:
+            content: "{{ item.content | b64decode | string }}"
+            filename: "{{ item.item.file }}"
+            mime_type: application/json
+          filename: "{{ item.item.name }}"
+          public: "true"
+          evaluationTags: "{{ item.item.tags }}"
+        status_code: [201]
+      loop: "{{ clone_heimdall_scans_contents.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+      register: clone_heimdall_scans_uploads
+      changed_when: clone_heimdall_scans_uploads.status | default(0) == 201
+      failed_when: false
+      no_log: true
+
+    # Each result's item is the scan's read, whose item is the scan.
+    - name: Check Heimdall took each upload
+      ansible.builtin.assert:
+        that: item.status | default(0) == 201
+        fail_msg: >-
+          Heimdall answered the upload of {{ item.item.item.name }} with HTTP {{ item.status | default('no answer') }};
+          no marker written, so the next boot uploads what is missing
+        quiet: true
+      loop: "{{ clone_heimdall_scans_uploads.results }}"
+      loop_control:
+        label: "{{ item.item.item.name }}"
+
+    - name: Report the uploaded scans
+      when: clone_heimdall_scans_missing | length > 0
+      ansible.builtin.debug:
+        msg: >-
+          uploaded {{ clone_heimdall_scans_missing | map(attribute='name') | join(', ') }}
+          (build run {{ clone_heimdall_scans_run }}), public to every signed-in user
+
+    # Last: only an import that got here is complete. An existing marker
+    # (a run by hand after the unit's) is kept.
+    - name: Write the marker that the scans are imported
+      ansible.builtin.copy:
+        content: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }} build run {{ clone_heimdall_scans_run }}\n"
+        dest: "{{ clone_heimdall_scans_marker }}"
+        force: false
+        owner: root
+        group: root
+        mode: '0600'

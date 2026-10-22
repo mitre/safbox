@@ -1,0 +1,28 @@
+{% from 'secrets.j2' import secret_conditions with context %}
+# {{ ansible_managed }}
+# The vulcan pod: Vulcan and its PostgreSQL share one network namespace. It
+# publishes Vulcan on the loopback address only, for the TLS proxy, on the
+# port upstream suggests for running beside another service
+# (VULCAN_PORT=3001); the database is published nowhere. Starts only after
+# first boot has made Vulcan's secrets.
+[Unit]
+Description=Vulcan pod (Vulcan and its PostgreSQL)
+After=safbox-firstboot.service
+
+[Pod]
+PodName=vulcan
+Network=vulcan.network
+PublishPort=127.0.0.1:{{ template_services_vulcan_loopback_port }}:3000
+{% if template_services_keycloak_enabled | bool %}
+# Inside the pod 127.0.0.1 is the pod itself, where nothing serves
+# Keycloak's name: podman's host-gateway is the host's address on the
+# pod's network, where the TLS proxy answers on 443, so Vulcan reaches
+# Keycloak at the issuer URL the browser uses.
+AddHost={{ template_services_keycloak_host }}:host-gateway
+{% endif %}
+
+[Service]
+# Started only once first boot has made every secret its containers read.
+{{ secret_conditions(['vulcan', 'vulcan-db']) }}
+[Install]
+WantedBy=multi-user.target

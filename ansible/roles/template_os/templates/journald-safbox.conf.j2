@@ -1,0 +1,7 @@
+# {{ ansible_managed }}
+# Keep the journal on disk. With the distribution default (Storage=auto) it
+# lives in memory unless /var/log/journal exists, and the RHEL 10 family does
+# not create that directory. With this set, journald creates it on the next
+# flush (every boot, or journalctl --flush).
+[Journal]
+Storage={{ template_os_journald_storage }}

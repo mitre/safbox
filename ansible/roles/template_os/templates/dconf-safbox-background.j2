@@ -1,0 +1,7 @@
+# {{ ansible_managed }}
+# A new user's wallpaper: a default, not a lock (no locks/ entry), so the
+# user may choose another in Settings.
+[org/gnome/desktop/background]
+picture-uri='file://{{ template_os_desktop_background_dir }}/{{ template_os_desktop_background_default }}'
+picture-uri-dark='file://{{ template_os_desktop_background_dir }}/{{ template_os_desktop_background_default }}'
+picture-options='zoom'

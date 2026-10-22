@@ -24,6 +24,69 @@
   is the fallback, for its mature RHEL 9 STIG content. It is a different
   kickstart version and different content pins, not a flag.
 
+## One image for each supported hypervisor
+
+The template is built and gated on Proxmox. It carries what it needs to
+boot and be customised on vSphere as well, so one sealed image can be
+exported for both. Exporting it (an OVA) and moving its disk to vSphere's
+PVSCSI controller are later steps; until a vSphere host proves them, the
+vSphere side is untested. What is in the image for vSphere already:
+
+- **Initramfs with every hypervisor's disk drivers.** The initramfs
+  stays host-only, the distribution's default, which carries only the build VM's
+  drivers (virtio, `ahci`), so a clone on PVSCSI or NVMe would never
+  find its root disk. The kickstart's `%post` writes the dracut drop-in
+  `/etc/dracut.conf.d/90-safbox-storage-drivers.conf`, which adds the
+  storage drivers `ahci`, `nvme`, `virtio_blk`, `virtio_scsi` and
+  `vmw_pvscsi` (`add_drivers`), and rebuilds every installed kernel's
+  initramfs; later kernels get them too. Control `safbox-initramfs-1`
+  checks the drop-in and every installed kernel's initramfs. Network
+  drivers (`vmxnet3`) are loaded from the root filesystem, so they are
+  not needed there.
+- **Initramfs size.** A generic initramfs (`dracut-config-generic`,
+  `hostonly="no"`) would also carry these drivers, but with firmware for
+  every driver it includes: the desktop image's was about 245 MB per
+  kernel, mostly GPU firmware, and `/boot` (960 MiB) had no room for the
+  third kernel dnf keeps (`installonly_limit=3`). The host-only one with
+  the added drivers is about 37 MiB per kernel on the headless image and
+  53 MiB on the desktop one. With two kernels (each with its kdump
+  initramfs) and the rescue image, `/boot` is 37% used on headless and
+  41% on desktop, with room for several more kernels. The rescue
+  initramfs (about 78 MiB) stays generic, as `dracut-config-rescue` makes
+  it, and there is only one.
+- **Both guest agents.** `%post` installs and enables `qemu-guest-agent`
+  (Proxmox) and `open-vm-tools` (vSphere; cloud-init's VMware datasource
+  needs it to read guestinfo). Each starts only on its own hypervisor:
+  `qemu-guest-agent` is bound to its virtio port, `vmtoolsd` has
+  `ConditionVirtualization=vmware`, so on Proxmox it stays inactive
+  without failing.
+- **open-vm-tools hardened.** `%post` writes `/etc/vmware-tools/tools.conf`
+  with `[guestoperations] disabled = true`, so a vCenter user with guest
+  credentials cannot run programs or move files in the guest (the
+  exposure `qemu-guest-agent`'s `guest-exec` and `guest-file-*` would
+  open, which its distribution allow list leaves out), and `[deployPkg]
+  enable-custom-scripts = false`, so a customization spec's script never
+  runs as root. The file is not the package's, so `rpm -V open-vm-tools`
+  still checks the package as shipped.
+- **cloud-init datasources.** `datasource_list: [ NoCloud, ConfigDrive,
+  VMware, None ]` (Packer variable `datasource_list`; the answer file
+  adds `None`). ds-identify enables only those whose source it finds:
+  Proxmox's cloud-init drive or a NoCloud seed ISO, a config drive, or
+  vSphere guestinfo. The first-boot play reads cloud-init's merged
+  configuration, so it runs the same whichever datasource supplied it.
+- **The gates check the agent for the detected hypervisor.** The
+  answer file's `packer/answerfiles/el10/guest-agents.yml` describes each
+  agent, keyed by the hypervisor `systemd-detect-virt` names, and
+  `scripts/validate.sh` passes it to every scan (input `guest_agents`).
+  `safbox-system-1` expects the detected hypervisor's agent to run and
+  every agent to be installed and enabled; `safbox-guest-agent-1` checks
+  each agent's package with `rpm -V` and its hardening: the running
+  `qemu-guest-agent`'s allow list, and `tools.conf`'s settings on every
+  hypervisor, since the image moves between them.
+- **The build record** (`SAFBOX_UNPINNED_PACKAGES`) names the exact
+  build of `cloud-init` and both agents, which
+  the kickstart installs without a version pin.
+
 ## Partition layout
 
 The kickstart creates separate filesystems for `/home`, `/tmp`, `/var`,
@@ -50,17 +113,24 @@ That is about 20 GiB. The rest of the volume group is shared:
 Give the disk at least 60G.
 
 **Giving a clone more disk.** Enlarge the clone's disk in the hypervisor
-before its first boot. First boot runs the hook
-`/etc/safbox/firstboot.d/10-grow-disk.sh` before any other: it grows the
-partition to the end of the disk and the physical volume to the partition,
-then hands the volume group's free space to `/home`, `/var`, `/var/log` and
-`/var/log/audit` by the same 40/40/10/10 shares, growing each XFS filesystem
-online. It logs each step to the journal (`journalctl -t
+before its first boot. The first-boot play's first role, `clone_grow_disk`
+(tag `grow_disk`, which runs a shell script), grows the partition to
+the end of the disk and the physical volume to the partition, then hands
+the volume group's free space to `/home`, `/var`, `/var/log` and
+`/var/log/audit` by the same 40/40/10/10 shares, growing each XFS
+filesystem online. It logs each step to the journal (`journalctl -u
 safbox-firstboot`). On a disk of the template's size there is nothing to
 grow and it changes nothing. To give a box that has already booted more
-space, enlarge its disk and run the hook again as root (`sudo
-/etc/safbox/firstboot.d/10-grow-disk.sh`); it only ever adds the space not
-yet in use, so running it twice is harmless. Nothing shrinks: XFS cannot,
+space, enlarge its disk and run the role again as root
+([Appliance](appliance.md#first-boot), "Running it again"):
+
+```
+sudo env ANSIBLE_CONFIG=/usr/local/lib/safbox/firstboot/ansible.cfg \
+  ansible-playbook -c local -i localhost, /usr/local/lib/safbox/firstboot/firstboot.yml --tags grow_disk
+```
+
+It only ever adds the space not yet in use, so running it twice is
+harmless. Nothing shrinks: XFS cannot,
 so for a smaller disk build a template with a smaller `vm_disk_size`.
 
 ## Build host

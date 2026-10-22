@@ -1,0 +1,104 @@
+---
+# The TLS proxy's certificate, made on first boot and never at build, and
+# signed by a small local CA of the box's own, which the box then trusts.
+# The local CA (/etc/safbox/ca, root-only, not mounted into the proxy
+# container) signs TLS server certificates only (pathlen 0, extended key
+# usage serverAuth) and only for names under the box's domain: critical
+# name constraints permit the domain and its subdomains and exclude every
+# IPv4 and IPv6 address. The server certificate (/etc/safbox/tls) names
+# exactly the served names (/etc/safbox/proxy-names, the domain first);
+# the bare address is not named, so a browser warns there. RSA 3072 and
+# SHA-256 throughout, from the host's OpenSSL (FIPS mode) through
+# python3-cryptography. Keys 0600, certificates 0644, directories 0700.
+#
+# The box trusts the local CA: a copy goes in the system trust store and
+# the store is rebuilt, so curl, the service containers (which mount the
+# store) and Firefox (whose NSS reads it through p11-kit) verify the proxy.
+# A CA, not the server certificate itself: Firefox does not accept a
+# server certificate as its own trust anchor.
+#
+# Existing files are kept: to use your own certificate, replace safbox.crt
+# and safbox.key; to regenerate the box's own, delete those two and run
+# this role again (docs/reference/services.md). After a change of domain,
+# delete the CA's two files as well. The renew entry point (tasks/renew.yml,
+# safbox-proxy-renew.timer) signs the box's own certificate again before it
+# expires.
+
+- name: Read the served names
+  ansible.builtin.import_tasks: names.yml
+
+- name: Create the root-only certificate directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0700'
+  loop: ["{{ clone_proxy_tls_dir }}", "{{ clone_proxy_tls_ca_dir }}"]
+
+- name: Find what exists
+  ansible.builtin.import_tasks: existing.yml
+
+- name: Refuse a certificate without its key, or a key without its certificate
+  when: clone_proxy_tls_have_key != clone_proxy_tls_have_cert
+  ansible.builtin.fail:
+    msg: "only one of {{ clone_proxy_tls_key }} and {{ clone_proxy_tls_cert }} exists; supply both or remove both"
+
+- name: Make the certificate
+  when: not clone_proxy_tls_have_key
+  block:
+    - name: Make the local CA
+      when: not clone_proxy_tls_have_ca
+      block:
+        - name: Generate the local CA's key
+          community.crypto.openssl_privatekey:
+            path: "{{ clone_proxy_tls_ca_key }}"
+            type: RSA
+            size: 3072
+            force: true
+            owner: root
+            group: root
+            mode: '0600'
+
+        - name: Describe the local CA
+          community.crypto.openssl_csr_pipe:
+            privatekey_path: "{{ clone_proxy_tls_ca_key }}"
+            common_name: "SAFBox local CA ({{ clone_proxy_tls_names[0] }})"
+            use_common_name_for_san: false
+            basic_constraints: ["CA:TRUE", "pathlen:0"]
+            basic_constraints_critical: true
+            key_usage: [keyCertSign, cRLSign]
+            key_usage_critical: true
+            extended_key_usage: [serverAuth]
+            name_constraints_permitted:
+              - "DNS:{{ clone_proxy_tls_names[0] }}"
+              - "DNS:.{{ clone_proxy_tls_names[0] }}"
+            name_constraints_excluded:
+              - IP:0.0.0.0/0
+              - IP:::/0
+            name_constraints_critical: true
+          register: clone_proxy_tls_ca_csr
+
+        - name: Self-sign the local CA
+          community.crypto.x509_certificate:
+            path: "{{ clone_proxy_tls_ca_cert }}"
+            provider: selfsigned
+            csr_content: "{{ clone_proxy_tls_ca_csr.csr }}"
+            privatekey_path: "{{ clone_proxy_tls_ca_key }}"
+            selfsigned_digest: sha256
+            selfsigned_not_after: "+{{ clone_proxy_tls_ca_days }}d"
+            force: true
+            owner: root
+            group: root
+            mode: '0644'
+
+    # First boot keeps its earlier behaviour for a certificate that does
+    # not verify (a local CA left from another domain): it is served and
+    # not trusted, and trust.yml says why.
+    - name: Make the server certificate
+      ansible.builtin.import_tasks: server_cert.yml
+      vars:
+        clone_proxy_tls_staged_must_verify: false
+
+- name: Trust the local CA
+  ansible.builtin.import_tasks: trust.yml

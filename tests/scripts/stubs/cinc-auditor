@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Stub cinc-auditor for tests/scripts/validate.bats: records each run's
+# arguments, one line per run, in $STUB_DIR/cinc.calls, and writes a
+# results file with no controls to the json: reporter's path.
+printf '%s\n' "$*" >> "$STUB_DIR/cinc.calls"
+for a in "$@"; do
+  case "$a" in json:*) echo '{"profiles":[]}' > "${a#json:}" ;; esac
+done
+exit 0

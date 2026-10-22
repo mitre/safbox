@@ -1,11 +1,13 @@
 # frozen_string_literal: true
 
+require 'digest'
+
 # Heimdall and Vulcan each run as a podman pod (the application and its
 # PostgreSQL) on the loopback address, behind one nginx TLS proxy. The units
-# are installed at build and start once first boot has written their
-# secrets, so the build VM has units and no secrets, and a deployed clone
-# has both and runs them. Secret files are checked by owner and mode only,
-# never by content, so no secret reaches the results.
+# are installed at build and start once first boot has made their secrets,
+# so the build VM has units and no secrets, and a deployed clone has both
+# and runs them. A secret's value is only ever read into a pipe on the box
+# (grep's pattern file), and only counts reach the results.
 #
 # Quadlet units are systemd unit files: parse_config_file with
 # multiple_values reads each [Section] and keeps every value of a key that
@@ -24,15 +26,105 @@ postgresql = %r{^quay\.io/sclorg/postgresql-\d+-c9s@sha256:\h{64}$}
 # The names the proxy serves besides the domain, one per application.
 served_apps = %w[heimdall vulcan keycloak]
 
+# Each service's per-install secrets: podman secrets first boot makes, each
+# given to the containers that read it as one environment variable each
+# (Quadlet Secret=, type=env), by container. A client secret reaches the
+# application and Keycloak, so it exists only while both are switched on.
+keycloak = services.include?('keycloak')
+secret_targets = {}
+if services.include?('heimdall')
+  secret_targets.merge!(
+    'heimdall-database-password' => { 'heimdall' => 'DATABASE_PASSWORD', 'heimdall-db' => 'POSTGRESQL_PASSWORD' },
+    'heimdall-jwt-secret' => { 'heimdall' => 'JWT_SECRET' },
+    'heimdall-api-key-secret' => { 'heimdall' => 'API_KEY_SECRET' },
+    'heimdall-admin-password' => { 'heimdall' => 'ADMIN_PASSWORD' }
+  )
+  secret_targets['heimdall-oidc-client-secret'] = { 'heimdall' => 'OIDC_CLIENT_SECRET', 'keycloak' => 'OIDC_CLIENT_SECRET' } if keycloak
+end
+if services.include?('vulcan')
+  secret_targets.merge!(
+    'vulcan-database-password' => { 'vulcan' => 'POSTGRES_PASSWORD', 'vulcan-db' => 'POSTGRESQL_PASSWORD' },
+    'vulcan-secret-key-base' => { 'vulcan' => 'SECRET_KEY_BASE' },
+    'vulcan-cipher-password' => { 'vulcan' => 'CIPHER_PASSWORD' },
+    'vulcan-cipher-salt' => { 'vulcan' => 'CIPHER_SALT' },
+    'vulcan-admin-password' => { 'vulcan' => 'VULCAN_ADMIN_PASSWORD' }
+  )
+  secret_targets['vulcan-oidc-client-secret'] = { 'vulcan' => 'VULCAN_OIDC_CLIENT_SECRET', 'keycloak' => 'VULCAN_OIDC_CLIENT_SECRET' } if keycloak
+end
+if keycloak
+  secret_targets.merge!(
+    'keycloak-database-password' => { 'keycloak' => 'KC_DB_PASSWORD', 'keycloak-db' => 'POSTGRESQL_PASSWORD' },
+    'keycloak-bootstrap-admin-password' => { 'keycloak' => 'KC_BOOTSTRAP_ADMIN_PASSWORD' },
+    'keycloak-safuser-password' => { 'keycloak' => 'SAFUSER_PASSWORD' }
+  )
+end
+# What a container's unit declares: its Secret= lines, and an ExecCondition=
+# per secret of the unit's containers, so it starts only once first boot
+# has made them.
+container_secrets = ->(container) { secret_targets.filter_map { |name, to| "#{name},type=env,target=#{to[container]}" if to.key?(container) } }
+secret_conditions = ->(*containers) { secret_targets.filter_map { |name, to| "/usr/bin/podman secret exists #{name}" if containers.any? { |c| to.key?(c) } } }
+
+control 'safbox-secrets-1' do
+  impact 1.0
+  title "The services' secrets are podman secrets made on first boot only, root's alone, and no container's configuration shows one"
+  desc "First boot makes each switched-on service's secrets as podman secrets (Heimdall's database password, JWT secret, API key secret and administrator password; Vulcan's database password, Rails secret key base, cipher password and salt and administrator password; Keycloak's database password, bootstrap administrator's password and safuser's initial Keycloak password; and, with Keycloak on, each application's Keycloak client secret) in the root-only secret store (its file driver keeps them in one 0600 file under /var/lib/containers), and each container receives its secrets as environment variables through Quadlet Secret=, which podman inspect masks. No env file under /etc/safbox holds them; safuser's generated OS password, in safuser.env, is the one plaintext secret there. The build VM holds no podman secret (the seal asserts the same of the template). Each container's podman inspect is searched for every secret's value, read on the box into grep's pattern file, and for any password or secret variable that is not masked; only counts are reported. safuser's initial Keycloak password carries a note (its description label) that it must be changed at the first sign-in and that the secret is not updated when it is, and the realm file holds placeholders only."
+  only_if('Heimdall, Vulcan and Keycloak are switched off', impact: 0.0) { secret_targets.any? }
+
+  secret_targets.each_key do |name|
+    describe command("podman secret exists #{name}") do
+      its('exit_status') { should eq(deployed ? 0 : 1) }
+    end
+  end
+  describe command("find /etc/safbox -maxdepth 1 -name '*.env' ! -name safuser.env -print") do
+    its('stdout') { should eq '' }
+  end
+  if deployed
+    describe file('/var/lib/containers/storage/secrets/filedriver/secretsdata.json') do
+      its('owner') { should eq 'root' }
+      its('mode') { should cmp '0600' }
+    end
+    secret_values = 'for n in $(podman secret ls --noheading --format "{{.Name}}"); do podman secret inspect --showsecret --format "{{.SecretData}}" "$n"; echo; done | grep .'
+    secret_targets.values.flat_map(&:keys).uniq.each do |container|
+      describe "Lines of podman inspect #{container} holding a secret's value" do
+        subject { command(%(bash -c 'podman inspect #{container} | grep -cF -f <(#{secret_values})')).stdout.strip }
+        it { should cmp 0 }
+      end
+      describe "Password and secret variables podman inspect #{container} shows unmasked" do
+        subject { command(%(bash -c 'podman inspect --format "{{range .Config.Env}}{{println .}}{{end}}" #{container} | grep -E "^[A-Z_]*(PASSWORD|SECRET)[A-Z_]*=" | grep -cv "=[*][*]*$"')).stdout.strip }
+        it { should cmp 0 }
+      end
+    end
+  else
+    describe command('podman secret ls --quiet') do
+      its('stdout') { should eq '' }
+    end
+  end
+  # Keycloak's: counted with grep, so no report ever shows the secret.
+  if keycloak && deployed
+    describe command(%q(sh -c 'podman secret inspect --showsecret --format "{{.SecretData}}" keycloak-safuser-password | grep -cxE "[0-9a-f]{32}"')) do
+      its('stdout') { should eq "1\n" }
+    end
+    describe command(%q(podman secret inspect --format '{{index .Spec.Labels "description"}}' keycloak-safuser-password)) do
+      its('stdout') { should match(/\Asafuser's initial Keycloak password\. It must be changed at the first sign-in, and this secret is not updated when it changes\.$/) }
+    end
+  end
+  if keycloak
+    describe file('/etc/safbox-keycloak/safbox-realm.json') do
+      its('content') { should_not match(/"(secret|value)": "(?!\$\{)/) }
+    end
+  end
+end
+
 control 'safbox-heimdall-1' do
   impact 1.0
   title 'The Heimdall Quadlet units are installed'
-  desc 'Heimdall and its database run from images pinned by digest, the database from the CentOS Stream PostgreSQL image, with memory limits, no new privileges and the host CA trust store mounted read-only. The pod publishes 127.0.0.1:3000 only and waits for first boot to write its secrets; the unit is ready only once Heimdall answers its healthcheck. Registration is off: the only local account is the administrator, admin@<domain>, made on the first start with the password first boot wrote. With Keycloak on, everyone else signs in through it.'
+  desc 'Heimdall and its database run from images pinned by digest, the database from the CentOS Stream PostgreSQL image, with memory limits, no new privileges and the host CA trust store mounted read-only. The pod publishes 127.0.0.1:3000 only and waits for first boot to make its secrets, which each container receives as podman secrets (no env file); the unit is ready only once Heimdall answers its healthcheck. Registration is off: the only local account is the administrator, admin@<domain>, made on the first start with the password first boot made. With Keycloak on, everyone else signs in through it.'
   only_if('Heimdall is switched off', impact: 0.0) { services.include?('heimdall') }
 
   describe parse_config_file("#{quadlet}/heimdall.pod", multiple_values: true) do
     its('Pod.PublishPort') { should eq ['127.0.0.1:3000:3000'] }
-    its('Unit.ConditionPathExists') { should eq ['/etc/safbox/heimdall.env'] }
+    its('Unit.ConditionPathExists') { should be_nil }
+    its('Service.ExecCondition') { should match_array secret_conditions.call('heimdall', 'heimdall-db') }
     # Inside a pod 127.0.0.1 is the pod: Keycloak's name must reach the proxy on the host.
     if services.include?('keycloak')
       its('Pod.AddHost') { should eq ["keycloak.#{domain}:host-gateway"] }
@@ -55,34 +147,20 @@ control 'safbox-heimdall-1' do
     if services.include?('keycloak')
       its('Container.Environment') { should include "OIDC_ISSUER=https://keycloak.#{domain}/realms/safbox" }
       its('Container.Environment') { should include 'OIDC_USES_PKCE_S256=true' }
-      its('Container.EnvironmentFile') { should include '/etc/safbox/heimdall-oidc.env' }
     else
       its('Container.Environment') { should_not include(a_string_starting_with('OIDC_')) }
     end
+    its('Container.Secret') { should match_array container_secrets.call('heimdall') }
+    its('Container.EnvironmentFile') { should be_nil }
+    its('Service.ExecCondition') { should match_array secret_conditions.call('heimdall') }
     its('Install.WantedBy') { should eq ['multi-user.target'] }
   end
   describe parse_config_file("#{quadlet}/heimdall-db.container", multiple_values: true) do
     its('Container.Image') { should all match(postgresql) }
     its('Container.Memory') { should_not be_empty }
-  end
-end
-
-control 'safbox-heimdall-2' do
-  impact 1.0
-  title "Heimdall's secrets exist only after first boot, readable by root only"
-  desc "First boot writes the database password, JWT secret, API key secret and administrator password, and Heimdall's Keycloak client secret in a file of its own. The template and the build VM hold none."
-  only_if('Heimdall is switched off', impact: 0.0) { services.include?('heimdall') }
-
-  %w[/etc/safbox/heimdall.env /etc/safbox/heimdall-db.env /etc/safbox/heimdall-oidc.env].each do |path|
-    describe file(path) do
-      if deployed
-        its('owner') { should eq 'root' }
-        its('mode') { should cmp '0600' }
-        its('size') { should be > 0 }
-      else
-        it { should_not exist }
-      end
-    end
+    its('Container.Secret') { should match_array container_secrets.call('heimdall-db') }
+    its('Container.EnvironmentFile') { should be_nil }
+    its('Service.ExecCondition') { should match_array secret_conditions.call('heimdall-db') }
   end
 end
 
@@ -170,15 +248,118 @@ control 'safbox-heimdall-6' do
   end
 end
 
+# The build gate's results the seal installs in the template, and their
+# import into Heimdall once per box, after first boot
+# (safbox-heimdall-scans.service).
+scans_dir = '/usr/local/share/safbox/scans'
+scans_marker = '/var/lib/safbox/heimdall-scans.done'
+scans_unit = '/etc/systemd/system/safbox-heimdall-scans.service'
+
+control 'safbox-heimdall-7' do
+  impact 0.5
+  title "The unit that imports the template's scan results into Heimdall is installed and enabled"
+  desc "safbox-heimdall-scans.service runs the first-boot play's clone_heimdall_scans role (the heimdall-scans tag) once per box. It runs after Heimdall answers its healthcheck, and only while the template holds the build gate's results and the box has not imported them yet. A preset keeps it enabled through a First Boot."
+  only_if('Heimdall is switched off', impact: 0.0) { services.include?('heimdall') }
+
+  describe file(scans_unit) do
+    it { should be_file }
+  end
+  describe parse_config_file(scans_unit, multiple_values: true) do
+    its('Unit.After') { should eq ['heimdall.service safbox-firstboot.service'] }
+    its('Unit.ConditionPathExists') { should match_array ["!#{scans_marker}", "#{scans_dir}/manifest.json"] }
+    its('Service.Type') { should eq ['oneshot'] }
+    its('Service.ExecStart') { should eq ['/usr/bin/ansible-playbook -c local -i localhost, /usr/local/lib/safbox/firstboot/firstboot.yml --tags heimdall-scans'] }
+    its('Install.WantedBy') { should eq ['multi-user.target'] }
+  end
+  describe 'safbox-heimdall-scans.service: its state and its preset' do
+    subject { command('systemctl list-unit-files --no-legend --no-pager safbox-heimdall-scans.service').stdout.split[1, 2] }
+    it { should eq %w[enabled enabled] }
+  end
+end
+
+control 'safbox-heimdall-8' do
+  impact 0.5
+  title "Heimdall holds the template's build-gate scan results, public to every signed-in user"
+  desc "The seal installs the build gate's results for the safbox and STIG overlay profiles in the template, root's alone, under #{scans_dir}. Their manifest names the build run, and each scan's profile, file, date and sha256. Once after first boot, Heimdall's administrator uploads each one as a public evaluation, so every user who signs in sees it, safuser included at its first sign-in through Keycloak. Each evaluation is named safbox-build-<run>-<profile>.json and tagged safbox-build-scan, run <run> and scanned <date>, and the STIG overlay's also STIG. Heimdall stores each as the HDF itself, which its viewer loads: the source file's profiles with as many controls in each, not the file's text. The import leaves a marker, so it runs once. The check reads Heimdall's database as its own administrator over the container's local socket, with no credential."
+  only_if('Heimdall is switched off, or this is not a deployed clone', impact: 0.0) { services.include?('heimdall') && deployed }
+  only_if('The template was built without the build gate (input build_scans)', impact: 0.0) { input('build_scans') } if services.include?('heimdall') && deployed
+
+  describe directory(scans_dir) do
+    it { should be_owned_by 'root' }
+    its('mode') { should cmp '0700' }
+  end
+  # Root's alone, so read through a command (sudo), not the file resource.
+  manifest = json(content: command("cat #{scans_dir}/manifest.json").stdout)
+  describe manifest do
+    its('run_id') { should match(/\A\S+\z/) }
+    its('git_commit') { should match(/\A\S+\z/) }
+    its(['scans']) { should_not be_empty }
+  end
+  scans = manifest.params.is_a?(Hash) ? Array(manifest.params['scans']) : []
+  describe 'The profiles the manifest names' do
+    subject { scans.map { |scan| scan['profile'] } }
+    it { should match_array %w[safbox safbox-rhel10-stig-overlay] }
+  end
+  describe file(scans_marker) do
+    it { should be_file }
+  end
+  # As the database's own administrator, over the container's local socket.
+  # The literals are dollar-quoted, so the command needs no quoting layer
+  # but the shell's single quotes.
+  psql = 'podman exec -u postgres heimdall-db psql -X -A -t -d heimdall-server-production -c'
+  run_id = manifest.params.is_a?(Hash) ? manifest.params['run_id'].to_s : ''
+  scans.each do |scan|
+    describe file("#{scans_dir}/#{scan['file']}") do
+      it { should be_file }
+      it { should be_owned_by 'root' }
+      its('mode') { should cmp '0600' }
+      its('sha256sum') { should eq scan['sha256'] }
+    end
+    name = "safbox-build-#{run_id}-#{scan['profile']}.json"
+    # The tags in byte order (COLLATE "C"), whatever the database's locale.
+    query = 'SELECT e.public, u.email, string_agg(t.value, $s$,$s$ ORDER BY t.value COLLATE "C") FROM "Evaluations" e ' \
+            'JOIN "Users" u ON u.id = e."userId" LEFT JOIN "EvaluationTags" t ON t."evaluationId" = e.id ' \
+            "WHERE e.filename = $f$#{name}$f$ GROUP BY e.id, u.email"
+    tags = ["run #{run_id}", 'safbox-build-scan', "scanned #{scan['scanned']}"]
+    tags << 'STIG' if scan['profile'] == 'safbox-rhel10-stig-overlay'
+    # safbox-client-keycloak-2 reads the evaluation's name from this
+    # description in the results: keep "Heimdall's evaluation <name>:".
+    describe "Heimdall's evaluation #{name}: public, its owner, its tags" do
+      subject { command("#{psql} '#{query}'").stdout }
+      it { should eq "t|admin@#{domain}|#{tags.sort.join(',')}\n" }
+    end
+    # What Heimdall stores is the HDF itself, which its viewer loads: the
+    # source file's profiles, with as many controls in each. A file Heimdall
+    # could not parse as JSON is kept as text under originalResultsData,
+    # with no profiles.
+    source = json(content: command("cat #{scans_dir}/#{scan['file']}").stdout).params
+    source_profiles = source.is_a?(Hash) && source['profiles'].is_a?(Array) ? source['profiles'] : []
+    counts = source_profiles.map { |profile| profile.is_a?(Hash) ? profile['controls'].to_a.length : 0 }
+    stored = 'SELECT json_array_length(e.data->$k$profiles$k$) || $s$|$s$ || ' \
+             '(SELECT string_agg(json_array_length(p->$k$controls$k$)::text, $s$,$s$ ORDER BY n) ' \
+             'FROM json_array_elements(e.data->$k$profiles$k$) WITH ORDINALITY AS x(p, n)) ' \
+             "FROM \"Evaluations\" e WHERE e.filename = $f$#{name}$f$"
+    describe "The source of #{name}, #{scans_dir}/#{scan['file']}: the controls in each profile" do
+      subject { counts }
+      it { should_not be_empty }
+    end
+    describe "The HDF Heimdall stores for #{name}: its profiles, and the controls in each" do
+      subject { command("#{psql} '#{stored}'").stdout }
+      it { should eq "#{counts.length}|#{counts.join(',')}\n" }
+    end
+  end
+end
+
 control 'safbox-vulcan-1' do
   impact 1.0
   title 'The Vulcan Quadlet units are installed'
-  desc 'Vulcan and its database run from images pinned by digest, the database from the CentOS Stream PostgreSQL image, with memory limits, no new privileges and the host CA trust store mounted read-only. The pod publishes 127.0.0.1:3001 only and waits for first boot to write its secrets; the unit is ready only once Vulcan answers its healthcheck. Local login is on and registration is set off (VULCAN_ENABLE_USER_REGISTRATION=false). The administrator, admin@<domain>, is made on the first start with the password first boot wrote, and no user becomes admin by being first. With Keycloak on, everyone else signs in through it. Known upstream defect, accepted: Vulcan 2.4.1 only hides the sign-up link, so anyone who can reach it can still register a regular local account; this control checks the setting, not that registration is refused.'
+  desc 'Vulcan and its database run from images pinned by digest, the database from the CentOS Stream PostgreSQL image, with memory limits, no new privileges and the host CA trust store mounted read-only. The pod publishes 127.0.0.1:3001 only and waits for first boot to make its secrets, which each container receives as podman secrets (no env file); the unit is ready only once Vulcan answers its healthcheck. Local login is on and registration is set off (VULCAN_ENABLE_USER_REGISTRATION=false). The administrator, admin@<domain>, is made on the first start with the password first boot made, and no user becomes admin by being first. With Keycloak on, everyone else signs in through it. Known upstream defect, accepted: Vulcan 2.4.1 only hides the sign-up link, so anyone who can reach it can still register a regular local account; this control checks the setting, not that registration is refused.'
   only_if('Vulcan is switched off', impact: 0.0) { services.include?('vulcan') }
 
   describe parse_config_file("#{quadlet}/vulcan.pod", multiple_values: true) do
     its('Pod.PublishPort') { should eq ['127.0.0.1:3001:3000'] }
-    its('Unit.ConditionPathExists') { should eq ['/etc/safbox/vulcan.env'] }
+    its('Unit.ConditionPathExists') { should be_nil }
+    its('Service.ExecCondition') { should match_array secret_conditions.call('vulcan', 'vulcan-db') }
     # Inside a pod 127.0.0.1 is the pod: Keycloak's name must reach the proxy on the host.
     if services.include?('keycloak')
       its('Pod.AddHost') { should eq ["keycloak.#{domain}:host-gateway"] }
@@ -202,36 +383,22 @@ control 'safbox-vulcan-1' do
     if services.include?('keycloak')
       its('Container.Environment') { should include 'VULCAN_ENABLE_OIDC=true' }
       its('Container.Environment') { should include "VULCAN_OIDC_ISSUER_URL=https://keycloak.#{domain}/realms/safbox" }
-      its('Container.EnvironmentFile') { should include '/etc/safbox/vulcan-oidc.env' }
     else
       its('Container.Environment') { should_not include 'VULCAN_ENABLE_OIDC=true' }
     end
     its('Container.Environment') { should include 'RAILS_FORCE_SSL=true' }
     its('Container.Environment') { should include "VULCAN_APP_URL=https://vulcan.#{domain}" }
+    its('Container.Secret') { should match_array container_secrets.call('vulcan') }
+    its('Container.EnvironmentFile') { should be_nil }
+    its('Service.ExecCondition') { should match_array secret_conditions.call('vulcan') }
     its('Install.WantedBy') { should eq ['multi-user.target'] }
   end
   describe parse_config_file("#{quadlet}/vulcan-db.container", multiple_values: true) do
     its('Container.Image') { should all match(postgresql) }
     its('Container.Memory') { should_not be_empty }
-  end
-end
-
-control 'safbox-vulcan-2' do
-  impact 1.0
-  title "Vulcan's secrets exist only after first boot, readable by root only"
-  desc "First boot writes the database password, Rails secret key base, cipher password and salt and administrator password, and Vulcan's Keycloak client secret in a file of its own. The template and the build VM hold none."
-  only_if('Vulcan is switched off', impact: 0.0) { services.include?('vulcan') }
-
-  %w[/etc/safbox/vulcan.env /etc/safbox/vulcan-db.env /etc/safbox/vulcan-oidc.env].each do |path|
-    describe file(path) do
-      if deployed
-        its('owner') { should eq 'root' }
-        its('mode') { should cmp '0600' }
-        its('size') { should be > 0 }
-      else
-        it { should_not exist }
-      end
-    end
+    its('Container.Secret') { should match_array container_secrets.call('vulcan-db') }
+    its('Container.EnvironmentFile') { should be_nil }
+    its('Service.ExecCondition') { should match_array secret_conditions.call('vulcan-db') }
   end
 end
 
@@ -338,7 +505,7 @@ end
 control 'safbox-keycloak-2' do
   impact 1.0
   title 'The Keycloak Quadlet units are installed'
-  desc "Keycloak runs from the image built on the template and its database from the CentOS Stream PostgreSQL image, pinned by digest, with memory limits and no new privileges. The pod publishes Keycloak's HTTP port on 127.0.0.1 only, for the proxy, and waits for first boot to write its secrets; the unit is ready only once Keycloak reports itself ready. Keycloak runs a single node (local cache), imports the safbox realm on its first start, and believes forwarded headers only from its network's gateway, where the proxy's connections arrive. The realm's one user, safuser, holds the realm's default role (so its account console works) and must change its generated password at its first sign-in."
+  desc "Keycloak runs from the image built on the template and its database from the CentOS Stream PostgreSQL image, pinned by digest, with memory limits and no new privileges. The pod publishes Keycloak's HTTP port on 127.0.0.1 only, for the proxy, and waits for first boot to make its secrets, which each container receives as podman secrets (no env file), with each enabled application's client secret; the unit is ready only once Keycloak reports itself ready. Keycloak runs a single node (local cache), imports the safbox realm on its first start, and believes forwarded headers only from its network's gateway, where the proxy's connections arrive. The realm's one user, safuser, holds the realm's default role (so its account console works) and must change its generated password at its first sign-in."
   only_if('Keycloak is switched off', impact: 0.0) { services.include?('keycloak') }
 
   network = parse_config_file("#{quadlet}/keycloak.network", multiple_values: true)
@@ -348,7 +515,8 @@ control 'safbox-keycloak-2' do
   end
   describe parse_config_file("#{quadlet}/keycloak.pod", multiple_values: true) do
     its('Pod.PublishPort') { should eq ['127.0.0.1:3002:8080'] }
-    its('Unit.ConditionPathExists') { should eq ['/etc/safbox/keycloak.env'] }
+    its('Unit.ConditionPathExists') { should be_nil }
+    its('Service.ExecCondition') { should match_array secret_conditions.call('keycloak', 'keycloak-db') }
   end
   describe parse_config_file("#{quadlet}/keycloak.container", multiple_values: true) do
     # Ready only once /health/ready answers, so the end of boot waits for it.
@@ -363,11 +531,17 @@ control 'safbox-keycloak-2' do
     its('Container.NoNewPrivileges') { should eq ['true'] }
     its('Container.DropCapability') { should eq ['all'] }
     its('Container.Memory') { should_not be_empty }
+    its('Container.Secret') { should match_array container_secrets.call('keycloak') }
+    its('Container.EnvironmentFile') { should be_nil }
+    its('Service.ExecCondition') { should match_array secret_conditions.call('keycloak') }
     its('Install.WantedBy') { should eq ['multi-user.target'] }
   end
   describe parse_config_file("#{quadlet}/keycloak-db.container", multiple_values: true) do
     its('Container.Image') { should all match(postgresql) }
     its('Container.Memory') { should_not be_empty }
+    its('Container.Secret') { should match_array container_secrets.call('keycloak-db') }
+    its('Container.EnvironmentFile') { should be_nil }
+    its('Service.ExecCondition') { should match_array secret_conditions.call('keycloak-db') }
   end
   describe json('/etc/safbox-keycloak/safbox-realm.json') do
     its('realm') { should eq 'safbox' }
@@ -382,34 +556,6 @@ control 'safbox-keycloak-2' do
     subject { safuser }
     its(['realmRoles']) { should eq ['default-roles-safbox'] }
     its(['requiredActions']) { should eq ['UPDATE_PASSWORD'] }
-  end
-end
-
-control 'safbox-keycloak-3' do
-  impact 1.0
-  title "Keycloak's secrets exist only after first boot, readable by root only"
-  desc "First boot writes Keycloak's database password, its bootstrap administrator's password and safuser's initial Keycloak password, with a note in the file that safuser must change that password at its first sign-in and that the file is not updated when it does. The template and the build VM hold none, and the realm file holds placeholders only."
-  only_if('Keycloak is switched off', impact: 0.0) { services.include?('keycloak') }
-
-  %w[/etc/safbox/keycloak.env /etc/safbox/keycloak-db.env].each do |path|
-    describe file(path) do
-      if deployed
-        its('owner') { should eq 'root' }
-        its('mode') { should cmp '0600' }
-        its('size') { should be > 0 }
-      else
-        it { should_not exist }
-      end
-    end
-  end
-  # Counted with grep, so no report ever shows the file's secrets.
-  if deployed
-    describe command(%q(grep -cxE 'SAFUSER_PASSWORD=[0-9a-f]{32}|# SAFUSER_PASSWORD is safuser.s initial Keycloak password\. It must be changed at the first sign-in, and this file is not updated when it changes\.' /etc/safbox/keycloak.env)) do
-      its('stdout') { should eq "2\n" }
-    end
-  end
-  describe file('/etc/safbox-keycloak/safbox-realm.json') do
-    its('content') { should_not match(/"(secret|value)": "(?!\$\{)/) }
   end
 end
 
@@ -696,18 +842,125 @@ control 'safbox-proxy-5' do
   end
 end
 
-control 'safbox-proxy-6' do
+control 'safbox-proxy-7' do
   impact 1.0
-  title 'Plain HTTP is redirected to HTTPS with the same name and path'
-  desc 'Port 80 answers every request with a permanent redirect to https:// on the same host and path, and a plain HTTP request sent to port 443 is redirected the same way instead of being refused with 400.'
-  only_if('The proxy is switched off, or this is not a deployed clone', impact: 0.0) { services.include?('proxy') && deployed }
+  title "The proxy's certificate is renewed before it expires"
+  desc "A daily timer, safbox-proxy-renew.timer, runs the first-boot play's clone_proxy_tls role with the renew tag: a certificate the local CA signed is signed again from the same CA, with a new key, once it is within 30 days of expiry, and the proxy restarted; a site's own certificate is left for the site to renew. The certificate the proxy serves is the one on disk, and it has more than 14 days left, as does the local CA that signed it."
+  only_if('The proxy is switched off', impact: 0.0) { services.include?('proxy') }
 
-  [domain, '127.0.0.1'].each do |name|
-    ["http://#{name}/safbox/check?probe=1", "http://#{name}:443/safbox/check?probe=1"].each do |url|
-      describe http(url) do
-        its('status') { should eq 301 }
-        its('headers.Location') { should eq "https://#{name}/safbox/check?probe=1" }
+  describe service('safbox-proxy-renew.timer') do
+    it { should be_enabled }
+    it { should be_running } if deployed
+  end
+  describe parse_config_file('/etc/systemd/system/safbox-proxy-renew.service', multiple_values: true) do
+    its('Service.Type') { should eq ['oneshot'] }
+    its('Service.ExecStart') { should eq ['/usr/bin/ansible-playbook -c local -i localhost, /usr/local/lib/safbox/firstboot/firstboot.yml --tags renew'] }
+  end
+  if deployed
+    cert = '/etc/safbox/tls/safbox.crt'
+    describe x509_certificate(cert) do
+      its('validity_in_days') { should be > 14 }
+    end
+    # What the proxy serves now, not only what is on disk: a renewal that
+    # did not restart the proxy shows here.
+    fingerprint = 'openssl x509 -noout -fingerprint -sha256'
+    served = command("openssl s_client -connect 127.0.0.1:443 -servername #{domain} </dev/null 2>/dev/null | #{fingerprint}").stdout.strip
+    describe "The certificate the proxy serves (#{served})" do
+      subject { served }
+      it { should_not be_empty }
+      it { should eq command("#{fingerprint} -in #{cert}").stdout.strip }
+    end
+    local_ca = '/etc/safbox/ca/ca.crt'
+    if file(local_ca).exist? && x509_certificate(cert).issuer_dn == x509_certificate(local_ca).subject_dn
+      describe x509_certificate(local_ca) do
+        its('validity_in_days') { should be > 14 }
       end
+    end
+  end
+end
+
+control 'safbox-firefox-1' do
+  impact 0.5
+  title 'Firefox puts the box bookmarks on the toolbar, each with its logo, and opens the start page'
+  desc "On a desktop build Firefox's system-wide enterprise policy shows the bookmarks toolbar, drops the distribution's default bookmarks, makes the start page the home page (users may change it) and the page a new profile and an update open (no page without the proxy), never Firefox's Welcome page, sends Mozilla no telemetry and shows no data-reporting notice (tab or bar), and puts the box's bookmarks on the toolbar: each application behind the proxy (Heimdall, Vulcan, Keycloak's account page), SAF, SAF Training and the start page. Each bookmark's icon is embedded as a data: URI, the only kind of icon Firefox's Bookmarks policy accepts: Heimdall's and Keycloak's own logos, taken from their upstream releases, and the SAF logo the desktop installs for the others (Vulcan has no logo of its own)."
+  only_if('This is not a desktop build', impact: 0.0) { input('desktop') }
+
+  policy_file = '/etc/firefox/policies/policies.json'
+  # Each icon's sha256, that of the file the build installs: the SAF logo
+  # (template_os role, files/desktop/saf-logo.svg) and Heimdall's and
+  # Keycloak's (template_services role, files/firefox/), as their upstreams
+  # publish them.
+  saf_sha256 = 'cab58731383e39ded37dc908960fecc996760bd8a2e22033ed4605ba125afe0f'
+  app_sha256 = {
+    'heimdall' => 'a114629038f9f9fd97cb6291dd80e84ae7a272e2b679bb56ceb38b0c4eafc73f',
+    'keycloak' => '0322bce1a9f2409cdee4a2921e287e112f277a6e7774b983f8fcd32fbae19285'
+  }
+  icon_prefix = 'data:image/svg+xml;base64,'
+  proxy = services.include?('proxy')
+  app_paths = { 'heimdall' => '/', 'vulcan' => '/', 'keycloak' => '/realms/safbox/account/' }
+  # Each bookmark: title, URL, placement, and its icon's sha256.
+  expected = []
+  if proxy
+    served_apps.select { |app| services.include?(app) }.each do |app|
+      expected << [app.capitalize, "https://#{app}.#{domain}#{app_paths[app]}", 'toolbar', app_sha256.fetch(app, saf_sha256)]
+    end
+  end
+  expected << ['SAF', 'https://saf.mitre.org', 'toolbar', saf_sha256]
+  expected << ['SAF Training', 'https://mitre.github.io/saf-training/', 'toolbar', saf_sha256]
+  expected << ['SAFBox - Start Here', "https://#{domain}/", 'toolbar', saf_sha256] if proxy
+
+  describe file(policy_file) do
+    it { should be_file }
+    its('owner') { should eq 'root' }
+    its('group') { should eq 'root' }
+    its('mode') { should cmp '0644' }
+  end
+  describe json(policy_file) do
+    its(%w[policies DisplayBookmarksToolbar]) { should eq 'always' }
+    its(%w[policies NoDefaultBookmarks]) { should eq true }
+  end
+  if proxy
+    describe json(policy_file) do
+      its(%w[policies Homepage URL]) { should eq "https://#{domain}/" }
+      its(%w[policies Homepage StartPage]) { should eq 'homepage' }
+      its(%w[policies Homepage Locked]) { should eq false }
+    end
+  end
+  # Never Firefox's Welcome page: the start page with the proxy, else no
+  # page ("" is Firefox's value for none).
+  first_page = proxy ? "https://#{domain}/" : ''
+  describe json(policy_file) do
+    its(%w[policies OverrideFirstRunPage]) { should eq first_page }
+    its(%w[policies OverridePostUpdatePage]) { should eq first_page }
+  end
+  # Firefox sends Mozilla no telemetry (the Firefox STIG's FFOX-00-000014
+  # asks for DisableTelemetry true), so it gives no data-reporting notice: no
+  # privacy-notice tab on a new profile, no notice bar. The empty first-run
+  # address and the notification bypass keep the notice away on their own
+  # too; both are locked, so a profile cannot bring it back.
+  describe json(policy_file) do
+    its(%w[policies DisableTelemetry]) { should eq true }
+    its(['policies', 'Preferences', 'datareporting.policy.firstRunURL', 'Value']) { should eq '' }
+    its(['policies', 'Preferences', 'datareporting.policy.firstRunURL', 'Status']) { should eq 'locked' }
+    its(['policies', 'Preferences', 'datareporting.policy.dataSubmissionPolicyBypassNotification', 'Value']) { should eq true }
+    its(['policies', 'Preferences', 'datareporting.policy.dataSubmissionPolicyBypassNotification', 'Status']) { should eq 'locked' }
+  end
+
+  bookmarks = Array(json(policy_file).params.dig('policies', 'Bookmarks'))
+  describe 'Firefox policy bookmarks (title, URL, placement)' do
+    subject { bookmarks.map { |b| b.values_at('Title', 'URL', 'Placement') } }
+    it { should eq(expected.map { |b| b.first(3) }) }
+  end
+  bookmarks.each do |bookmark|
+    icon = bookmark['Favicon'].to_s
+    pin = expected.find { |b| b.first == bookmark['Title'] }&.last
+    describe "Firefox policy bookmark #{bookmark['Title']}: its icon" do
+      subject { icon }
+      it { should start_with icon_prefix }
+    end
+    describe "Firefox policy bookmark #{bookmark['Title']}: its icon's sha256" do
+      subject { Digest::SHA256.hexdigest(icon.delete_prefix(icon_prefix).unpack1('m')) }
+      it { should eq pin }
     end
   end
 end

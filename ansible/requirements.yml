@@ -6,7 +6,7 @@
 # Roles land in galaxy_roles/ (the first roles_path in ansible.cfg,
 # git-ignored); the build does the same through Packer's galaxy_file.
 
-# The Ansible Lockdown RHEL 10 STIG role the hardening role applies. Pinned
+# The Ansible Lockdown RHEL 10 STIG role the template_hardening role applies. Pinned
 # by the commit its release tag names, so a moved tag cannot change it; the
 # release, commit and STIG release are recorded in group_vars
 # (safbox_hardening_lockdown); keep the two the same.

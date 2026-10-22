@@ -1,6 +1,6 @@
 # STIG hardening
 
-The `hardening` role is the last role of the appliance play. It applies the
+The `template_hardening` role is the last role of the appliance play. It applies the
 DISA RHEL 10 STIG with the Ansible Lockdown RHEL10-STIG role, pinned in
 `ansible/group_vars/all/main.yml` (`safbox_hardening_lockdown`: release,
 the commit its tag names, and the STIG release) and installed on the build
@@ -15,11 +15,16 @@ ansible-galaxy install -r requirements.yml   # roles go to ansible/galaxy_roles/
 The role refuses to run if another version of the Lockdown role is
 installed.
 
+Its task group, `safbox-hardening-1`, has a switch, `safbox_hardening_1`,
+as a troubleshooting lever, not a deployment choice: building without it
+tells whether a fault comes from the STIG, and a box built that way fails
+validation.
+
 **The deviation record is the STIG overlay.** Each requirement SAFBox
 deliberately does not apply is a Not Applicable override, with its
 justification, in
 `verify/profiles/safbox-rhel10-stig-overlay/controls/overlay.rb`; a scan's
-results carry the same text, readable in Heimdall. The hardening role
+results carry the same text, readable in Heimdall. The template_hardening role
 switches the matching Lockdown rule off in the Lockdown section of
 `ansible/group_vars/all/main.yml`, one `rhel10stig_<n>: false` per
 line with a one-line comment, where the rule would undo the deviation:
@@ -52,7 +57,7 @@ deviation is an owner decision.
 **Account lockout is applied by SAFBox.** Lockdown puts pam_faillock in
 the PAM stacks (RHEL-10-600600 and 600610) and holds a lock until an
 administrator releases it (RHEL-10-600425) only when
-`rhel10stig_disruption_high` is on. The hardening role applies those three
+`rhel10stig_disruption_high` is on. The template_hardening role applies those three
 itself, before Lockdown runs, so they hold whichever way a site sets
 `rhel10stig_disruption_high`: it selects its authselect profile with the
 `with-faillock` feature (see [Settings SAFBox applies
@@ -134,7 +139,7 @@ STIG overlay's `banner_message_text_cli`, `_ral` and `_gui` inputs in its
 site inputs file.
 
 Remote logging is off by default: `safbox_remote_log_server` is empty, the
-hardening role switches off the forwarding rules (RHEL-10-200642, and
+template_hardening role switches off the forwarding rules (RHEL-10-200642, and
 RHEL-10-200646, which writes the same forwarding file when
 `rhel10stig_disruption_high` is on), and the
 overlay marks SV-280985 (forwarding) and SV-280989 (forwarding over TLS)
@@ -245,7 +250,7 @@ nothing and none of them touches `admin`:
 ## Settings SAFBox applies itself
 
 Where a Lockdown task fails or would do harm, its rule is switched off in
-group_vars ("Lockdown task fails" or "harmful") and the hardening role
+group_vars ("Lockdown task fails" or "harmful") and the template_hardening role
 applies the requirement itself, after Lockdown, so the baseline control
 still runs and checks the result:
 
@@ -267,8 +272,10 @@ still runs and checks the result:
   group with acl, xattrs and sha512) and `/etc/cron.daily/aide`, an
   executable script anacron runs once a day that mails the report to
   root. The database must describe the deployed box, not the template:
-  `safbox-aide-init.service` makes it once, after the first boot has
-  configured the box, and the seal removes any database the build left.
+  `safbox-aide-init.service`, a unit of its own and not a role of the
+  first-boot play, makes it once, after first boot has configured the
+  box (it waits for the play's done marker), and the seal removes any
+  database the build left.
   The safbox profile's `safbox-hardening-3` checks the configuration,
   the daily job and, on a clone, the database.
 - **Ctrl-Alt-Delete** (RHEL-10-700950). Lockdown's drop-in has no `.conf`
@@ -300,7 +307,7 @@ still runs and checks the result:
   an audit rule writes it to `/etc/audit/rules.d/`, and it takes effect
   only at the next reboot (Lockdown reports that a reboot is required).
   Lockdown loads its rules during its own run (its audit tasks flush
-  their handlers); the hardening role writes this file after that and does
+  their handlers); the template_hardening role writes this file after that and does
   not load it, and the build VM is not rebooted, so the rules stay
   changeable through the build and the seal and become immutable at the
   clone's first boot.
@@ -313,15 +320,22 @@ still runs and checks the result:
   writes `/etc/sysusers.d/20-setup-users.conf`, the package's file
   without those two entries, which replaces it. Their groups stay.
 - **Dotfile modes of the first-boot accounts** (RHEL-10-400235). Lockdown
-  applies the rule at build, before first boot makes `admin` and
-  `safuser` from `/etc/skel`, whose files are 0644. A first-boot hook,
-  `18-init-file-modes.sh`, gives the dotfiles of every interactive
-  account 0740 or less once those accounts exist.
+  applies the rule at build, before cloud-init makes `admin` and first
+  boot makes `safuser`, so it finds no home to fix. Both accounts are made
+  with `useradd -m`, which copies `/etc/skel` with its modes, and the
+  packages that own its dotfiles install them 0644. So the role gives the
+  dotfiles in `/etc/skel` 0740 or less (`g-wx,o-rwx`, 0640 in practice)
+  after every package install, and again on every run, since an update of
+  the owning package (`bash`, for example) restores its mode; every
+  account made from it starts compliant. The safbox profile checks
+  `/etc/skel` (`safbox-hardening-5`); the STIG overlay checks the real
+  homes (SV-281064). An account made later without `useradd -m` gets
+  whatever modes its maker gives.
 
 ## The firewall zone
 
 `safbox_firewall_zone` in `ansible/group_vars/all/main.yml` is the one
-firewalld zone every role opens ports in: the platform role's base services
+firewalld zone every role opens ports in: the template_os role's base services
 (group `safbox-platform-3`) and the proxy's HTTPS ports. With hardening on
 it is `drop`, because Lockdown's rule RHEL-10-200532 (SV-280957, a
 deny-all firewall) moves the network interface into Lockdown's zone and

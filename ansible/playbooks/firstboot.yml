@@ -1,0 +1,118 @@
+---
+# SAFBox first boot, as a local play. safbox-firstboot.service runs it once
+# per clone, as root, with no network assumed:
+#
+#   ansible-playbook -c local -i localhost, /usr/local/lib/safbox/firstboot/firstboot.yml
+#
+# Its roles run in order: the disk first, then the accounts, the services'
+# secrets and the proxy's certificate, each while the build's switch for it
+# (vars.yml, written from group_vars) is on. A failing task stops first
+# boot: Ansible names the role and the task in the journal (a no_log
+# task's details stay hidden), the unit fails, and `safbox status` shows
+# the failure. The done marker is the last task, so a failed run writes
+# none and the next boot runs it again.
+# Every role keeps what an earlier run made.
+#
+# To run it again on a box whose first boot is done, as root
+# (docs/reference/appliance.md):
+#   -e firstboot_rerun=true      everything, marker ignored
+#   --tags proxy_tls             one role (grow_disk, accounts, admin,
+#                                safuser, secrets, proxy_tls); any --tags
+#                                run ignores the marker and writes none
+# Two tags run only their own task: --tags renew, the proxy certificate's
+# renewal (safbox-proxy-renew.timer), and --tags heimdall-scans, the import
+# of the template's build-gate scan results into Heimdall
+# (safbox-heimdall-scans.service).
+- name: SAFBox first boot
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  gather_subset: [min]
+  vars_files:
+    - vars.yml
+  vars:
+    # A run limited by --tags is a re-run of those roles.
+    firstboot_rerun: "{{ ansible_run_tags != ['all'] }}"
+  # The commands the roles run print in the C locale, whatever the box's.
+  environment:
+    LC_ALL: C
+
+  pre_tasks:
+    - name: Check whether first boot has already completed
+      tags: [always]
+      ansible.builtin.stat:
+        path: "{{ safbox_firstboot_done }}"
+      register: firstboot_marker
+
+    - name: Stop when first boot has already completed
+      when: firstboot_marker.stat.exists and not firstboot_rerun | bool
+      tags: [always]
+      block:
+        - name: Report that first boot has already completed
+          ansible.builtin.debug:
+            msg: "first boot completed before ({{ safbox_firstboot_done }}); nothing to do"
+
+        - name: End the play
+          ansible.builtin.meta: end_play
+
+    - name: Create the root-only first-boot directories
+      tags: [always]
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+      loop:
+        - "{{ safbox_etc_dir }}"
+        - "{{ safbox_state_dir }}"
+
+  roles:
+    # Every box: a clone's larger disk goes to the growing volumes before
+    # anything is made.
+    - role: clone_grow_disk
+      tags: [grow_disk]
+    - role: clone_accounts
+      when: safbox_base_5 | bool or safbox_base_6 | bool
+      tags: [accounts]
+    - role: clone_secrets
+      when: safbox_services_1 | bool or safbox_services_2 | bool or safbox_services_5 | bool
+      tags: [secrets]
+    - role: clone_proxy_tls
+      when: safbox_services_3 | bool
+      tags: [proxy_tls]
+
+  post_tasks:
+    # Last: only a run that got here is complete.
+    - name: Write the done marker
+      when: not firstboot_rerun | bool
+      ansible.builtin.copy:
+        content: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}\n"
+        dest: "{{ safbox_firstboot_done }}"
+        owner: root
+        group: root
+        mode: '0600'
+
+    # Not part of first boot: runs only with --tags renew. Daily from
+    # safbox-proxy-renew.timer, at any time after first boot: signs the
+    # proxy's certificate again from the local CA before it expires.
+    - name: Renew the proxy's certificate when it is due
+      when: safbox_services_3 | bool
+      tags: [never, renew]
+      ansible.builtin.include_role:
+        name: clone_proxy_tls
+        tasks_from: renew
+        apply:
+          tags: [renew]
+
+    # Not part of first boot: runs only with --tags heimdall-scans.
+    # safbox-heimdall-scans.service runs it once per box, after Heimdall
+    # answers its healthcheck: the template's build-gate scan results
+    # imported into Heimdall. Not a first-boot role: Heimdall's units start
+    # after first boot, whose secrets they need, so it would wait on itself.
+    - name: Import the template's build-gate scan results into Heimdall
+      tags: [never, heimdall-scans]
+      ansible.builtin.include_role:
+        name: clone_heimdall_scans
+        apply:
+          tags: [heimdall-scans]

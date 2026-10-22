@@ -1,0 +1,16 @@
+---
+# {{ ansible_managed }}
+# The first-boot play's settings, from the build's group_vars: the paths the
+# build and the play share, and the switches that decide which of its roles
+# run.
+{{ {'safbox_etc_dir': safbox_etc_dir,
+    'safbox_state_dir': safbox_state_dir,
+    'safbox_tls_dir': safbox_tls_dir,
+    'safbox_firstboot_dir': safbox_firstboot_dir,
+    'safbox_firstboot_done': safbox_firstboot_done,
+    'safbox_base_5': safbox_base_5 | default(true) | bool,
+    'safbox_base_6': safbox_base_6 | default(true) | bool,
+    'safbox_services_1': safbox_services_1 | default(true) | bool,
+    'safbox_services_2': safbox_services_2 | default(true) | bool,
+    'safbox_services_3': safbox_services_3 | default(true) | bool,
+    'safbox_services_5': safbox_services_5 | default(true) | bool} | to_nice_yaml(indent=2, sort_keys=false) }}

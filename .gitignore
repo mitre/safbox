@@ -49,3 +49,12 @@ last.log
 # Packer variables build_gate_site_* or SAFBOX_SITE_* for the release gate)
 verify/local/
 verify/profiles/*/vendor/
+
+# The owner's notes: research, spikes and upstream drafts stay local and
+# never ship in the site or the image.
+docs/research/
+docs/spikes/
+docs/upstream/
+
+# Agent session leftovers
+claude-*-cwd

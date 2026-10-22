@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE wallpapers SYSTEM "gnome-wp-list.dtd">
+<!-- {{ ansible_managed }}: the SAF wallpapers, listed for GNOME Settings. -->
+<wallpapers>
+{% for item in template_os_desktop_backgrounds %}
+  <wallpaper deleted="false">
+    <name>{{ item.name }}</name>
+    <filename>{{ item.dest }}</filename>
+    <options>zoom</options>
+  </wallpaper>
+{% endfor %}
+</wallpapers>

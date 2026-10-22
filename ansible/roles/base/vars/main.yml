@@ -1,8 +1,0 @@
----
-# Names common to every OS family. Names that differ by family are in
-# vars/<os_family>.yml, loaded by the first task.
-
-# openssl supplies `openssl rand` for first-boot secret generation.
-base_packages:
-  - openssl
-  - bash

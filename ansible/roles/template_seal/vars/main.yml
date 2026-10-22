@@ -1,0 +1,31 @@
+---
+# RHEL 10 family (Rocky Linux 10, AlmaLinux 10) names.
+template_seal_package_cache_clean_argv: [dnf, clean, all]
+
+# The proxy's local CA in the system trust store (template_services role,
+# first boot's clone_proxy_tls role), and how the store is rebuilt after it is removed.
+template_seal_proxy_ca_anchor: /etc/pki/ca-trust/source/anchors/local-ca-safbox-proxy.crt
+template_seal_trust_update_argv: [update-ca-trust, extract]
+
+# Installer residue: the kickstart copies and the %post log carry the build
+# user's name and public key; the installer logs describe the build host.
+template_seal_installer_residue_find:
+  paths: [/root]
+  patterns: ['*ks*.cfg', 'ks-post.log']
+template_seal_installer_residue_paths:
+  - /var/log/anaconda
+
+# Network profiles bound to the build VM: the installer's and the ones
+# cloud-init wrote on the build boot. A clone gets its own from cloud-init,
+# or NetworkManager's automatic DHCP profile when no datasource configures one.
+template_seal_network_profiles_find:
+  paths: [/etc/NetworkManager/system-connections]
+  patterns: ['*.nmconnection']
+
+# Package architecture glibc reports -> microarchitecture level. A plain
+# x86_64 build is the distribution's baseline: RHEL 10 and its rebuilds
+# target x86-64-v3; vendors that build for v2 say so in the architecture
+# (AlmaLinux x86_64_v2).
+template_seal_glibc_package: glibc
+template_seal_x86_64_baseline_level:
+  "10": x86-64-v3

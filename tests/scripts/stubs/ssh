@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stub ssh for tests/scripts/build-concurrency.sh: records the keys offered
+# Stub ssh for tests/scripts/*.bats: records the keys offered
 # to the build user (packer) in $STUB_DIR/build-user-keys and refuses every
 # login unless STUB_BOOT is set. With STUB_BOOT set, admin and safuser log
 # in, each remote command is appended to $STUB_DIR/ssh.cmds, and the

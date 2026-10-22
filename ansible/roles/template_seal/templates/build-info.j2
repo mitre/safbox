@@ -1,0 +1,14 @@
+# SAFBox build record. Written by the seal step at the end of the image
+# build; read by `safbox status` and the validation profile. Not a secret.
+SAFBOX_BUILD_DATE={{ template_seal_build_date }}
+SAFBOX_GIT_COMMIT={{ template_seal_git_commit }}
+SAFBOX_SEAL_MODE={{ template_seal_mode }}
+SAFBOX_DISTRIBUTION={{ ansible_facts['distribution'] }}
+SAFBOX_DISTRIBUTION_VERSION={{ ansible_facts['distribution_version'] }}
+SAFBOX_OS_FAMILY={{ ansible_facts['os_family'] }}
+SAFBOX_ARCHITECTURE={{ ansible_facts['architecture'] }}
+SAFBOX_PACKAGE_ARCH={{ template_seal_package_arch }}
+SAFBOX_MICROARCH_LEVEL={{ template_seal_microarch_level }}
+SAFBOX_KERNEL={{ ansible_facts['kernel'] }}
+SAFBOX_FIPS_ENABLED={{ template_seal_fips_enabled }}
+SAFBOX_UNPINNED_PACKAGES={{ template_seal_unpinned_nevras }}

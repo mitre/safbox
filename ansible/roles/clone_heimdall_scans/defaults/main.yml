@@ -1,0 +1,18 @@
+---
+# clone_heimdall_scans role of the first-boot play (task group
+# safbox-services-1), run by safbox-heimdall-scans.service with --tags
+# heimdall-scans.
+
+# Its settings, written by the template_services role at build:
+# Heimdall's loopback URL (clone_heimdall_scans_url), its administrator's
+# email and the podman secret holding the password (_admin_email,
+# _admin_secret), Heimdall's unit (_service), the scan results' directory
+# (_dir) and the marker that keeps the import from running again (_marker).
+clone_heimdall_scans_settings_file: "{{ safbox_firstboot_dir }}/heimdall-scans.yml"
+# The most evaluations asked for in one listing, when looking for the
+# scans Heimdall already holds.
+clone_heimdall_scans_list_limit: 1000
+# Tags a profile's evaluation gets besides safbox-build-scan, run <run> and
+# scanned <date>: the STIG overlay's is marked as the STIG report.
+clone_heimdall_scans_profile_tags:
+  safbox-rhel10-stig-overlay: [STIG]

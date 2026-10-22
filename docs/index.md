@@ -10,6 +10,9 @@ hero:
     alt: The MITRE SAF shield
   actions:
     - theme: brand
+      text: How to sign in
+      link: "#how-to-sign-in-to-safbox-services"
+    - theme: alt
       text: Service status
       link: "#service-status"
     - theme: alt
@@ -34,22 +37,13 @@ harden systems, test them against security guidance, and look at the
 results, on a box that is itself hardened to the RHEL 10 STIG and runs in
 FIPS mode. Everything here works without reaching the internet.
 
-### Service status
+## Service status
 
 Open Heimdall and Vulcan from here: each name links to its application.
 
 <ServiceStatus />
 
-### Signing in
-
-Heimdall and Vulcan share one sign-in: choose **SAFBox** on either
-application's sign-in page and sign in as `safuser` with its Keycloak
-password, which your administrator reads on the box
-([Accounts](/reference/accounts)). Change it from the Keycloak bookmark.
-Heimdall refuses self-registration. Vulcan 2.4.1 still accepts it from
-anyone who can reach it, although registration is set off (an upstream
-defect); such an account is a separate local one, not your SAFBox
-sign-in.
+## What is on the box
 
 ### Heimdall
 
@@ -84,6 +78,55 @@ Results you produce here can go straight into Heimdall.
 `safbox help` lists what the appliance itself can tell you, and
 `safbox status` shows the box's tools and their versions, its services,
 and whether FIPS mode is on.
+
+## How to sign in to SAFBox services
+
+**Heimdall and Vulcan sign in through Keycloak** (single sign-on). On
+either application's sign-in page choose **SAFBox**, then sign in to
+Keycloak as `safuser`.
+
+**`safuser`'s first Keycloak password** is generated at first boot and
+kept in a podman secret. To see the initial password, open a terminal and run:
+
+```
+sudo podman secret inspect --showsecret --format '{{.SecretData}}' keycloak-safuser-password
+```
+
+**Keycloak makes you choose a new password at the first sign-in** (at
+least 15 characters, not the user name). The secret keeps only the first
+one; later changes go through the Keycloak bookmark (the account page).
+
+**The desktop and SSH password is a different one.** `safuser`'s
+password for the desktop, the console and SSH is its operating-system
+password, not its Keycloak one: the password whoever deployed the box
+gave it in cloud-init (on Proxmox, the clone's **Password**), or, if they
+gave none, the one first boot generated, which `admin` reads with
+`sudo cat /etc/safbox/safuser.env`.
+
+**`admin` is key-only.** It is the account for deploying and
+administering the box: SSH with the key given at deployment, passwordless
+sudo, no password at all, and it does not appear on the desktop's sign-in
+screen.
+
+**Heimdall's own administrator**, `admin@safbox.internal`, is a local
+account for when Keycloak is down. Its password is the podman secret
+`heimdall-admin-password` (Vulcan's is `vulcan-admin-password`), read the
+same way as `admin`:
+
+```
+sudo podman secret inspect --showsecret --format '{{.SecretData}}' heimdall-admin-password
+```
+
+Heimdall asks for a new one at that account's first sign-in.
+
+Heimdall refuses self-registration. Vulcan 2.4.1 still accepts it from
+anyone who can reach it; such an account is a separate local one, not your SAFBox
+sign-in.
+
+More: [Services on the box](/reference/services) (the applications'
+accounts and secrets), [Accounts](/reference/accounts#accounts-in-the-applications),
+and the build guide's
+[Accounts on a clone](/guides/proxmox/build#accounts-on-a-clone).
 
 ### More
 

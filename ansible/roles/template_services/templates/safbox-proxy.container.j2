@@ -1,0 +1,32 @@
+# {{ ansible_managed }}
+# The SAFBox TLS proxy, one container for every application, so TLS
+# terminates in one place: upstream Heimdall's nginx service and Vulcan's
+# nginx profile (mapping: docs/reference/services.md, "Upstream compose
+# files"). The host network lets nginx reach the pods' loopback-only ports.
+# It runs as root (master) to read the root-only key, with every capability
+# dropped but the three nginx needs to hand work to its nginx-user workers
+# and the one it needs to bind ports 80 and 443 (below 1024).
+[Unit]
+Description=SAFBox TLS proxy (nginx)
+After=safbox-firstboot.service
+ConditionPathExists={{ template_services_proxy_key }}
+
+[Container]
+Image={{ template_services_proxy_image }}
+ContainerName=safbox-proxy
+Network=host
+User=root
+Exec=nginx -c /etc/nginx/safbox/nginx.conf
+Volume={{ template_services_proxy_conf_dir }}:/etc/nginx/safbox:ro,Z
+Volume={{ template_services_proxy_tls_dir }}:/etc/nginx/tls:ro,Z
+ReadOnly=true
+NoNewPrivileges=true
+DropCapability=all
+AddCapability=CAP_CHOWN CAP_SETGID CAP_SETUID CAP_NET_BIND_SERVICE
+Memory={{ template_services_proxy_memory }}
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

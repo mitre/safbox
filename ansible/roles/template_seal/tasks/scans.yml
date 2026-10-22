@@ -1,0 +1,63 @@
+---
+# The build gate's results for this VM, scanned from the runner just before
+# the seal (scripts/validate.sh --results-dir), go into the template so each
+# box shows its own scan results: first boot imports them into Heimdall
+# (the first-boot play's clone_heimdall_scans role). They are installed root's
+# alone, with a manifest naming the build run and, for each scan, its date
+# and sha256. Without template_seal_scans_src (Packer run without build_scans_dir)
+# the template holds none and the import has nothing to do.
+
+- name: Install the build gate's results with their manifest
+  when: template_seal_scans_src | length > 0
+  block:
+    # On the runner, as the user running the build: the files the gate
+    # kept, and when each scan ended.
+    - name: Find the build gate's results on the runner
+      ansible.builtin.stat:
+        path: "{{ template_seal_scans_src }}/{{ item }}.json"
+        get_checksum: false
+      loop: "{{ template_seal_scans_profiles }}"
+      register: template_seal_scans_found
+      delegate_to: localhost
+      become: false
+
+    - name: Check the build gate kept each profile's results
+      ansible.builtin.assert:
+        that: template_seal_scans_found.results | rejectattr('stat.exists') | list | length == 0
+        fail_msg: >-
+          no results in {{ template_seal_scans_src }} for
+          {{ template_seal_scans_found.results | rejectattr('stat.exists') | map(attribute='item') | join(', ') }}:
+          the build gate (scripts/validate.sh --results-dir) keeps them there
+        quiet: true
+
+    - name: Create the directory of the scan results
+      ansible.builtin.file:
+        path: "{{ template_seal_scans_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+
+    - name: Install each scan's results
+      ansible.builtin.copy:
+        src: "{{ template_seal_scans_src }}/{{ item }}.json"
+        dest: "{{ template_seal_scans_dir }}/{{ item }}.json"
+        owner: root
+        group: root
+        mode: '0600'
+      loop: "{{ template_seal_scans_profiles }}"
+
+    - name: Read each installed file's sha256
+      ansible.builtin.stat:
+        path: "{{ template_seal_scans_dir }}/{{ item }}.json"
+        checksum_algorithm: sha256
+      loop: "{{ template_seal_scans_profiles }}"
+      register: template_seal_scans_installed
+
+    - name: Write the manifest of the scan results
+      ansible.builtin.template:
+        src: scans-manifest.json.j2
+        dest: "{{ template_seal_scans_dir }}/manifest.json"
+        owner: root
+        group: root
+        mode: '0600'

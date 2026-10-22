@@ -1,0 +1,481 @@
+---
+# template_services role: every long-running service of the appliance, one task file
+# and one task group per service (tasks/main.yml), each switched off by
+# setting its switch to false (group_vars):
+#   safbox-services-1  Heimdall (tasks/heimdall.yml)   safbox_services_1
+#   safbox-services-2  Vulcan (tasks/vulcan.yml)       safbox_services_2
+#   safbox-services-3  TLS proxy (tasks/proxy.yml)     safbox_services_3
+#   safbox-services-4  Firefox bookmarks, desktop      safbox_services_4
+#                      builds only (tasks/firefox.yml)
+#   safbox-services-5  Keycloak (tasks/keycloak.yml)   safbox_services_5
+# A site short of memory runs Heimdall alone by switching Vulcan off.
+
+# ---------------------------------------------------------------------------
+# PostgreSQL
+# ---------------------------------------------------------------------------
+# Each application's database is a PostgreSQL container in its pod, from
+# the one pinned PostgreSQL image (safbox_image_postgresql, group_vars),
+# whose OpenSSL runs its FIPS provider on a FIPS host. On the first start
+# the image makes the application's role and database from POSTGRESQL_USER
+# and POSTGRESQL_DATABASE (each unit) and POSTGRESQL_PASSWORD (the
+# application's database password, a podman secret first boot makes); the
+# role owns its database and is not a superuser. Each container also reads two files from this directory
+# (templates/postgresql.conf.j2 and pg_hba.conf.j2): passwords stored as
+# SCRAM-SHA-256, and an access list that admits the application's role
+# over the pod's loopback with SCRAM-SHA-256 and the database's own
+# administrator over the container's socket (peer), and nobody else. The
+# image's own list would trust every connection over the socket and the
+# loopback, without a password.
+template_services_postgresql_conf_dir: /etc/safbox-postgresql
+
+# ---------------------------------------------------------------------------
+# Per-install secrets
+# ---------------------------------------------------------------------------
+# Every secret a service needs is generated on each clone's first boot,
+# never at build, so no two boxes share one: the first-boot play's secrets
+# role (ansible/roles/clone_secrets) makes each as a
+# podman secret, from openssl rand -hex (the FIPS DRBG) with the strength of
+# upstream's setup scripts (Heimdall's setup-docker-env.sh, Vulcan's
+# setup-docker-secrets.sh), and keeps any that exists. Each container
+# receives the secrets its unit names with Quadlet Secret=, one secret per
+# value even where two containers read it (a database password reaches the
+# application and its PostgreSQL, a client secret the application and
+# Keycloak), and its units start only once they exist (ExecCondition=), so
+# the template carries none.
+#
+# Every secret reaches its containers as an environment variable
+# (type=env), whose value podman inspect does not show. A mounted file
+# serves only where an image reads that value from one: the sclorg
+# PostgreSQL image has no *_FILE variables, Keycloak's realm import
+# placeholders resolve from the environment only, and Vulcan reads its
+# secrets from ENV with no .env file in production. Heimdall's own values
+# (a .env in its backend's working directory) and Keycloak's bootstrap
+# password (keycloak.conf) could be mounted files instead; the database
+# passwords and client secrets, read by two containers each, stay env.
+#
+# Each entry: the secret's name; enabled, while its services are switched
+# on; hex_bytes, the bytes of randomness (twice as many hex digits); suffix,
+# appended after them; description, the secret's label on the box; env, the
+# variable each container reads it as, by container.
+template_services_secret_list:
+  - name: heimdall-database-password
+    enabled: "{{ safbox_services_1 | default(true) | bool }}"
+    hex_bytes: 33
+    description: The password of Heimdall's role in its PostgreSQL.
+    env: {heimdall: DATABASE_PASSWORD, heimdall-db: POSTGRESQL_PASSWORD}
+  - name: heimdall-jwt-secret
+    enabled: "{{ safbox_services_1 | default(true) | bool }}"
+    hex_bytes: 64
+    description: The key Heimdall signs its login tokens with.
+    env: {heimdall: JWT_SECRET}
+  - name: heimdall-api-key-secret
+    enabled: "{{ safbox_services_1 | default(true) | bool }}"
+    hex_bytes: 33
+    description: Heimdall's API key secret (API_KEY_SECRET).
+    env: {heimdall: API_KEY_SECRET}
+  - name: heimdall-admin-password
+    enabled: "{{ safbox_services_1 | default(true) | bool }}"
+    hex_bytes: 24
+    description: >-
+      The initial password of Heimdall's administrator, admin@ the domain, made
+      on Heimdall's first start, which asks for a new one at the first sign-in.
+    env: {heimdall: ADMIN_PASSWORD}
+  - name: heimdall-oidc-client-secret
+    enabled: "{{ safbox_services_1 | default(true) | bool and template_services_keycloak_enabled | bool }}"
+    hex_bytes: 32
+    description: Heimdall's client secret in Keycloak.
+    env: {heimdall: OIDC_CLIENT_SECRET, keycloak: OIDC_CLIENT_SECRET}
+  - name: vulcan-database-password
+    enabled: "{{ safbox_services_2 | default(true) | bool }}"
+    hex_bytes: 33
+    description: The password of Vulcan's role in its PostgreSQL.
+    env: {vulcan: POSTGRES_PASSWORD, vulcan-db: POSTGRESQL_PASSWORD}
+  - name: vulcan-secret-key-base
+    enabled: "{{ safbox_services_2 | default(true) | bool }}"
+    hex_bytes: 64
+    description: Vulcan's Rails secret key base.
+    env: {vulcan: SECRET_KEY_BASE}
+  - name: vulcan-cipher-password
+    enabled: "{{ safbox_services_2 | default(true) | bool }}"
+    hex_bytes: 64
+    description: Vulcan's cipher password (CIPHER_PASSWORD).
+    env: {vulcan: CIPHER_PASSWORD}
+  - name: vulcan-cipher-salt
+    enabled: "{{ safbox_services_2 | default(true) | bool }}"
+    hex_bytes: 32
+    description: Vulcan's cipher salt (CIPHER_SALT).
+    env: {vulcan: CIPHER_SALT}
+  # A fixed run of two upper case letters, two lower case, two digits and
+  # two symbols after the random part, as Vulcan's own generator does, so it
+  # meets Vulcan's default complexity rule whatever the random part holds.
+  - name: vulcan-admin-password
+    enabled: "{{ safbox_services_2 | default(true) | bool }}"
+    hex_bytes: 24
+    suffix: AZaz09!@
+    description: >-
+      The password of Vulcan's administrator, admin@ the domain, made on
+      Vulcan's first start (lib/tasks/admin_bootstrap.rake).
+    env: {vulcan: VULCAN_ADMIN_PASSWORD}
+  - name: vulcan-oidc-client-secret
+    enabled: "{{ safbox_services_2 | default(true) | bool and template_services_keycloak_enabled | bool }}"
+    hex_bytes: 32
+    description: Vulcan's client secret in Keycloak.
+    env: {vulcan: VULCAN_OIDC_CLIENT_SECRET, keycloak: VULCAN_OIDC_CLIENT_SECRET}
+  - name: keycloak-database-password
+    enabled: "{{ template_services_keycloak_enabled | bool }}"
+    hex_bytes: 33
+    description: The password of Keycloak's role in its PostgreSQL.
+    env: {keycloak: KC_DB_PASSWORD, keycloak-db: POSTGRESQL_PASSWORD}
+  # FIPS strict mode wants passwords of 14 characters or more.
+  - name: keycloak-bootstrap-admin-password
+    enabled: "{{ template_services_keycloak_enabled | bool }}"
+    hex_bytes: 24
+    description: >-
+      The password of temp-admin, the temporary administrator of the master
+      realm Keycloak makes on its first start.
+    env: {keycloak: KC_BOOTSTRAP_ADMIN_PASSWORD}
+  # Its own, not the OS account's; the realm import gives it to safuser on
+  # Keycloak's first start, and the realm makes safuser change it at its
+  # first sign-in, so it is one-time.
+  - name: keycloak-safuser-password
+    enabled: "{{ template_services_keycloak_enabled | bool }}"
+    hex_bytes: 16
+    description: >-
+      safuser's initial Keycloak password. It must be changed at the first
+      sign-in, and this secret is not updated when it changes.
+    env: {keycloak: SAFUSER_PASSWORD}
+template_services_secrets: "{{ template_services_secret_list | selectattr('enabled') | list }}"
+
+# The secrets list the template_services role writes for the first-boot play's
+# clone_secrets role, beside the play.
+template_services_secrets_file: "{{ safbox_firstboot_dir }}/secrets.yml"
+
+# ---------------------------------------------------------------------------
+# Heimdall
+# ---------------------------------------------------------------------------
+# MITRE Heimdall and its PostgreSQL as a podman pod of Quadlet units, in the
+# service shape of Heimdall's upstream
+# docker-compose.yml (cited in each unit). Secrets come from first boot
+# (Per-install secrets above), and the units start only once they exist, so
+# the template carries none.
+
+template_services_heimdall_image: "{{ safbox_image_heimdall.name }}@{{ safbox_image_heimdall.digest }}"
+template_services_heimdall_db_image: "{{ safbox_image_postgresql.name }}@{{ safbox_image_postgresql.digest }}"
+# Heimdall's database and the role it signs in as (DATABASE_USERNAME). The
+# name is Heimdall's own default for NODE_ENV=production
+# (apps/backend/config/app_config.ts); the image cannot give its role the
+# name postgres, which upstream's compose signs in as.
+template_services_heimdall_db_name: heimdall-server-production
+template_services_heimdall_db_user: heimdall
+
+# Port the pod publishes on 127.0.0.1 for the TLS proxy (group_vars).
+template_services_heimdall_loopback_port: "{{ safbox_heimdall_loopback_port }}"
+
+# Lifetime of the login token Heimdall issues. Upstream's setup script asks
+# for it ("ex. 1d or 25m") and Heimdall falls back to 60 seconds without it.
+template_services_heimdall_jwt_expire_time: 1d
+
+# The name the proxy serves Heimdall at. Heimdall's EXTERNAL_URL (upstream's
+# apps/backend/.env-example: "The external URL for your Heimdall
+# deployment") is https:// on this name; Heimdall builds the callback URLs
+# of its external login providers from it.
+template_services_heimdall_host: "heimdall.{{ safbox_domain }}"
+
+# Heimdall's OIDC settings when Keycloak is switched on (.env-example,
+# "Custom OIDC Service"): the safbox realm's endpoints at the issuer every
+# party uses, and PKCE S256.
+template_services_heimdall_oidc_issuer: "https://{{ template_services_keycloak_host }}/realms/safbox"
+template_services_heimdall_oidc_settings:
+  OIDC_NAME: SAFBox
+  OIDC_ISSUER: "{{ template_services_heimdall_oidc_issuer }}"
+  OIDC_AUTHORIZATION_URL: "{{ template_services_heimdall_oidc_issuer }}/protocol/openid-connect/auth"
+  OIDC_TOKEN_URL: "{{ template_services_heimdall_oidc_issuer }}/protocol/openid-connect/token"
+  OIDC_USER_INFO_URL: "{{ template_services_heimdall_oidc_issuer }}/protocol/openid-connect/userinfo"
+  OIDC_CLIENTID: heimdall
+  OIDC_USES_PKCE_S256: "true"
+
+# Container memory limits. The sum over every service stays inside the
+# reference 4 GiB appliance with room for the host and a scan. Heimdall
+# parses each uploaded HDF file (up to the proxy's 100 MB body limit) in
+# memory.
+template_services_heimdall_memory: 1g
+template_services_heimdall_db_memory: 512m
+
+# The template's build-gate scan results (the seal installs them; see the
+# template_seal role), imported into Heimdall once per box by
+# safbox-heimdall-scans.service: the first-boot play run with --tags
+# heimdall-scans, after Heimdall answers its healthcheck. Not a first-boot
+# role: Heimdall's units start after first boot, whose secrets they need.
+# The role's settings go beside the play (template_services_heimdall_scans_file):
+# Heimdall's administrator, its loopback URL and the unit it runs as.
+template_services_heimdall_scans_file: "{{ safbox_firstboot_dir }}/heimdall-scans.yml"
+template_services_heimdall_scans_dir: /usr/local/share/safbox/scans
+template_services_heimdall_scans_marker: "{{ safbox_state_dir }}/heimdall-scans.done"
+
+# ---------------------------------------------------------------------------
+# Vulcan
+# ---------------------------------------------------------------------------
+# MITRE Vulcan and its PostgreSQL as a podman pod of Quadlet units, in the
+# service shape of Vulcan's upstream docker-compose.yml
+# (cited in each unit). Secrets come from first boot (Per-install secrets
+# above), and the units start only once they exist, so the template carries
+# none.
+
+template_services_vulcan_image: "{{ safbox_image_vulcan.name }}@{{ safbox_image_vulcan.digest }}"
+template_services_vulcan_db_image: "{{ safbox_image_postgresql.name }}@{{ safbox_image_postgresql.digest }}"
+# Vulcan's database and the role it signs in as (POSTGRES_USER). The name
+# is Vulcan's own production default (config/database.yml); the image
+# cannot give its role the name postgres, which upstream's compose signs in
+# as.
+template_services_vulcan_db_name: vulcan_production
+template_services_vulcan_db_user: vulcan
+
+# Port the pod publishes on 127.0.0.1 for the TLS proxy (group_vars).
+template_services_vulcan_loopback_port: "{{ safbox_vulcan_loopback_port }}"
+
+# Vulcan's non-secret settings, passed to the container as environment
+# variables (the appliance's subset of upstream's .env.production.example;
+# every other setting keeps the image's default). As upstream's production
+# example advises, registration and first-user-admin are off and the
+# administrator is made from environment variables (its "Admin Bootstrap"):
+# the one local account, admin@<domain>, with the password first boot
+# makes (VULCAN_ADMIN_PASSWORD, the vulcan-admin-password secret), made on
+# the first start.
+# Local login stays on for it, as the way in while Keycloak is down or
+# switched off. RAILS_FORCE_SSL stays on, as upstream recommends behind a
+# proxy: the TLS proxy terminates HTTPS and sends X-Forwarded-Proto. LDAP
+# and SMTP are consumer settings: add them here (see upstream's
+# .env.production.example) in ansible/local.yml.
+template_services_vulcan_settings:
+  VULCAN_ENABLE_LOCAL_LOGIN: "true"
+  VULCAN_ENABLE_USER_REGISTRATION: "false"
+  VULCAN_FIRST_USER_ADMIN: "false"
+  VULCAN_ADMIN_EMAIL: "admin@{{ safbox_domain }}"
+  RAILS_FORCE_SSL: "true"
+  VULCAN_APP_URL: "https://{{ template_services_vulcan_host }}"
+
+# Vulcan's OIDC settings when Keycloak is switched on (.env.production.example,
+# "Option 1: OIDC/OAuth2"): the issuer every party uses, with discovery.
+# Not VULCAN_OIDC_HOST, which Vulcan 2.4.1 logs as deprecated ("Use
+# VULCAN_OIDC_ISSUER_URL instead"). The client secret is the
+# vulcan-oidc-client-secret secret, which Keycloak reads too.
+template_services_vulcan_oidc_settings:
+  VULCAN_ENABLE_OIDC: "true"
+  VULCAN_OIDC_PROVIDER_TITLE: SAFBox
+  VULCAN_OIDC_ISSUER_URL: "https://{{ template_services_keycloak_host }}/realms/safbox"
+  VULCAN_OIDC_CLIENT_ID: vulcan
+  VULCAN_OIDC_REDIRECT_URI: "https://{{ template_services_vulcan_host }}/users/auth/oidc/callback"
+  VULCAN_OIDC_DISCOVERY: "true"
+
+# The name the proxy serves Vulcan at. VULCAN_APP_URL above is https:// on
+# it (upstream's .env.production.example, REQUIRED: Application Settings):
+# Vulcan takes the host of the links in the mail it sends from it, and
+# the address an identity provider returns to after sign-out.
+template_services_vulcan_host: "vulcan.{{ safbox_domain }}"
+
+# Container memory limits. The sum over every service stays inside the
+# reference 4 GiB appliance with room for the host and a scan.
+template_services_vulcan_memory: 1g
+template_services_vulcan_db_memory: 512m
+
+# ---------------------------------------------------------------------------
+# Keycloak
+# ---------------------------------------------------------------------------
+# Keycloak and its PostgreSQL as a podman pod of Quadlet units: single
+# sign-on for Heimdall and Vulcan.
+# Keycloak runs in FIPS strict mode from an image built here at image
+# build: Keycloak's image, pinned by digest, plus the Bouncy Castle FIPS
+# jars, pinned by sha256 (group_vars), after the Containerfile in Keycloak's
+# FIPS guide (https://www.keycloak.org/server/fips). The built image is not
+# bit-for-bit reproducible (build timestamps), so its inputs are pinned,
+# not its digest.
+
+template_services_keycloak_base_image: "{{ safbox_image_keycloak.name }}@{{ safbox_image_keycloak.digest }}"
+template_services_keycloak_image: "localhost/safbox-keycloak-fips:{{ safbox_image_keycloak.tag }}"
+template_services_keycloak_jar_url: https://repo1.maven.org/maven2/org/bouncycastle
+
+# The Containerfile and the jars' sums the image was built from, kept on
+# the box as its record (and read by the validation profile), and the realm
+# file Keycloak imports.
+template_services_keycloak_conf_dir: /etc/safbox-keycloak
+# The build context, in /var/tmp, which the seal clears.
+template_services_keycloak_build_dir: /var/tmp/safbox-keycloak-build
+
+# Keycloak's database, from the PostgreSQL image of the other two.
+template_services_keycloak_db_image: "{{ safbox_image_postgresql.name }}@{{ safbox_image_postgresql.digest }}"
+# Keycloak's database and the role it signs in as (KC_DB_USERNAME).
+template_services_keycloak_db_name: keycloak
+template_services_keycloak_db_user: keycloak
+
+# The name the proxy serves Keycloak at: the issuer every party uses is
+# https://<this>/realms/safbox.
+template_services_keycloak_host: "keycloak.{{ safbox_domain }}"
+
+# keycloak.network's fixed subnet; its gateway is the one address Keycloak
+# believes forwarded headers from (keycloak.network.j2).
+template_services_keycloak_subnet: 10.89.42.0/24
+template_services_keycloak_gateway: 10.89.42.1
+
+# Container memory limits. Keycloak sizes its Java heap from its limit
+# (kc.sh: 70% of the container's memory), so the limit sets its use; 768m
+# served 20 rounds of logins to both applications in the spike (owner
+# decision, 2026-10-17).
+template_services_keycloak_memory: 768m
+template_services_keycloak_db_memory: 512m
+
+# The applications that sign in through Keycloak, each a client in the
+# safbox realm when switched on: the callback path its OIDC library uses,
+# where Keycloak may send the browser after sign-out, whether it sends a
+# PKCE challenge, and the podman secret holding its client secret, which
+# both it and Keycloak read (Per-install secrets above; the realm's
+# placeholder is the variable Keycloak reads it as).
+template_services_keycloak_client_list:
+  - name: heimdall
+    title: Heimdall
+    enabled: "{{ safbox_services_1 | default(true) | bool }}"
+    host: "{{ template_services_heimdall_host }}"
+    redirect_path: /authn/oidc_callback
+    post_logout_path: /*
+    pkce: true
+    secret: heimdall-oidc-client-secret
+  - name: vulcan
+    title: Vulcan
+    enabled: "{{ safbox_services_2 | default(true) | bool }}"
+    host: "{{ template_services_vulcan_host }}"
+    redirect_path: /users/auth/oidc/callback
+    post_logout_path: /users/signed_out
+    pkce: false
+    secret: vulcan-oidc-client-secret
+template_services_keycloak_clients: "{{ template_services_keycloak_client_list | selectattr('enabled') | list }}"
+
+# Whether Keycloak is switched on, for the applications' OIDC settings.
+template_services_keycloak_enabled: "{{ safbox_services_5 | default(true) | bool }}"
+
+# ---------------------------------------------------------------------------
+# TLS proxy
+# ---------------------------------------------------------------------------
+# One nginx container, the one place TLS terminates, that serves each enabled
+# application over HTTPS on port 443 by name (name-based virtual hosts),
+# with a certificate first boot generates and signs with a local CA of the
+# box's own, which the box trusts (the first-boot play's clone_proxy_tls
+# role, which the template_os role installs). Any other name,
+# or the bare address, gets a start page linking to the applications.
+# Port 80, and plain HTTP sent to 443, redirect to HTTPS.
+
+template_services_proxy_image: "{{ safbox_image_proxy.name }}@{{ safbox_image_proxy.digest }}"
+
+# The applications the proxy fronts, each enabled by its service's task
+# group switch and served at its host name. An application switched off
+# gets no server block, no /etc/hosts entry, no certificate name and no
+# start-page link. Body and buffer sizes follow each application's
+# upstream proxy configuration (see templates/nginx.conf.j2); 100m is the
+# largest upload either accepts.
+template_services_proxy_apps:
+  - name: heimdall
+    title: Heimdall
+    enabled: "{{ safbox_services_1 | default(true) | bool }}"
+    host: "{{ template_services_heimdall_host }}"
+    loopback_port: "{{ safbox_heimdall_loopback_port }}"
+  - name: vulcan
+    title: Vulcan
+    enabled: "{{ safbox_services_2 | default(true) | bool }}"
+    host: "{{ template_services_vulcan_host }}"
+    loopback_port: "{{ safbox_vulcan_loopback_port }}"
+  # Keycloak's link opens the account page of the safbox realm, where a
+  # user changes their password; its bare name leads to the admin console.
+  - name: keycloak
+    title: Keycloak
+    enabled: "{{ safbox_services_5 | default(true) | bool }}"
+    host: "{{ template_services_keycloak_host }}"
+    loopback_port: "{{ safbox_keycloak_loopback_port }}"
+    path: /realms/safbox/account/
+
+# The names the proxy serves: the domain (the start page) and each enabled
+# application's. /etc/hosts maps them to 127.0.0.1 and the first-boot
+# certificate names them (template_services_proxy_names_file).
+template_services_proxy_names: >-
+  {{ [safbox_domain] + (template_services_proxy_apps | selectattr('enabled') | map(attribute='host') | list) }}
+
+# nginx configuration and the start page on the host, mounted read-only
+# into the container.
+template_services_proxy_conf_dir: /etc/safbox-proxy
+
+# The start page is the documentation site (docs/, built with VitePress into
+# site/.vitepress/dist by scripts/build.sh on the workstation), copied from
+# the controller. A timer writes status.json beside it: each enabled service
+# up or down, which the site's welcome page shows.
+template_services_site_src: "{{ playbook_dir }}/../../site/.vitepress/dist/"
+template_services_status_script: /usr/local/libexec/safbox-site-status
+template_services_status_list: "{{ safbox_etc_dir }}/site-status.services"
+
+# The certificate and key first boot generates (the clone_proxy_tls role). To use
+# your own, replace both files (PEM, the key unencrypted, root-only) and
+# restart safbox-proxy.service; neither first boot nor the renewal timer
+# overwrites a certificate the box's local CA did not sign.
+template_services_proxy_tls_dir: "{{ safbox_tls_dir }}"
+template_services_proxy_cert: "{{ template_services_proxy_tls_dir }}/safbox.crt"
+template_services_proxy_key: "{{ template_services_proxy_tls_dir }}/safbox.key"
+# The first-boot play (installed by the template_os role), which
+# safbox-proxy-renew.timer runs daily with --tags renew (the clone_proxy_tls
+# role signs the box's own certificate again before it expires) and
+# safbox-heimdall-scans.service with --tags heimdall-scans.
+template_services_firstboot_play: "{{ safbox_firstboot_dir }}/firstboot.yml"
+# The served names, one per line, the domain first: proxy_tls names exactly
+# these in the certificate and limits its local CA to the domain.
+template_services_proxy_names_file: "{{ safbox_etc_dir }}/proxy-names"
+
+# Files that map the served names to 127.0.0.1, so a browser on the box
+# opens them. cloud-init rewrites /etc/hosts from its template on every
+# boot where its manage_etc_hosts is on (where the platform's user data
+# turns it on),
+# so the names go in that template as well, the place cloud-init's own
+# /etc/hosts header names for local changes; it is skipped where absent.
+template_services_proxy_hosts_files:
+  - /etc/hosts
+  - "/etc/cloud/templates/hosts.{{ ansible_facts['os_family'] | lower }}.tmpl"
+
+# Heimdall's upstream proxy buffers up to 160 MB of a response (32 x 5m)
+# so large evaluations stream through; the limit leaves room for that.
+template_services_proxy_memory: 512m
+
+# ---------------------------------------------------------------------------
+# Firefox bookmarks
+# ---------------------------------------------------------------------------
+# Bookmarks for Firefox on a desktop build, set through Firefox's
+# system-wide enterprise policy file, which Firefox on Linux reads from
+# /etc/firefox/policies (templates/policies.json.j2): the Bookmarks policy
+# puts each one on the bookmarks toolbar as its own button, beside the
+# user's own bookmarks, and DisplayBookmarksToolbar shows the toolbar at
+# first, which users can change. NoDefaultBookmarks drops the
+# distribution's default bookmarks, whose first-run import races the
+# Bookmarks policy and loses one of the box's. The applications' bookmarks
+# follow template_services_proxy_apps and, with the start page's, need the proxy;
+# SAF and SAF Training are always there. A new profile, and Firefox after
+# an update, never opens Firefox's Welcome page: it opens the start page
+# with the proxy, and no extra page without it. The task group runs only
+# on a desktop build (safbox_desktop_enabled).
+template_services_firefox_policies_file: /etc/firefox/policies/policies.json
+# A bookmark's icon is embedded in the policy as a data: URI: Firefox's
+# Bookmarks policy ignores any other kind of icon URL, and sets the icon
+# when it creates the bookmark in a new profile. The default icon is the
+# SAF logo the desktop installs (platform task group 7); Vulcan has no logo
+# of its own, so it keeps the SAF logo too.
+template_services_firefox_bookmark_icon: /usr/share/pixmaps/saf-logo.svg
+template_services_firefox_bookmark_icon_type: image/svg+xml
+# The applications with a logo of their own, by name in
+# template_services_proxy_apps: each file is in files/, taken unchanged from
+# the application's upstream repository at the release whose image the box
+# runs (both Apache-2.0):
+#   heimdall  its orange logo on a transparent background, mitre/heimdall2
+#             apps/frontend/src/assets/logo-orange-tsp.svg at v2.14.0
+#             (commit abf4030218818f723a40b962c360acb03cc72789)
+#   keycloak  its admin console's favicon, keycloak/keycloak
+#             js/apps/admin-ui/public/favicon.svg at 26.8.1
+#             (commit 24ed1dadf3f246a555adb6d3d4a99e9b3003fb3b)
+template_services_firefox_app_icons:
+  heimdall:
+    file: firefox/heimdall-logo.svg
+    type: image/svg+xml
+  keycloak:
+    file: firefox/keycloak-logo.svg
+    type: image/svg+xml

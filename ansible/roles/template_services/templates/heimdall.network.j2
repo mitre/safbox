@@ -1,0 +1,5 @@
+# {{ ansible_managed }}
+# Heimdall's own network: the heimdall pod is alone on it, so no other
+# container can reach its database.
+[Network]
+NetworkName=heimdall

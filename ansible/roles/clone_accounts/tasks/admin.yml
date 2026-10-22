@@ -1,0 +1,125 @@
+---
+# admin, the account cloud-init creates as its default user for the
+# deployer: deploying and automation (Ansible, the release gate), key login
+# only, passwordless sudo. Its name is the one cloud-init used (a
+# deployment may rename the default user; SAFBox's own default is admin,
+# set in the template's /etc/cloud/cloud.cfg.d/80-safbox-users.cfg).
+#   - No password, ever: its password field is a lock with no hash.
+#     cloud-init creates it locked and does not run set_passwords, so this
+#     acts only when a deployment's own users list gave it a password.
+#   - Exempt from password ageing and inactivity (chage -M -1 -I -1). The
+#     STIG's 60-day maximum in /etc/login.defs would otherwise expire its
+#     unusable password, and sshd then refuses its key login because a
+#     password change is required that it cannot make. ansible-core 2.16's
+#     user module sets the maximum but not the inactivity, so chage does
+#     both, and only when either is set.
+#   - Hidden from the desktop login screen (AccountsService SystemAccount),
+#     where AccountsService is installed.
+# pam_faillock cannot lock it out of what it is for: SSH key login and
+# passwordless sudo run no PAM authentication, so failed password attempts
+# never reach them. Runs after cloud-init has created the account; changes
+# only what differs, so a second run changes nothing.
+
+# The configuration holds the password a deployment supplied (safuser's),
+# so only the name leaves this task. The top-level user (a name, or a
+# mapping with one) renames system_info.default_user.
+- name: Name cloud-init's default user
+  ansible.builtin.set_fact:
+    clone_accounts_admin_name: >-
+      {{ clone_accounts_admin_user
+         if clone_accounts_admin_user is string and clone_accounts_admin_user | length > 0
+         else clone_accounts_admin_user.name | default(clone_accounts_admin_default_name)
+         if clone_accounts_admin_user is mapping
+         else clone_accounts_admin_default_name }}
+  vars:
+    clone_accounts_admin_cfg: >-
+      {{ clone_accounts_cloud_config if clone_accounts_cloud_config is defined
+         else clone_accounts_cloud_config_query.stdout | from_json }}
+    clone_accounts_admin_user: "{{ clone_accounts_admin_cfg.user | default('') }}"
+    clone_accounts_admin_default_name: "{{ clone_accounts_admin_cfg.system_info.default_user.name | default('') }}"
+  no_log: true
+
+- name: Report that cloud-init's default user is root
+  when: clone_accounts_admin_name == 'root'
+  ansible.builtin.debug:
+    msg: "cloud-init's user is root; leaving it as it is"
+
+- name: Look for the account
+  when: clone_accounts_admin_name not in ['', 'root']
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ clone_accounts_admin_name }}"
+    fail_key: false
+
+- name: Report that cloud-init created no default user
+  when: >-
+    clone_accounts_admin_name == ''
+    or (clone_accounts_admin_name != 'root' and getent_passwd[clone_accounts_admin_name] is none)
+  ansible.builtin.debug:
+    msg: >-
+      cloud-init created no default user
+      {{- ' (' ~ clone_accounts_admin_name ~ ')' if clone_accounts_admin_name else '' }};
+      nothing to do
+
+- name: Settle the account
+  when: clone_accounts_admin_name not in ['', 'root'] and getent_passwd[clone_accounts_admin_name] is not none
+  block:
+    - name: Read its password field and ageing
+      ansible.builtin.getent:
+        database: shadow
+        key: "{{ clone_accounts_admin_name }}"
+      no_log: true
+
+    # The fields after the password: last change, minimum, maximum, warning,
+    # inactivity, expiry. Only the password field is a secret.
+    - name: Decide what differs
+      ansible.builtin.set_fact:
+        clone_accounts_admin_has_password: "{{ getent_shadow[clone_accounts_admin_name][0] is not match('^[!*]+$') }}"
+        clone_accounts_admin_ageing: >-
+          {{ getent_shadow[clone_accounts_admin_name][3] ~ ':' ~ getent_shadow[clone_accounts_admin_name][5] }}
+      no_log: true
+
+    - name: Remove the password a deployment's own user data gave it
+      when: clone_accounts_admin_has_password
+      ansible.builtin.command:
+        argv: [usermod, -p, '!', "{{ clone_accounts_admin_name }}"]
+      changed_when: true
+
+    - name: Report the removed password
+      when: clone_accounts_admin_has_password
+      ansible.builtin.debug:
+        msg: >-
+          WARNING: {{ clone_accounts_admin_name }} had a password, from the deployment's own user data;
+          removed it: {{ clone_accounts_admin_name }} logs in with its SSH key only
+
+    # Empty maximum and inactivity fields: never expires, never disabled.
+    - name: Exempt it from password ageing and inactivity
+      when: clone_accounts_admin_ageing != ':'
+      ansible.builtin.command:
+        argv: [chage, -M, '-1', -I, '-1', "{{ clone_accounts_admin_name }}"]
+      changed_when: true
+
+    - name: Look for AccountsService's user files
+      ansible.builtin.stat:
+        path: "{{ clone_accounts_admin_accounts_dir }}"
+      register: clone_accounts_admin_accounts
+
+    - name: Hide it from the login screen
+      when: clone_accounts_admin_accounts.stat.isdir | default(false)
+      block:
+        # Root-only, as AccountsService keeps the files it writes itself.
+        - name: Make it a system account to AccountsService
+          community.general.ini_file:
+            path: "{{ clone_accounts_admin_accounts_dir }}/{{ clone_accounts_admin_name }}"
+            section: User
+            option: SystemAccount
+            value: "true"
+            no_extra_spaces: true
+            owner: root
+            group: root
+            mode: '0600'
+          notify: Restart AccountsService so the login screen reads the change
+
+# Now, not at the end of the play, whose last task is the done marker.
+- name: Restart AccountsService if its file changed
+  ansible.builtin.meta: flush_handlers

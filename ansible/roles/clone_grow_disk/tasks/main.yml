@@ -1,0 +1,21 @@
+---
+# A clone whose disk is larger than the template's gets the extra space:
+# files/grow-disk.sh grows the volume group's partition and physical volume
+# to the end of the disk and hands the free space to /home, /var, /var/log
+# and /var/log/audit by the kickstart's shares, growing each XFS filesystem
+# online. It stays a shell script: growpart, pvresize and lvextend in that
+# order, with the shares' rounding, is what the kickstart's layout needs,
+# and it acts only on space not yet in use, so a second run changes nothing.
+# Run with bash, so a runtime directory mounted noexec does not stop it.
+- name: Hand any unused disk space to the growing volumes
+  ansible.builtin.script:
+    cmd: grow-disk.sh
+    executable: /bin/bash
+  register: clone_grow_disk_run
+  changed_when: >-
+    clone_grow_disk_run.stdout_lines
+    | select('match', 'grow-disk: (grew partition|extended) ') | list | length > 0
+
+- name: Show what the disk growth did
+  ansible.builtin.debug:
+    msg: "{{ clone_grow_disk_run.stdout_lines + clone_grow_disk_run.stderr_lines }}"

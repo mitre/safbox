@@ -1,0 +1,69 @@
+---
+# Every long-running service of the appliance, one task file and one task
+# group per service. Each group's block imports its file statically, so the
+# group's tag and switch reach every task in it (--tags safbox-services-<n>
+# runs the whole service; include_tasks would pass neither). The proxy is
+# last: it fronts whichever applications are switched on.
+
+# The per-install secrets of the services switched on (defaults/main.yml,
+# "Per-install secrets"), for the first-boot play's clone_secrets role, which
+# makes them as podman secrets on each clone's first boot. Part of every
+# service's group that has secrets.
+- name: First-boot secrets
+  when: >-
+    safbox_services_1 | default(true) | bool
+    or safbox_services_2 | default(true) | bool
+    or safbox_services_5 | default(true) | bool
+  tags: [safbox-services-1, safbox-services-2, safbox-services-5]
+  block:
+    - name: Tell first boot which secrets to make
+      ansible.builtin.copy:
+        content: |
+          # Written by the SAFBox template_services role: the podman secrets the first-boot
+          # play's clone_secrets role makes on first boot, from the services switched on
+          # at build (the template_services role's defaults, Per-install secrets).
+          {{ {'secrets': template_services_secrets | map('dict2items')
+                         | map('selectattr', 'key', 'in', ['name', 'hex_bytes', 'suffix', 'description'])
+                         | map('list') | map('items2dict') | list} | to_nice_yaml(indent=2, width=1000) }}
+        dest: "{{ template_services_secrets_file }}"
+        owner: root
+        group: root
+        mode: '0644'
+
+- name: Heimdall
+  when: safbox_services_1 | default(true) | bool
+  tags: [safbox-services-1]
+  block:
+    - name: Heimdall and its PostgreSQL
+      ansible.builtin.import_tasks: heimdall.yml
+
+- name: Vulcan
+  when: safbox_services_2 | default(true) | bool
+  tags: [safbox-services-2]
+  block:
+    - name: Vulcan and its PostgreSQL
+      ansible.builtin.import_tasks: vulcan.yml
+
+- name: Keycloak
+  when: safbox_services_5 | default(true) | bool
+  tags: [safbox-services-5]
+  block:
+    - name: Keycloak and its PostgreSQL
+      ansible.builtin.import_tasks: keycloak.yml
+
+- name: TLS proxy
+  when: safbox_services_3 | default(true) | bool
+  tags: [safbox-services-3]
+  block:
+    - name: The nginx TLS proxy for the enabled applications
+      ansible.builtin.import_tasks: proxy.yml
+
+# Desktop builds only (safbox_desktop_enabled).
+- name: Firefox bookmarks
+  when:
+    - safbox_services_4 | default(true) | bool
+    - safbox_desktop_enabled | default(false) | bool
+  tags: [safbox-services-4]
+  block:
+    - name: Firefox bookmarks for the services on a desktop build
+      ansible.builtin.import_tasks: firefox.yml

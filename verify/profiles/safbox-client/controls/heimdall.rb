@@ -8,6 +8,12 @@ domain = input('domain')
 client = safbox_client(input('address'), domain, input('work_dir'))
 heimdall = client.url('heimdall')
 on = services.include?('heimdall') && services.include?('proxy')
+# read_only, for a box kept for a person: the controls that change the box
+# are skipped, each with the reason. Their read_only only_if comes after
+# the switched-off one, and only when that one passes, because a control's
+# last only_if names its skip: a switched-off service stays Not Applicable
+# under its own reason. The body stops too, before any request.
+read_only = input('read_only')
 
 control 'safbox-client-heimdall-1' do
   impact 1.0
@@ -40,7 +46,9 @@ control 'safbox-client-heimdall-2' do
   title "Heimdall's administrator logs in, uploads an HDF file and reads the evaluation back"
   desc "admin@<domain>, Heimdall's only local account, logs in through the API with the password first boot generated (its first session lasts ten minutes and the UI asks for a new password; the API serves it meanwhile), uploads an HDF results file, and reads the evaluation back with the same profiles. Creates an evaluation on the box."
   only_if('Heimdall or the proxy is switched off', impact: 0.0) { on }
+  only_if('read_only: the box is kept for a person, and this control uploads an evaluation to Heimdall') { !read_only } if on
   next unless on
+  next if read_only
 
   hdf = input('hdf_file')
   readable = !hdf.empty? && File.file?(hdf) && File.readable?(hdf)

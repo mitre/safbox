@@ -1,13 +1,13 @@
 ---
 # SAFBox appliance layer entrypoint.
-# Turns any booted RHEL 10 family (or, untested, Debian family) host with
-# SSH and sudo into a SAFBox. Platform-agnostic by design: nothing here may
-# name a hypervisor or cloud; tests/platform-discipline.sh enforces it.
+# Turns any booted RHEL 10 family host with SSH and sudo into a SAFBox.
+# Platform-agnostic by design: nothing here may name a hypervisor or cloud;
+# tests/platform-discipline.sh enforces it.
 #
 # The build runs this playbook, then checks the result from outside with the
 # validation profiles (verify/profiles/), then runs seal.yml. This playbook is
-# idempotent: a second run reports changed=0 (tests/ansible/idempotence.sh),
-# unless the repositories published newer packages in between.
+# idempotent: a second run reports changed=0, unless the repositories
+# published newer packages in between.
 #
 # group_vars are loaded explicitly so the pins apply regardless of which
 # inventory the caller supplies (the image builder generates its own).
@@ -18,15 +18,14 @@
   vars_files:
     - ../group_vars/all/main.yml
   roles:
-    - role: platform
-    # The site's trusted CA bundles, before any role fetches over TLS.
-    - role: site_config
-    - role: base
-    - role: tools
+    # The OS, the site's trusted CA bundles (before any role fetches over
+    # TLS), the package update and the first-boot play.
+    - role: template_os
+    - role: template_tools
     # The services and the TLS proxy in front of them, one switchable task
     # group each; the proxy fronts whichever applications are on.
-    - role: services
+    - role: template_services
     # Hardening is always the last role: it applies the RHEL 10 STIG over
     # everything the roles above installed, and the outside-in validation
     # and the seal follow it.
-    - role: hardening
+    - role: template_hardening

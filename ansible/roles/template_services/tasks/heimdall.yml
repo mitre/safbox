@@ -1,0 +1,126 @@
+---
+# Heimdall and its PostgreSQL as a podman pod of Quadlet units: task group
+# safbox-services-1, imported by tasks/main.yml, which applies the group's
+# tag and its switch safbox_services_1.
+
+# Pulled at build so a clone starts its pod offline.
+- name: Pull the Heimdall and PostgreSQL images
+  containers.podman.podman_image:
+    name: "{{ item }}"
+    state: present
+  loop:
+    - "{{ template_services_heimdall_db_image }}"
+    - "{{ template_services_heimdall_image }}"
+
+# Read before the units are written, so the restart handler knows
+# whether this is a deployed box (secrets exist) or a build: the secret
+# the database container reads exists once first boot has made Heimdall's.
+- name: Check whether first boot has made Heimdall's secrets
+  ansible.builtin.command:
+    argv:
+      - podman
+      - secret
+      - exists
+      - "{{ (template_services_secrets | selectattr('env.heimdall-db', 'defined') | first).name }}"
+  register: template_services_heimdall_secrets
+  changed_when: false
+  failed_when: template_services_heimdall_secrets.rc not in [0, 1]
+
+# The PostgreSQL settings and access list the database container mounts
+# (defaults/main.yml, PostgreSQL).
+- name: Create the directory of the PostgreSQL configuration
+  ansible.builtin.file:
+    path: "{{ template_services_postgresql_conf_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Install the configuration of Heimdall's PostgreSQL
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "{{ template_services_postgresql_conf_dir }}/heimdall-{{ item }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop:
+    - postgresql.conf
+    - pg_hba.conf
+  vars:
+    template_services_postgresql_app: Heimdall
+    template_services_postgresql_user: "{{ template_services_heimdall_db_user }}"
+  notify:
+    - Restart Heimdall
+
+- name: Install the Heimdall Quadlet units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "{{ template_os_container_quadlet_dir }}/{{ item }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop:
+    - heimdall.network
+    - heimdall.pod
+    - heimdall-db.volume
+    - heimdall-db.container
+    - heimdall.container
+  notify:
+    - Reload systemd units
+    - Restart Heimdall
+
+- name: Generate the units from the Quadlet files
+  ansible.builtin.meta: flush_handlers
+
+# Quadlet-generated units are enabled by their [Install] section through
+# the generator; they are started, never enabled, with systemctl. At
+# build there are no secrets and nothing starts: first boot makes them
+# and the units follow it.
+- name: Start Heimdall on a deployed box
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    state: started
+  loop:
+    - heimdall-pod.service
+    - heimdall-db.service
+    - heimdall.service
+  when: template_services_heimdall_secrets.rc == 0
+
+# The template's build-gate scan results, imported into Heimdall once per
+# box after first boot (defaults/main.yml, template_services_heimdall_scans_*): the
+# clone_heimdall_scans role's settings beside the play, and the unit that runs it.
+- name: Tell the clone_heimdall_scans role where Heimdall is
+  ansible.builtin.copy:
+    content: |
+      # Written by the SAFBox template_services role: the settings of the first-boot
+      # play's clone_heimdall_scans role, which imports the template's build-gate
+      # scan results into Heimdall (safbox-heimdall-scans.service).
+      {{ {'clone_heimdall_scans_url': 'http://127.0.0.1:' ~ template_services_heimdall_loopback_port,
+          'clone_heimdall_scans_admin_email': 'admin@' ~ safbox_domain,
+          'clone_heimdall_scans_admin_secret': (template_services_secrets | selectattr('env.heimdall', 'defined')
+                                          | selectattr('env.heimdall', 'eq', 'ADMIN_PASSWORD') | first).name,
+          'clone_heimdall_scans_service': 'heimdall.service',
+          'clone_heimdall_scans_dir': template_services_heimdall_scans_dir,
+          'clone_heimdall_scans_marker': template_services_heimdall_scans_marker} | to_nice_yaml(indent=2) }}
+    dest: "{{ template_services_heimdall_scans_file }}"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Install the unit that imports the scan results into Heimdall
+  ansible.builtin.template:
+    src: safbox-heimdall-scans.service.j2
+    dest: /etc/systemd/system/safbox-heimdall-scans.service
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Reload systemd units
+
+- name: Reload systemd for the import unit
+  ansible.builtin.meta: flush_handlers
+
+# Enabled, not started: it runs at boot, after Heimdall.
+- name: Import the scan results at boot
+  ansible.builtin.systemd_service:
+    name: safbox-heimdall-scans.service
+    enabled: true

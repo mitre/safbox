@@ -10,6 +10,13 @@
 #
 #   scripts/clone-and-ssh.sh <template-vmid> <clone-vmid> [--keep]
 #
+# --keep leaves the clone running for a person to use, so its release gate
+# runs the client profile read-only (validate.sh --client-read-only): the
+# controls that would change the box are skipped and reported as skipped,
+# and safuser's first Keycloak sign-in, with its forced password change, is
+# left for that person. Without --keep the clone is destroyed afterwards
+# and gets the full gate.
+#
 # Env: PROXMOX_URL, PROXMOX_USERNAME, PROXMOX_TOKEN (or the env file),
 #      SAFBOX_NODE (node holding the template), SAFBOX_POOL (resource pool the
 #      clone joins; authorizes the clone via VM.Allocate on /pool/<name>, which
@@ -40,18 +47,13 @@
 #      Proxmox hashes a plain one with SHA-256; without it first boot
 #      generates safuser's password).
 set -euo pipefail
-ROOT=$(cd "$(dirname "$0")/.." && pwd)
+# shellcheck source=scripts/lib.sh
+. "$(dirname "$0")/lib.sh"
 TEMPLATE_ID=${1:?template vmid}
 CLONE_ID=${2:?clone vmid}
 KEEP=${3:-}
 
-ENV_FILE="${SAFBOX_PROXMOX_ENV:-$HOME/.config/proxmox/packer.env}"
-if [ -f "$ENV_FILE" ]; then
-  set -a
-  # shellcheck disable=SC1090
-  . "$ENV_FILE"
-  set +a
-fi
+load_env
 : "${PROXMOX_URL:?}" "${PROXMOX_USERNAME:?}" "${PROXMOX_TOKEN:?}" "${SAFBOX_NODE:?set SAFBOX_NODE}" "${SAFBOX_POOL:?set SAFBOX_POOL}"
 READY_TIMEOUT=${SAFBOX_READY_TIMEOUT:-600}
 case "$READY_TIMEOUT" in
@@ -243,27 +245,33 @@ for _ in $(seq 1 72); do
     fi
     echo "PASS: safuser logs in with the deployer's key"
     # The passwords first boot generated, for the safbox-client profile:
-    # read over SSH as root may, into a file on this machine readable by
-    # this user only (umask 077), removed on exit, never printed. A switched-
-    # off service has no file, and its value stays empty.
+    # podman secrets on the box, read over SSH as root may, into a file on
+    # this machine readable by this user only (umask 077), removed on exit,
+    # never printed. A switched-off service has no secret, and its value
+    # stays empty.
     CLIENT_DIR=$(mktemp -d)
     CLIENT_INPUTS=$CLIENT_DIR/inputs.yml
-    secret() { # input-name env-file variable
+    secret() { # input-name podman-secret
       local value
-      value=$(timeout 30 ssh "${SSH_OPTS[@]}" "$USER_NAME@$ip" "sudo -n sed -n 's/^$3=//p' /etc/safbox/$2" 2>/dev/null) || value=""
+      value=$(timeout 30 ssh "${SSH_OPTS[@]}" "$USER_NAME@$ip" \
+        "sudo -n podman secret inspect --showsecret --format '{{.SecretData}}' $2" 2>/dev/null) || value=""
       printf "%s: '%s'\n" "$1" "${value//\'/\'\'}"
     }
     {
       echo '---'
-      secret heimdall_admin_password heimdall.env ADMIN_PASSWORD
-      secret vulcan_admin_password vulcan.env VULCAN_ADMIN_PASSWORD
-      secret keycloak_safuser_password keycloak.env SAFUSER_PASSWORD
+      secret heimdall_admin_password heimdall-admin-password
+      secret vulcan_admin_password vulcan-admin-password
+      secret keycloak_safuser_password keycloak-safuser-password
     } > "$CLIENT_INPUTS"
     # Release gate: the box's profiles over SSH and the client profile from
     # here, against what a consumer receives, after first boot.
     site=()
     if [ -n "${SAFBOX_SITE_INPUTS:-}" ]; then site+=(--site-inputs "$SAFBOX_SITE_INPUTS"); fi
     if [ -n "${SAFBOX_SSH_CONFIG:-}" ]; then site+=(--ssh-config "$SAFBOX_SSH_CONFIG"); fi
+    if [ "$KEEP" = --keep ]; then
+      echo "kept clone: the client profile runs read-only, leaving safuser's first Keycloak sign-in (and its password change) for you"
+      site+=(--client-read-only)
+    fi
     "$ROOT/scripts/validate.sh" ${site[@]+"${site[@]}"} --client-inputs "$CLIENT_INPUTS" \
       "$USER_NAME@$ip" "$KEY" release "clone-$CLONE_ID"
     exit 0

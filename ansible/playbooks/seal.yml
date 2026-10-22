@@ -3,10 +3,10 @@
 # residue, delete the build user, and assert the result (the final script
 # checks its own post-conditions). The last step of a
 # build; afterwards the build user no longer exists, so nothing may run over
-# SSH as that user. -e seal_mode=development stops before deleting the build
-# user, host keys and logs (see the seal role defaults).
+# SSH as that user. -e template_seal_mode=development stops before deleting the build
+# user, host keys and logs (see the template_seal role defaults).
 # Destructive: never run it against a host you intend to keep using.
-#   ansible-playbook playbooks/seal.yml -e seal_git_commit="$(git rev-parse HEAD)"
+#   ansible-playbook playbooks/seal.yml -e template_seal_git_commit="$(git rev-parse HEAD)"
 - name: Seal the SAFBox image
   hosts: all
   become: true
@@ -14,4 +14,4 @@
   vars_files:
     - ../group_vars/all/main.yml
   roles:
-    - role: seal
+    - role: template_seal

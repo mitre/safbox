@@ -1,0 +1,64 @@
+---
+- name: Reload systemd units
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+
+- name: Restart journald
+  ansible.builtin.systemd_service:
+    name: systemd-journald.service
+    state: restarted
+  notify: Flush the runtime journal to disk
+
+# journald creates /var/log/journal on a flush, not on a restart. Boot flushes
+# on its own (systemd-journal-flush.service); a running host needs this.
+- name: Flush the runtime journal to disk
+  ansible.builtin.command:
+    argv: [journalctl, --flush]
+  changed_when: true
+
+# Compiles /etc/dconf/db/<name>.d keyfiles into the binary databases that
+# sessions and the login screen read.
+- name: Update the dconf databases
+  ansible.builtin.command:
+    argv: [dconf, update]
+  changed_when: true
+
+# The anchors changed: regenerate the store, then restart the services
+# that read it when they start, if they are running (a deployed box; at
+# build none runs).
+- name: Update the system trust store
+  ansible.builtin.command:
+    argv: "{{ template_os_trust_update }}"
+  changed_when: true
+  listen: Trust store changed
+
+- name: Read which services are running
+  ansible.builtin.service_facts:
+  listen: Trust store changed
+
+- name: Restart the running services that read the trust store
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    state: restarted
+  loop: >-
+    {{ template_os_trust_restart_units
+       | select('in', ansible_facts.services | dict2items
+                      | selectattr('value.state', 'eq', 'running') | map(attribute='key') | list)
+       | list }}
+  listen: Trust store changed
+
+# The package update changed something: reboot only when it needs one.
+# dnf needs-restarting -r exits 1 when the kernel or a core library changed
+# since boot.
+- name: Check whether the update needs a reboot
+  ansible.builtin.command: dnf needs-restarting -r
+  register: template_os_update_needs_restarting
+  changed_when: false
+  failed_when: template_os_update_needs_restarting.rc not in [0, 1]
+  listen: Packages updated
+
+- name: Reboot into the updated system
+  when: template_os_update_needs_restarting.rc == 1
+  ansible.builtin.reboot:
+    msg: SAFBox package update needs a reboot
+  listen: Packages updated

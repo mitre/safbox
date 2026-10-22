@@ -1,0 +1,51 @@
+{#- Firefox enterprise policy (template_services role, task group safbox-services-4).
+    The applications' and the start page's bookmarks need the proxy, as
+    does the homepage, the start page (unlocked: users may change it). The
+    first-run and post-update pages open the start page with the proxy and
+    no page without it ("" is Firefox's value for none), never Firefox's
+    Welcome page. NoDefaultBookmarks drops the distribution's
+    default bookmarks: Firefox's first-run import of them races the
+    Bookmarks policy and loses one of the box's. A bookmark's icon is its
+    application's logo where it has one (template_services_firefox_app_icons), the
+    SAF logo otherwise, as a data: URI, the only kind of Favicon the
+    Bookmarks policy accepts. DisableTelemetry stops Firefox sending Mozilla
+    telemetry (the Firefox STIG asks for it, FFOX-00-000014), and with
+    nothing to send Firefox skips its data-reporting notice: the privacy
+    notice it opens in a background tab on a new profile, or the bar along
+    the top. The empty firstRunURL stops the tab and the notification
+    bypass both tab and bar on their own too, so the notice stays away if
+    the telemetry policy is ever dropped. Both are locked; the Preferences
+    policy allows datareporting.policy. prefs. -#}
+{% set proxy = safbox_services_3 | default(true) | bool %}
+{% set start = ('https://' ~ safbox_domain ~ '/') | to_json %}
+{% set icon = ('data:' ~ template_services_firefox_bookmark_icon_type ~ ';base64,' ~ template_services_firefox_icon.content) | to_json %}
+{
+  "policies": {
+    "DisplayBookmarksToolbar": "always",
+    "NoDefaultBookmarks": true,
+{% if proxy %}
+    "Homepage": {"URL": {{ start }}, "StartPage": "homepage", "Locked": false},
+{% endif %}
+    "OverrideFirstRunPage": {{ start if proxy else '""' }},
+    "OverridePostUpdatePage": {{ start if proxy else '""' }},
+    "DisableTelemetry": true,
+    "Preferences": {
+      "datareporting.policy.firstRunURL": {"Value": "", "Status": "locked"},
+      "datareporting.policy.dataSubmissionPolicyBypassNotification": {"Value": true, "Status": "locked"}
+    },
+    "Bookmarks": [
+{% if proxy %}
+{% for app in template_services_proxy_apps if app.enabled | bool %}
+{% set logo = template_services_firefox_app_icons[app.name] | default(none) %}
+{% set app_icon = ('data:' ~ logo.type ~ ';base64,' ~ (template_services_firefox_app_icon_data[app.name] | b64encode)) | to_json if logo else icon %}
+      {"Title": {{ app.title | to_json }}, "URL": {{ ('https://' ~ app.host ~ app.path | default('/')) | to_json }}, "Placement": "toolbar", "Favicon": {{ app_icon }}},
+{% endfor %}
+{% endif %}
+      {"Title": "SAF", "URL": "https://saf.mitre.org", "Placement": "toolbar", "Favicon": {{ icon }}},
+      {"Title": "SAF Training", "URL": "https://mitre.github.io/saf-training/", "Placement": "toolbar", "Favicon": {{ icon }}}{{ ',' if proxy }}
+{% if proxy %}
+      {"Title": "SAFBox - Start Here", "URL": {{ start }}, "Placement": "toolbar", "Favicon": {{ icon }}}
+{% endif %}
+    ]
+  }
+}

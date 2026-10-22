@@ -1,0 +1,77 @@
+---
+# The services' per-install secrets (Heimdall's, Vulcan's, Keycloak's), made
+# on each clone's first boot and never at build, so no two boxes share one.
+# Each is a podman secret in the root-only secret store, which the Quadlet
+# units give their containers with Secret=; the units start only once their
+# secrets exist. Which secrets to make is the template_services role's list, written
+# at build from the services switched on (clone_secrets_list_file).
+#
+#   - A missing secret's value comes from openssl rand -hex, which draws on
+#     OpenSSL's FIPS DRBG in FIPS mode, at the strength the list gives
+#     (with Vulcan's administrator password's fixed suffix).
+#   - The value reaches podman secret create on its standard input, never
+#     in a process argument; every task that holds one is no_log, so a
+#     failure names the task and nothing more.
+#   - A secret that exists is kept: a retried first boot, or a run of this
+#     role on a deployed box, changes nothing. To replace one, remove it
+#     (podman secret rm) and run the role again (docs/reference/services.md).
+
+- name: Look for the services' secrets list
+  ansible.builtin.stat:
+    path: "{{ clone_secrets_list_file }}"
+  register: clone_secrets_list_stat
+
+- name: Check the template_services role listed the secrets
+  ansible.builtin.assert:
+    that: clone_secrets_list_stat.stat.exists
+    fail_msg: "{{ clone_secrets_list_file }} is missing: the template_services role writes it at build"
+    quiet: true
+
+- name: Read the services' secrets list
+  ansible.builtin.include_vars:
+    file: "{{ clone_secrets_list_file }}"
+    name: clone_secrets_spec
+
+- name: List the podman secrets that exist
+  ansible.builtin.command:
+    argv: [podman, secret, ls, --noheading, --format, "{{ '{{' }}.Name{{ '}}' }}"]
+  register: clone_secrets_existing
+  changed_when: false
+
+- name: Name the secrets to make
+  ansible.builtin.set_fact:
+    clone_secrets_missing: >-
+      {{ clone_secrets_spec.secrets | rejectattr('name', 'in', clone_secrets_existing.stdout_lines) | list }}
+
+- name: Make the missing secrets
+  when: clone_secrets_missing | length > 0
+  block:
+    # One value per missing secret, in the list's order, from one command.
+    - name: Generate a value for each missing secret
+      ansible.builtin.command:
+        argv: >-
+          {{ ['sh', '-c', 'for n; do openssl rand -hex "$n" || exit; done', 'sh']
+             + clone_secrets_missing | map(attribute='hex_bytes') | map('string') | list }}
+      register: clone_secrets_generated
+      changed_when: false
+      no_log: true
+
+    - name: Check a value was generated for each missing secret
+      ansible.builtin.assert:
+        that: clone_secrets_generated.stdout_lines | length == clone_secrets_missing | length
+        fail_msg: >-
+          openssl rand gave {{ clone_secrets_generated.stdout_lines | length }} values
+          for {{ clone_secrets_missing | length }} secrets
+        quiet: true
+
+    - name: Create each missing secret
+      ansible.builtin.command:
+        argv: [podman, secret, create, --label, "description={{ item.description }}", "{{ item.name }}", "-"]
+        stdin: "{{ clone_secrets_generated.stdout_lines[clone_secrets_index] ~ item.suffix | default('') }}"
+        stdin_add_newline: false
+      loop: "{{ clone_secrets_missing }}"
+      loop_control:
+        index_var: clone_secrets_index
+        label: "{{ item.name }}"
+      changed_when: true
+      no_log: true

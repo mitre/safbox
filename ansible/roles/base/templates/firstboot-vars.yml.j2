@@ -1,9 +1,0 @@
----
-# {{ ansible_managed }}
-# The first-boot play's steps that are roles, from the site's switches at
-# build: each runs in name order among the hooks in firstboot.d.
-{% set steps = [] %}
-{% for item in base_firstboot_roles if item.enabled | bool %}
-{%   set _ = steps.append({'step': item.step, 'role': item.role}) %}
-{% endfor %}
-{{ {'firstboot_roles': steps} | to_nice_yaml(indent=2) }}

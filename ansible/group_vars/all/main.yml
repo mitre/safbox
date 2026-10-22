@@ -17,23 +17,6 @@
 # asserts it is gone; the validation profile checks it on clones.
 safbox_build_user: packer
 
-# Default accounts distribution cloud images create (system_info.default_user
-# in cloud.cfg, or the image vendor's own). The kickstart renames the
-# default user admin and stops cloud-init creating any user the deployment
-# does not ask for (users: [] in cloud.cfg.d); the validation profile
-# asserts none of these exists.
-safbox_distro_default_users:
-  - cloud-user
-  - almalinux
-  - rocky
-  - ubuntu
-  - debian
-
-# Install a trivial Quadlet unit that proves the container runtime starts a
-# unit on boot. The acceptance build sets it true; the validation profile
-# checks the unit whenever it is installed.
-safbox_example_quadlet_enabled: false
-
 # A GNOME desktop on the box's console (platform group 7). Off by default:
 # the RHEL 10 STIG allows a GUI only where one is a documented requirement.
 # Setting it true is that decision. It also approves the GUI to the Lockdown
@@ -43,36 +26,50 @@ safbox_example_quadlet_enabled: false
 safbox_desktop_enabled: false
 
 # ---------------------------------------------------------------------------
+# Paths shared by the build's roles and the first-boot play
+# ---------------------------------------------------------------------------
+# The template_os role passes these to the first-boot play (its vars.yml),
+# so the build and every clone agree on them. root's alone, except the
+# play's directory, which any user may read.
+safbox_etc_dir: /etc/safbox
+safbox_state_dir: /var/lib/safbox
+safbox_tls_dir: "{{ safbox_etc_dir }}/tls"
+safbox_firstboot_dir: /usr/local/lib/safbox/firstboot
+# Written as the first-boot play's last task; its absence runs first boot
+# at the next boot.
+safbox_firstboot_done: "{{ safbox_state_dir }}/firstboot.done"
+# One systemd preset file for every SAFBox unit (template_os role), so a
+# clone's First Boot keeps each enabled; the template_hardening role adds
+# usbguard to it.
+safbox_preset_file: /etc/systemd/system-preset/50-safbox.preset
+
+# ---------------------------------------------------------------------------
 # Task group switches
 # ---------------------------------------------------------------------------
-# Every task group in the appliance roles is a block tagged
-# safbox-<role>-<n> and runs only while its switch below is true, in the
-# style of Ansible Lockdown. Turn a group off here or in ansible/local.yml;
-# run or skip groups for one invocation with --tags / --skip-tags. The seal
-# role is tagged but not switchable: it runs whole or not at all.
+# Task groups in the appliance roles are blocks tagged safbox-<area>-<n>,
+# in the style of Ansible Lockdown. The groups below have a switch and run
+# only while it is true; the others (base packages, firewall, container
+# runtime, the first-boot framework and the safbox command) always run,
+# since the box does not work without them. Turn a group off here or in
+# ansible/local.yml; run or skip groups for one invocation with --tags /
+# --skip-tags. The seal role is tagged but not switchable: it runs whole or
+# not at all.
 #
 # The switches take effect when a template is built. Setting one to false
 # and applying the roles again to a box that already has the group does not
-# undo it: no task removes a service's units, image or first-boot hook, and
+# undo it: no task removes a service's units, image or secrets, and
 # nothing reconfigures the services left on to match (the proxy certificate,
 # for one, keeps the names first boot gave it). Build a new template instead.
 
-# platform
-safbox_platform_1: true   # base packages and services
-safbox_platform_2: true   # SELinux enforcing assertion
-safbox_platform_3: true   # firewall allows the base services
-safbox_platform_4: true   # container runtime (podman, Quadlet, registry policy)
-safbox_platform_5: true   # smoke-test container (also needs safbox_example_quadlet_enabled)
+# platform (the template_os role)
 safbox_platform_6: true   # persistent journal
 safbox_platform_7: true   # desktop (also needs safbox_desktop_enabled)
 
-# site_config
+# site_config (the template_os role)
 safbox_site_config_1: true  # site CA bundles in the system trust store (safbox_trust_bundles, DoD by default)
 
-# base
-safbox_base_1: true  # first-boot framework
-safbox_base_2: true  # the safbox command
-safbox_base_3: true  # update every installed package (dnf/apt), rebooting when needed
+# base (the template_os role)
+safbox_base_3: true  # update every installed package, rebooting when needed
 safbox_base_4: true  # the SAF login greeting (message of the day)
 safbox_base_5: true  # safuser: first-boot account with password and key login, sudo that asks for its password
 safbox_base_6: true  # admin (cloud-init's default user): no password, no password ageing, not on the login screen
@@ -94,13 +91,15 @@ safbox_services_5: true   # Keycloak (FIPS strict mode) and its PostgreSQL: sing
 # hardening (the last role, so the STIG covers everything installed before
 # it). Which STIG rules it applies is set by the Lockdown role's own variables
 # (rhel10stig_*), and the rules it switches off are listed in the Lockdown
-# section below.
+# section below. The switch is a troubleshooting lever, to tell whether a
+# fault comes from the STIG: a box built without it fails validation and is
+# not for deployment.
 safbox_hardening_1: true  # apply the RHEL 10 STIG with the pinned Ansible Lockdown role
 
 # ---------------------------------------------------------------------------
 # Site CA bundles
 # ---------------------------------------------------------------------------
-# CA bundles the site_config role installs in the system trust store (task
+# CA bundles the template_os role installs in the system trust store (task
 # group safbox-site-config-1), which the host and the Heimdall and Vulcan
 # containers then trust. The DoD PKI bundle by default (owner decision,
 # 2026-10-16): every build downloads it from dl.dod.cyber.mil. Set the list
@@ -159,7 +158,7 @@ safbox_firewall_zone: "{{ 'drop' if safbox_hardening_1 | bool else 'public' }}"
 # section.
 
 # The role's local fact file records its run time, so it is rewritten on
-# every run and a second run is never clean. The hardening role writes its
+# every run and a second run is never clean. The template_hardening role writes its
 # own record of what was applied instead (/usr/local/share/safbox/hardening).
 create_benchmark_facts: false
 
@@ -177,7 +176,7 @@ create_benchmark_facts: false
 # ("Lockdown's disruptive changes") lists what it adds and costs.
 rhel10stig_disruption_high: true
 
-# SAFBox's PAM stacks are made by authselect (the hardening role enables
+# SAFBox's PAM stacks are made by authselect (the template_hardening role enables
 # its with-faillock feature). Told so, Lockdown's faillock rules
 # (RHEL-10-600600, 600610) only check that feature and enable it if
 # missing; left at Lockdown's default (false), they edit the
@@ -248,18 +247,18 @@ rhel10stig_200080: "{{ not (safbox_desktop_enabled | bool) }}"
 rhel10stig_000510: false  # RHEL-10-000510 SV-280935 disk encryption: N/A in the overlay
 # RHEL-10-200562 SV-280964 USBGuard policy: Lockdown task harmful: once any rule exists it replaces
 # the rules with a policy of the devices attached at that moment (its condition is inverted);
-# the hardening role writes a hub-only rule
+# the template_hardening role writes a hub-only rule
 rhel10stig_200562: false
 rhel10stig_200601: false  # RHEL-10-200601 SV-280970 fapolicyd: N/A in the overlay
 rhel10stig_200602: false  # RHEL-10-200602 SV-280971 fapolicyd policy: N/A in the overlay
 # RHEL-10-200631, 200632, 200634, 200635 SV-280978, 280979, 280981, 280982 AIDE configuration:
-# Lockdown task fails: its aide.conf is not valid AIDE syntax (@define); the hardening role writes aide.conf
+# Lockdown task fails: its aide.conf is not valid AIDE syntax (@define); the template_hardening role writes aide.conf
 rhel10stig_200631: false
 rhel10stig_200632: false
 rhel10stig_200634: false
 rhel10stig_200635: false
 # RHEL-10-200633 SV-280980 daily AIDE check: Lockdown task fails: writes a crontab line into
-# /etc/cron.daily, which runs scripts; the hardening role writes the daily check
+# /etc/cron.daily, which runs scripts; the template_hardening role writes the daily check
 rhel10stig_200633: false
 # RHEL-10-200642 SV-280985 log forwarding: N/A in the overlay until a site sets safbox_remote_log_server
 rhel10stig_200642: "{{ safbox_remote_log_server | length > 0 }}"
@@ -291,7 +290,7 @@ rhel10stig_600010: false  # RHEL-10-600010 SV-281167 boot loader superuser: N/A 
 rhel10stig_600415: false  # RHEL-10-600415 SV-281195 root lockout: N/A in the overlay
 rhel10stig_600560: false  # RHEL-10-600560 SV-281211 sudo NOPASSWD: admin keeps it, N/A in the overlay
 # RHEL-10-600710 SV-281219 pam_unix SHA-512: Lockdown task fails: rewrites only lines that already
-# have sha512, adding a space on every run; the hardening role's authselect profile hashes with SHA-512
+# have sha512, adding a space on every run; the template_hardening role's authselect profile hashes with SHA-512
 rhel10stig_600710: false
 # RHEL-10-600730 SV-281221 stored password hashes: Lockdown task harmful: its grep -v '$6$' excludes
 # nothing, so a later run locks every account with a SHA-512 password
@@ -300,10 +299,10 @@ rhel10stig_600730: false
 rhel10stig_700020: false
 rhel10stig_700410: false  # RHEL-10-700410 SV-281250 sudo SELinux context: N/A in the overlay
 # RHEL-10-700860 SV-281289 Bluetooth: Lockdown task fails: blacklists firewire-core, not bluetooth;
-# the hardening role blacklists bluetooth
+# the template_hardening role blacklists bluetooth
 rhel10stig_700860: false
 # RHEL-10-700950 SV-281298 Ctrl-Alt-Delete burst: Lockdown task fails: its drop-in has no .conf
-# suffix, so systemd ignores it; the hardening role writes its own
+# suffix, so systemd ignores it; the template_hardening role writes its own
 rhel10stig_700950: false
 # RHEL-10-701150 SV-281317 core dump size: Lockdown task fails: writes coredump.conf outside its section
 rhel10stig_701150: false
@@ -324,12 +323,6 @@ rhel10stig_800210: false  # RHEL-10-800210 SV-281353 IPv4 forwarding: N/A in the
 # multi-architecture index, as returned in the Docker-Content-Digest header:
 #   curl -sI -H 'Accept: application/vnd.docker.distribution.manifest.list.v2+json' \
 #     https://<registry>/v2/<name>/manifests/<tag>
-
-# Container runtime smoke test image (the example Quadlet unit).
-safbox_image_pause:
-  name: registry.k8s.io/pause
-  tag: 3.10.2
-  digest: sha256:f548e0e8e3dc1896ca956272154dde3314e8cc4fde0a57577ee9fa1c63f5baf4
 
 # Service images. Each is the image the upstream compose file names, at an
 # exact release, unless noted. Bump deliberately, reviewing the Quadlet unit
@@ -368,7 +361,7 @@ safbox_image_postgresql:
   digest: sha256:130f30a4966d04e7573f863790219152755c0706600437ce7005a68ed5780349
 
 # Keycloak (quay.io/keycloak/keycloak:26.8.1), the base of the FIPS image
-# the services role builds at image build (safbox-services-5): Keycloak's
+# the template_services role builds at image build (safbox-services-5): Keycloak's
 # FIPS guide (https://www.keycloak.org/server/fips) adds the Bouncy Castle
 # FIPS jars below to it. Bump with the jars, to the versions the new
 # release's pom.xml names.
@@ -441,7 +434,7 @@ safbox_trust_bundle_dod:
 # vendor's metadata (CINC: https://omnitruck.cinc.sh/stable/<product>/metadata)
 # and were verified against a download.
 
-# CINC Auditor ships on the box as an assessment tool (the tools role). This
+# CINC Auditor ships on the box as an assessment tool (the template_tools role). This
 # is the RHEL 10 family build. Hosts with unusual needs (for example a CPU
 # older than the x86-64-v3 level RHEL 10 builds assume) override the whole
 # entry in a local vars file; see "Site overrides" in the build guide.
@@ -485,7 +478,7 @@ safbox_tool_ansible_collections:
 # ---------------------------------------------------------------------------
 # The Ansible Lockdown RHEL 10 STIG role (hardening group 1), installed on the
 # build runner from ansible/requirements.yml by the commit its release tag
-# names. The hardening role
+# names. The template_hardening role
 # refuses to run any other installed version. Release 1.1.0 targets the
 # RHEL 10 STIG V1R1, as does the MITRE baseline the STIG overlay pins
 # (verify/profiles/safbox-rhel10-stig-overlay); both cover the same 434 requirements.

@@ -1,0 +1,27 @@
+{% from 'secrets.j2' import secret_conditions with context %}
+# {{ ansible_managed }}
+# The heimdall pod: Heimdall and its PostgreSQL share one network namespace.
+# It publishes Heimdall on the loopback address only, so it is reachable
+# only through the TLS proxy; the database is published nowhere. Starts
+# only after first boot has made Heimdall's secrets.
+[Unit]
+Description=Heimdall pod (Heimdall and its PostgreSQL)
+After=safbox-firstboot.service
+
+[Pod]
+PodName=heimdall
+Network=heimdall.network
+PublishPort=127.0.0.1:{{ template_services_heimdall_loopback_port }}:3000
+{% if template_services_keycloak_enabled | bool %}
+# Inside the pod 127.0.0.1 is the pod itself, where nothing serves
+# Keycloak's name: podman's host-gateway is the host's address on the
+# pod's network, where the TLS proxy answers on 443, so Heimdall reaches
+# Keycloak at the issuer URL the browser uses.
+AddHost={{ template_services_keycloak_host }}:host-gateway
+{% endif %}
+
+[Service]
+# Started only once first boot has made every secret its containers read.
+{{ secret_conditions(['heimdall', 'heimdall-db']) }}
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,26 @@
+<!-- {{ ansible_managed }} -->
+<!-- The console display's default resolution for the login screen and every session (GNOME's system monitors.xml, format 2). -->
+<monitors version="2">
+  <configuration>
+    <layoutmode>physical</layoutmode>
+    <logicalmonitor>
+      <x>0</x>
+      <y>0</y>
+      <scale>1</scale>
+      <primary>yes</primary>
+      <monitor>
+        <monitorspec>
+          <connector>{{ template_os_desktop_monitor_output.connector }}</connector>
+          <vendor>{{ template_os_desktop_monitor_output.vendor }}</vendor>
+          <product>{{ template_os_desktop_monitor_output.product }}</product>
+          <serial>{{ template_os_desktop_monitor_output.serial }}</serial>
+        </monitorspec>
+        <mode>
+          <width>{{ template_os_desktop_console_mode.width }}</width>
+          <height>{{ template_os_desktop_console_mode.height }}</height>
+          <rate>{{ template_os_desktop_console_mode.rate }}</rate>
+        </mode>
+      </monitor>
+    </logicalmonitor>
+  </configuration>
+</monitors>

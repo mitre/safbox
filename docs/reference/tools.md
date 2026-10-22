@@ -1,6 +1,6 @@
 # Tools on the box
 
-The `tools` role installs each tool at the version pinned in
+The `template_tools` role installs each tool at the version pinned in
 `ansible/group_vars/all/main.yml`; `safbox status` on the box prints them.
 To change a pin, update the version there (and, for a downloaded
 artifact, its sha256), and

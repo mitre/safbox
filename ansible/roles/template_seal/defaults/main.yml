@@ -1,0 +1,102 @@
+---
+# template_seal role: the last play of a build. Records what the image is, removes
+# every piece of per-instance identity and build-time residue so each clone
+# is unique, deletes the build user, and verifies its own result.
+# After a full seal the build user does not exist; run nothing afterwards.
+
+# full: a release template. Every group runs, ending with the deletion of
+# the build user, host keys and logs and the check of the result.
+# development: records the build and scrubs instance identity and residue
+# (groups 1 and 2) so clones boot as new instances, but keeps the build user,
+# its key and sudo rule, the SSH host keys and the logs, so the template can
+# be inspected. Not distributable; Packer tags such templates 'unsealed'.
+# Not verified either: the post-conditions are finalize's, so they run in
+# full mode only (an owner decision, safbox-m5f.24).
+template_seal_mode: full
+
+# Build user created by the install layer, and its sudo drop-in, named the
+# way the install layer names it: /etc/sudoers.d/90-<user>.
+template_seal_build_user: "{{ safbox_build_user }}"
+template_seal_build_user_sudoers: "/etc/sudoers.d/90-{{ template_seal_build_user }}"
+
+# cloud-init writes sudo rules for the users it creates here. In a template
+# it can only hold rules for the build VM's own boot; a clone writes its own.
+template_seal_cloud_init_sudoers: /etc/sudoers.d/90-cloud-init-users
+
+# Written before anything is scrubbed. Not a secret, and read by `safbox
+# status` for any user, so it lives outside the root-only /etc/safbox. The build
+# runner passes the commit it built from: -e template_seal_git_commit=$(git rev-parse HEAD)
+template_seal_git_commit: unknown
+template_seal_build_info_path: /usr/local/share/safbox/build-info
+
+# The build gate's results (scripts/validate.sh --results-dir), which the
+# template carries for first boot to import into Heimdall: the directory on
+# the runner that holds <profile>.json for each profile below (Packer passes
+# build_scans_dir; empty installs nothing), the build run they belong to
+# (scripts/build.sh's run ID), and where they go, root's alone, with a
+# manifest.json naming the run, the commit and each scan's profile, file,
+# date (when the scan ended: the file's modification time on the runner)
+# and sha256.
+template_seal_scans_src: ""
+template_seal_build_run_id: unknown
+template_seal_scans_dir: /usr/local/share/safbox/scans
+template_seal_scans_profiles:
+  - safbox
+  - safbox-rhel10-stig-overlay
+
+# Packages the install layer installs without a version pin; their exact
+# builds go into the build record until the content manifest pins them:
+# cloud-init and a guest agent for each hypervisor the image runs on.
+template_seal_unpinned_packages:
+  - cloud-init
+  - qemu-guest-agent
+  - open-vm-tools
+
+# Per-install state owned by first boot. Removed so the clone runs first
+# boot fresh and no build-time secret can survive (none should exist).
+template_seal_firstboot_state:
+  - "{{ safbox_firstboot_done }}"
+  # An AIDE database describes the box it was made on; a clone makes its own
+  # after first boot (template_hardening role). None is made at build; any that is
+  # would describe the build VM.
+  - /var/lib/aide/aide.db.gz
+  - /var/lib/aide/aide.db.new.gz
+# The start page's service status from the build VM (template_services role); a
+# clone's status timer writes its own within a minute of booting.
+template_seal_build_status_files:
+  - /etc/safbox-proxy/html/status.json
+template_seal_env_file_dir: "{{ safbox_etc_dir }}"
+template_seal_env_file_pattern: '*.env'
+# The services' secrets, which first boot makes as podman secrets: the seal
+# removes every one, then asserts podman lists none and its file driver's
+# store is empty.
+template_seal_podman: /usr/bin/podman
+template_seal_podman_secret_store: /var/lib/containers/storage/secrets/filedriver/secretsdata.json
+# The TLS proxy's certificate and key, and the local CA that signs them,
+# which first boot generates (the template_services role), with the CA's copy in the
+# system trust store (template_seal_proxy_ca_anchor, vars/main.yml). The
+# template must hold none: a key baked in would be shared by every clone.
+template_seal_tls_paths:
+  - "{{ safbox_tls_dir }}"
+  - "{{ safbox_etc_dir }}/ca"
+  - "{{ template_seal_proxy_ca_anchor }}"
+
+# Files cloud-init wrote for the build VM's own instance that `cloud-init
+# clean` leaves behind: root's authorized_keys (the users' keys behind a
+# "please log in as" prefix). A clone writes its own.
+template_seal_cloud_init_instance_files:
+  - /root/.ssh/authorized_keys
+
+# Files root's own tools leave in its home during the build.
+template_seal_root_tool_residue:
+  - /root/.ansible
+  - /root/.cache
+
+# Temporary directories the scrub empties, and what it leaves: systemd's
+# private /tmp of running services. A full seal then asserts the same
+# directories hold nothing else (in the scrub, not finalize: finalize runs
+# from Ansible's own payload under /tmp).
+template_seal_tmp_dirs:
+  - /tmp
+  - /var/tmp
+template_seal_tmp_keep: 'systemd-private-*'

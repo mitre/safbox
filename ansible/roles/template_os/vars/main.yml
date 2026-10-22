@@ -1,0 +1,208 @@
+---
+# RHEL 10 family (Rocky Linux 10, AlmaLinux 10) names.
+
+# ---------------------------------------------------------------------------
+# Platform
+# ---------------------------------------------------------------------------
+template_os_packages:
+  - chrony
+  - sudo
+  - openssh-server
+  - firewalld
+  - qemu-guest-agent
+  - cloud-init
+  - python3-libselinux
+  # SELinux policy management from Ansible (seboolean, persistent).
+  - python3-libsemanage
+  - python3-firewall
+template_os_services_enabled:
+  - sshd
+  - chronyd
+  - firewalld
+  - qemu-guest-agent
+  - cloud-init
+template_os_firewalld_services:
+  - ssh
+template_os_container_packages:
+  - podman
+  - containers-common
+# The host's extracted CA trust store, mounted read-only into the service
+# containers (Red Hat UBI images, which read it at the same path).
+template_os_container_trust_volume: /etc/pki/ca-trust/extracted:/etc/pki/ca-trust/extracted:ro
+
+# ---------------------------------------------------------------------------
+# Desktop (task group 7)
+# ---------------------------------------------------------------------------
+# The distribution's "Server with GUI" environment group, the same set the
+# kickstart's graphical-server-environment installs.
+template_os_desktop_packages:
+  - "@graphical-server-environment"
+template_os_desktop_display_manager: gdm
+
+# Packages the desktop's comps groups would install that the STIG removes:
+# @standard brings tuned, Lockdown removes it (RHEL-10-200040), and every
+# run would reinstall it. Excluded in dnf's configuration on desktop builds,
+# each with the STIG rule that removes it.
+template_os_desktop_package_excludes:
+  - package: tuned
+    stig_id: RHEL-10-200040
+
+# SAF branding. Each file is in files/desktop/, with where it came from.
+#
+# The wallpapers, listed for GNOME Settings; the navy one is a new user's
+# default. All three come from the safbox repository, branch wallpaper, at
+# commit 6cec81d41dda913f31682b8003c165fe0475aefe.
+template_os_desktop_background_dir: /usr/share/backgrounds/safbox
+template_os_desktop_backgrounds:
+  - name: SAF navy
+    file: desktop/saf-navy-3440x1440.png
+    dest: "{{ template_os_desktop_background_dir }}/saf-navy-3440x1440.png"
+  - name: SAF dark
+    file: desktop/saf-dark-3440x1440.png
+    dest: "{{ template_os_desktop_background_dir }}/saf-dark-3440x1440.png"
+  - name: SAF light
+    file: desktop/saf-light-3440x1440.png
+    dest: "{{ template_os_desktop_background_dir }}/saf-light-3440x1440.png"
+template_os_desktop_background_default: saf-navy-3440x1440.png
+
+# The login screen's logo: the SAF shield from mitre/saf-site,
+# docs/public/icons/saf-logo.svg at commit
+# b795b9c2b8d89f1686797973bcc44c5274eb1ea1, transparent. GDM loads SVG
+# through gdk-pixbuf's librsvg loader, so it is installed as is.
+template_os_desktop_logo:
+  file: desktop/saf-logo.svg
+  dest: /usr/share/pixmaps/saf-logo.svg
+
+# A new user's profile picture: the same SAF logo on white, 256x256,
+# rendered once from the logo above with
+#   magick -background white -density 600 saf-logo.svg -resize 208x208 \
+#     -gravity center -extent 256x256 -flatten saf-avatar.png
+template_os_desktop_avatar:
+  file: desktop/saf-avatar.png
+  dest: /usr/share/pixmaps/saf-avatar.png
+
+# The terminal (Ptyxis) palette "SAF Navy", written for SAFBox: the navy
+# wallpaper's colour as the background, the logo's blue for the cursor.
+# Ptyxis reads palettes only from the user's own data directory, so it goes
+# into /etc/skel, which every account created afterwards starts from.
+template_os_desktop_palette:
+  file: desktop/saf.palette
+  dest: /etc/skel/.local/share/org.gnome.Ptyxis/palettes/saf.palette
+  mode: "0600"
+
+# Ptyxis keeps its profiles in dconf under an id. A new user's profile list
+# defaults to this one profile, whose palette is SAF Navy; without it Ptyxis
+# creates a profile with a random id on first start, which no system
+# default can name.
+template_os_desktop_terminal_profile: a64f2cd413c97b9f9cdb8f7438946c23
+
+# A new user's dash: GNOME Shell's default favourites (gnome-shell 49's
+# org.gnome.shell favorite-apps schema default, as EL10 ships it, in its
+# order) with Firefox's desktop file put first. The distribution's
+# Firefox is the RPM, whose desktop file is firefox.desktop; the default
+# names only Firefox's Flatpak (org.mozilla.Firefox.desktop), so without
+# this Firefox is missing from the dash. The shell skips an entry whose
+# app is not installed.
+template_os_desktop_favorite_apps:
+  - firefox.desktop
+  - org.mozilla.Firefox.desktop
+  - org.gnome.Calendar.desktop
+  - org.gnome.Nautilus.desktop
+  - org.gnome.Software.desktop
+  - org.gnome.Ptyxis.desktop
+  - org.gnome.TextEditor.desktop
+  - org.gnome.Calculator.desktop
+
+# dconf system databases: "local", which every user's profile
+# (/etc/dconf/profile/user) reads, and "gdm", which the login screen's
+# profile (/usr/share/dconf/profile/gdm) reads. Every setting SAFBox puts
+# there is a default, never a lock, so users may change it.
+template_os_desktop_dconf_user_db: local
+template_os_desktop_dconf_gdm_db: gdm
+
+# AccountsService gives every user without their own settings the values of
+# its user templates (standard, or administrator for wheel members), from
+# /etc/accountsservice/user-templates/ before the distribution's
+# /usr/share/accountsservice/user-templates/. SAFBox's copies set the
+# profile picture.
+template_os_desktop_user_templates: [standard, administrator]
+
+# Every branding file the role installs.
+template_os_desktop_assets: >-
+  {{ template_os_desktop_backgrounds
+     + [template_os_desktop_logo, template_os_desktop_avatar, template_os_desktop_palette] }}
+
+# The console display's default resolution, for the login screen and
+# every session: GNOME's system-wide monitor configuration, which a user's
+# own (Settings > Displays, ~/.config/monitors.xml) overrides. The console's
+# display adapter prefers 1024x768 until a console client sends its window
+# size, and GNOME cannot follow the client's window on it: the adapter
+# never marks its outputs as resized by the host (hotplug_mode_update), so
+# on each resize GNOME restores an earlier layout about as often as it
+# takes the new size. A fixed size is the dependable default; the client
+# scales it to its window. The display is the adapter's first output,
+# which has no EDID, so GNOME reads its vendor, product and serial as
+# "unknown".
+template_os_desktop_monitors: /etc/xdg/monitors.xml
+template_os_desktop_monitor_output:
+  connector: Virtual-1
+  vendor: unknown
+  product: unknown
+  serial: unknown
+
+# ---------------------------------------------------------------------------
+# Site CA bundles: p11-kit's shared trust store (update-ca-trust(8))
+# ---------------------------------------------------------------------------
+
+# OpenSSL reads and converts the bundles; unarchive needs unzip for a zip.
+template_os_trust_packages:
+  - ca-certificates
+  - openssl
+  - unzip
+
+# Administrator-added trust anchors; update-ca-trust extract regenerates the
+# bundles under /etc/pki/ca-trust/extracted from them.
+template_os_trust_anchor_dir: /etc/pki/ca-trust/source/anchors
+template_os_trust_anchor_ext: pem
+template_os_trust_update: [update-ca-trust, extract]
+
+# The extracted store as a hashed directory, where the policy check finds
+# the issuers of a bundle certificate the bundle itself does not carry.
+template_os_trust_system_capath: /etc/pki/ca-trust/extracted/pem/directory-hash
+
+# The system crypto policy's OpenSSL back end, which names the security
+# level (@SECLEVEL) TLS enforces; the FIPS and DEFAULT policies set 2.
+template_os_trust_policy_file: /etc/crypto-policies/back-ends/opensslcnf.config
+
+# The formats a bundle may come in, each with the command that prints its
+# certificates as PEM; the bundle file is appended. A format not listed
+# here is refused before anything is fetched.
+#   pem        one or more PEM certificates
+#   der        one DER certificate
+#   pkcs7-der  a PKCS#7 (.p7b) bundle in DER, as DISA publishes
+#   pkcs7-pem  a PKCS#7 bundle in PEM
+template_os_trust_convert:
+  pem: [openssl, storeutl, -certs]
+  der: [openssl, storeutl, -certs]
+  pkcs7-der: [openssl, pkcs7, -inform, DER, -print_certs, -in]
+  pkcs7-pem: [openssl, pkcs7, -inform, PEM, -print_certs, -in]
+
+# The keys a bundle entry may carry; any other key is refused rather than
+# ignored. version is informational (the pinned DoD bundle records DISA's).
+template_os_trust_entry_keys: [name, url, path, sha256, format, member, version]
+
+# ---------------------------------------------------------------------------
+# First boot and safuser
+# ---------------------------------------------------------------------------
+
+# openssl supplies `openssl rand` for first-boot secret generation; growpart
+# is for the first-boot play's clone_grow_disk role.
+template_os_firstboot_packages:
+  - openssl
+  - bash
+  - cloud-utils-growpart
+
+# pwmake and pwscore generate a password that meets the password quality
+# policy (the first-boot play's clone_accounts role).
+template_os_safuser_packages:
+  - libpwquality

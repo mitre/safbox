@@ -1,0 +1,6 @@
+#!/bin/sh
+# Stub saf (the SAF CLI) for tests/scripts/validate.bats: records each
+# run's arguments, one line per run, in $STUB_DIR/saf.calls; every
+# threshold is met.
+printf '%s\n' "$*" >> "$STUB_DIR/saf.calls"
+exit 0

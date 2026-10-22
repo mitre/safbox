@@ -14,7 +14,9 @@ export default defineConfig({
     },
   },
   srcDir: '../docs',
-  srcExclude: ['upstream/**', 'adrs/**'],
+  // The ADR and the owner's notes (research, spikes, upstream drafts) are
+  // not part of the site the box serves.
+  srcExclude: ['adrs/**', 'research/**', 'spikes/**', 'upstream/**'],
   title: 'SAFBox',
   description: 'The MITRE Security Automation Framework in a box',
   lang: 'en-US',

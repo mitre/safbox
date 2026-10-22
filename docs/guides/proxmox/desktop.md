@@ -11,9 +11,10 @@ It matters most for a SAFBox built with the desktop
 (`safbox_desktop_enabled`, see "A desktop build" in
 [the appliance reference](../../reference/appliance.md#a-desktop-build)), which boots to the
 GNOME login screen: compared with the browser's noVNC console, SPICE is
-quicker on a full GNOME desktop, and with the guest's SPICE agent
-(`spice-vdagent`, installed with the desktop) the desktop can follow the
-client window's size. A headless SAFBox's text console works the same way.
+quicker on a full GNOME desktop, it scales the desktop to its window (see
+[Console size](#console-size)), and with the guest's SPICE
+agent (`spice-vdagent`, installed with the desktop) it shares the
+clipboard. A headless SAFBox's text console works the same way.
 
 ## Build it with the desktop
 
@@ -106,6 +107,36 @@ directly.
    when none was set, the one first boot generated (`sudo cat
    /etc/safbox/safuser.env` as `admin` over SSH). See
    [Accounts on a clone](build.md#accounts-on-a-clone).
+
+5. In Firefox, sign in to Heimdall or Vulcan through Keycloak as
+   `safuser`, with its Keycloak password (its own, not the login
+   password; see
+   [Accounts in the applications](../../reference/accounts.md#accounts-in-the-applications)).
+   On a clone kept by `scripts/clone-and-ssh.sh --keep` this is the
+   first Keycloak sign-in, so Keycloak asks for a new password before it
+   goes on: the release gate ran its client checks read-only and left that
+   sign-in for you (see
+   [Build and prove](build.md#_8-build-and-prove)). On a clone the gate
+   ran in full, the password was already changed and the generated one
+   no longer works.
+
+### Console size
+
+The login screen and the desktop come up at 1920x1080, and `remote-viewer`
+scales the picture to its window: resize, maximize or full-screen the
+window and the picture scales with it. The desktop itself does not change
+size with the window. GNOME cannot follow a SPICE client's window on the
+qxl display: the guest receives each new window size, but the display
+driver does not mark it as a resize from the host, so GNOME treats it as
+a monitor plugged in again and restores an earlier layout about as often
+as it takes the new size (see "A desktop build" in
+[the appliance reference](../../reference/appliance.md#a-desktop-build)).
+A fixed size, set at build, is what SAFBox ships instead.
+
+To use another size, choose it in **Settings → Displays** on the box;
+GNOME keeps it for that user (`~/.config/monitors.xml`). The SPICE client
+needs nothing enabled for this. Its "resize guest to window" setting
+(on in `remote-viewer`) makes no lasting difference and can stay as it is.
 
 The connection goes from your workstation to the node's SPICE proxy on TCP
 port **3128**, not to the VM. If `remote-viewer` reports that it cannot
