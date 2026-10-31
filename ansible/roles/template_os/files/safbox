@@ -167,11 +167,42 @@ services() {
       state="not installed"
     fi
     row "$label" "${state:-unknown}"
+    if [[ "$unit" == keycloak.service && "$state" != "not installed" ]]; then
+      keycloak_readiness "$state"
+    fi
   done <<'UNITS'
 Heimdall|heimdall.service
 Vulcan|vulcan.service
+Keycloak|keycloak.service
 TLS proxy|safbox-proxy.service
 UNITS
+}
+
+# Every sign-in needs Keycloak to serve the safbox realm, so its readiness
+# is asked of the realm itself, live: the unit turns active once
+# /health/ready first answers and stays active if Keycloak stops serving
+# later. /health/ready is on the management port, which only the pod's own
+# network reaches, so any user asks the realm's OpenID configuration, the
+# first request every sign-in makes, on the HTTP port the keycloak pod
+# publishes on the loopback address for the proxy. The port is read from
+# the pod's unit, which any user may read.
+keycloak_readiness() {
+  local state=$1 port url
+  if [[ "$state" != active ]]; then
+    row "Keycloak readiness" "not checked (Keycloak is ${state:-unknown})"
+    return 0
+  fi
+  port=$(systemctl cat keycloak-pod.service 2>/dev/null | sed -n 's/.*127\.0\.0\.1:\([0-9]*\):8080.*/\1/p' | head -n 1 || true)
+  if [[ -z "$port" ]]; then
+    row "Keycloak readiness" "unknown (no published port in keycloak-pod.service)"
+    return 0
+  fi
+  url="http://127.0.0.1:${port}/realms/safbox/.well-known/openid-configuration"
+  if curl -fsS -o /dev/null --max-time 5 "$url" 2>/dev/null; then
+    row "Keycloak readiness" "ready (realm safbox answers on 127.0.0.1:${port})"
+  else
+    row "Keycloak readiness" "not ready (realm safbox does not answer on 127.0.0.1:${port})"
+  fi
 }
 
 build_info() {

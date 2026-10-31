@@ -40,6 +40,7 @@ directory of its own:
 | `tests/scripts/build-cleanup.bats` | however a run ends (token leak, failed Packer, a signal), the key is deleted |
 | `tests/scripts/clone-and-ssh.bats` | `scripts/clone-and-ssh.sh`: an owner-only credentials file, build keys offered, when the release gate runs, a kept clone's read-only client gate, extra SSH keys accepted or refused |
 | `tests/scripts/validate.bats` | `scripts/validate.sh`: the client profile's inputs and threshold, full or read-only (`--client-read-only`), and the results directory |
+| `tests/scripts/vm-ids.bats` | the VM ID `build.sh` gives the template and `clone-and-ssh.sh` the clone: an explicit one, else the first free ID in the configured range (the stub API), a full range, no configuration; every script's `--help` names every option and variable it reads, and `scripts/example.env` offers each variable |
 | `tests/secrets/gitleaks-rules.bats` | the `.gitleaks.toml` rules catch Proxmox token secrets and pass the placeholders |
 
 The `tests/scripts/` suites run the scripts in a scratch copy of the

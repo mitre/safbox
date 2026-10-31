@@ -4,7 +4,11 @@
 
 proxmox_node = "your-node"
 proxmox_pool = "your-pool"
-vm_id        = 123456 # any free ID the build account may allocate; keep your real IDs out of git
+# The template's VM ID. Rather than fixing one here, set a range in the
+# env file (SAFBOX_TEMPLATE_IDS=FIRST-LAST) and scripts/build.sh takes the
+# first ID in it that is free on the cluster; a fixed ID fails as soon as a
+# template holds it. scripts/build.sh --help says which wins.
+# vm_id      = 123456
 
 # Rocky 10 for release; AlmaLinux 10 x86_64_v2 for hosts without AVX2.
 iso_file     = "local:iso/Rocky-10-latest-x86_64-minimal.iso"

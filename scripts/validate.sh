@@ -1,52 +1,75 @@
 #!/usr/bin/env bash
-# Validate a SAFBox from the outside: scan it over SSH with CINC Auditor using
-# the profiles in verify/profiles/ (safbox, safbox-rhel10-stig-overlay), and
-# check each result against its SAF CLI threshold in verify/thresholds/. In
-# the release context, with --client-inputs, also run the safbox-client
-# profile on this machine against the box's names at its address, as a
-# browser here would.
-#
-#   scripts/validate.sh [--site-inputs FILE] [--ssh-config FILE] \
-#     [--client-inputs FILE [--client-read-only]] [--results-dir DIR] <user@host[:port]> <private-key> <build|release> [label]
-#
-#   Every scan first gets the guest agents the answer file installs, by
-#   hypervisor (packer/answerfiles/el10/guest-agents.yml); the box's
-#   profiles check the one for the hypervisor they detect.
-#   build    the build VM before the seal (verify/inputs/build.yml)
-#   release  a deployed clone of a sealed template (the profiles' defaults)
-#   --site-inputs FILE    a site's inputs, layered after the context's
-#   --ssh-config FILE     the SSH client config CINC Auditor reads instead of
-#                         ~/.ssh/config and /etc/ssh/ssh_config; /dev/null
-#                         reads none
-#   --client-inputs FILE  release only: the box's passwords for the
-#                         safbox-client profile, a .yml or .yaml inputs
-#                         file of mode 0600 (scripts/clone-and-ssh.sh writes
-#                         one). That profile signs in, uploads the safbox
-#                         profile's results to Heimdall, creates a Vulcan
-#                         project and changes safuser's Keycloak password,
-#                         so give it for a clone only, never an appliance in
-#                         use.
-#   --client-read-only    with --client-inputs, for a clone kept for a person:
-#                         the client profile skips its controls that change
-#                         the box (read_only), each reported as skipped with
-#                         the reason, so safuser's first Keycloak sign-in is
-#                         left for that person, and its results are held to
-#                         client-release-read-only.yml instead.
-#   --results-dir DIR     also keep the box profiles' results (safbox and
-#                         safbox-rhel10-stig-overlay) as DIR/<profile>.json,
-#                         with the time each scan ended as the file's
-#                         modification time; DIR is made if missing (mode
-#                         0700). scripts/build.sh gives the build gate one,
-#                         and the seal installs what it holds in the
-#                         template.
-#
-# Results land in .build/validate-<label>-<profile>-<UTC time>.json, with
-# -2, -3, ... before .json when another scan took that name first.
+# Validate a SAFBox from the outside: scan it over SSH with CINC Auditor
+# using the profiles in verify/profiles/, check each result against its SAF
+# CLI threshold in verify/thresholds/, and in the release context, with
+# --client-inputs, run the safbox-client profile from this machine.
+# scripts/validate.sh --help lists its arguments, options and files.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
+SYNOPSIS="usage: scripts/validate.sh [-h | --help] [--site-inputs FILE] [--ssh-config FILE] [--client-inputs FILE [--client-read-only]] [--results-dir DIR] <user@host[:port]> <private-key> <build|release> [label]"
 usage() {
-  echo "usage: $0 [--site-inputs FILE] [--ssh-config FILE] [--client-inputs FILE [--client-read-only]] [--results-dir DIR] <user@host[:port]> <private-key> <build|release> [label]" >&2
+  echo "$SYNOPSIS" >&2
   exit 2
+}
+help() {
+  echo "$SYNOPSIS"
+  cat <<'HELP'
+
+Scan a SAFBox over SSH with CINC Auditor, using the profiles in
+verify/profiles/ (safbox, safbox-rhel10-stig-overlay), and check each
+result against its SAF CLI threshold in verify/thresholds/. In the release
+context, with --client-inputs, also run the safbox-client profile on this
+machine against the box's names at its address, as a browser here would.
+
+Arguments:
+  <user@host[:port]>    the box, as an SSH target; the user needs sudo
+  <private-key>         that user's SSH private key
+  build                 the build VM before the seal (inputs:
+                        verify/inputs/build.yml)
+  release               a deployed clone of a sealed template (the
+                        profiles' defaults)
+  [label]               names the results files (default: the context)
+
+Every scan first gets the guest agents the answer file installs, by
+hypervisor (packer/answerfiles/el10/guest-agents.yml); the box's profiles
+check the one for the hypervisor they detect.
+
+Options:
+  --site-inputs FILE    a site's inputs, layered after the context's
+  --ssh-config FILE     the SSH client config CINC Auditor reads instead of
+                        ~/.ssh/config and /etc/ssh/ssh_config; /dev/null
+                        reads none
+  --client-inputs FILE  release only: the box's passwords for the
+                        safbox-client profile, a .yml or .yaml inputs file
+                        of mode 0600 (scripts/clone-and-ssh.sh writes one).
+                        That profile signs in, uploads the safbox profile's
+                        results to Heimdall, creates a Vulcan project and
+                        changes safuser's Keycloak password, so give it for
+                        a clone only, never an appliance in use.
+  --client-read-only    with --client-inputs, for a clone kept for a person:
+                        the client profile skips its controls that change
+                        the box (read_only), each reported as skipped with
+                        the reason, so safuser's first Keycloak sign-in is
+                        left for that person, and its results are held to
+                        client-release-read-only.yml instead.
+  --results-dir DIR     also keep the box profiles' results (safbox and
+                        safbox-rhel10-stig-overlay) as DIR/<profile>.json,
+                        with the time each scan ended as the file's
+                        modification time; DIR is made if missing (mode
+                        0700). scripts/build.sh gives the build gate one,
+                        and the seal installs what it holds in the template.
+  -h, --help            print this and exit
+
+Environment: none of its own. cinc-auditor and saf must be on PATH; with
+neither --ssh-config, CINC Auditor reads ~/.ssh/config and
+/etc/ssh/ssh_config.
+
+Files: results land in .build/validate-<label>-<profile>-<UTC time>.json,
+with -2, -3, ... before .json when another scan took that name first.
+Exit status: 0 every threshold met, 1 a threshold failed or a tool or
+connection error, 2 a usage error.
+HELP
+  exit 0
 }
 
 INPUT_ARGS=()
@@ -62,6 +85,7 @@ while [ $# -gt 0 ]; do
     --client-inputs) [ -n "${2:-}" ] || usage; CLIENT_INPUTS=$2; shift 2 ;;
     --client-read-only) CLIENT_READ_ONLY=1; shift ;;
     --results-dir) [ -n "${2:-}" ] || usage; RESULTS_DIR=$2; shift 2 ;;
+    -h | --help) help ;;
     -*) usage ;;
     *) break ;;
   esac

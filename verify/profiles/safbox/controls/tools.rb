@@ -1,15 +1,21 @@
 # frozen_string_literal: true
 
 tools = input('expected_tools')
+services = input('expected_services')
+deployed = input('deployed')
 
 control 'safbox-cli-1' do
   impact 1.0
   title 'The safbox status command works'
-  desc 'safbox status shows any user the distribution, FIPS mode, first boot, tool versions and service states.'
+  desc "safbox status shows any user the distribution, FIPS mode, first boot, tool versions and service states, Keycloak's among them. On a deployed box Keycloak is ready: the safbox realm answers, which every sign-in needs."
 
   describe command('/usr/local/bin/safbox status') do
     its('exit_status') { should eq 0 }
     its('stdout') { should match(/^FIPS mode:\s+enabled/) }
+    if services.include?('keycloak')
+      its('stdout') { should match(/^Keycloak:\s+\S/) }
+      its('stdout') { should match(/^Keycloak readiness:\s+ready /) } if deployed
+    end
   end
 end
 

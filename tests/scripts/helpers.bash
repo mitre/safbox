@@ -14,9 +14,10 @@ STUBS=$ROOT/tests/scripts/stubs
 #   R     the scratch repository (scripts/ holds build.sh, clone-and-ssh.sh
 #         and the stub check-tools.sh and validate.sh)
 #   STUB  the stubs' records and signals
-# with <dir>/bin (stub packer, npm) for build.sh, <dir>/cbin (stub curl,
+# with <dir>/bin (stub packer, npm, curl) for build.sh, <dir>/cbin (stub curl,
 # ssh, sleep) for clone-and-ssh.sh, <dir>/home as HOME and the fake
 # credentials (tests/scripts/fixtures/packer.env) at <dir>/packer.env.
+# The scratch repository has packer/local.auto.pkrvars.hcl setting vm_id.
 scratch() {
   T=$1 R=$1/root STUB=$1/stub
   export T R STUB
@@ -26,10 +27,13 @@ scratch() {
   cp "$ROOT/scripts/lib.sh" "$R/scripts/lib.sh"
   chmod +x "$R/scripts/build.sh" "$R/scripts/clone-and-ssh.sh"
   cp "$STUBS/check-tools.sh" "$STUBS/validate.sh" "$R/scripts/"
-  cp "$STUBS/packer" "$STUBS/npm" "$T/bin/"
+  cp "$STUBS/packer" "$STUBS/npm" "$STUBS/curl" "$T/bin/"
   cp "$STUBS/curl" "$STUBS/ssh" "$STUBS/sleep" "$T/cbin/"
   cp "$ROOT/tests/scripts/fixtures/packer.env" "$T/packer.env"
   chmod 600 "$T/packer.env"
+  # A template ID from a vars file, so a build needs no ID range (and no
+  # API) unless a test removes it.
+  echo "vm_id = 100" > "$R/packer/local.auto.pkrvars.hcl"
 }
 
 # scratch_teardown: stop any build still running (its PID is in
@@ -65,7 +69,7 @@ start() {
   local name=$1 launcher=() envopt=(); shift
   if [ "${GROUP:-0}" = 1 ]; then launcher=(setsid); envopt=(--default-signal=INT); fi
   ( rc=0
-    ${launcher[@]+"${launcher[@]}"} env ${envopt[@]+"${envopt[@]}"} -u PROXMOX_URL -u PROXMOX_USERNAME -u PROXMOX_TOKEN -u SAFBOX_DEV "$@" \
+    ${launcher[@]+"${launcher[@]}"} env ${envopt[@]+"${envopt[@]}"} -u PROXMOX_URL -u PROXMOX_USERNAME -u PROXMOX_TOKEN -u SAFBOX_DEV -u SAFBOX_TEMPLATE_IDS "$@" \
       HOME="$T/home" PATH="$T/bin:$PATH" STUB_DIR="$STUB" SAFBOX_PROXMOX_ENV="$T/packer.env" \
       "$R/scripts/build.sh" -var "vm_name=$name" >"$STUB/out.$name" 2>&1 &
     echo $! > "$STUB/pid.$name"

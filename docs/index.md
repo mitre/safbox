@@ -76,8 +76,9 @@ Results you produce here can go straight into Heimdall.
 ### The `safbox` command
 
 `safbox help` lists what the appliance itself can tell you, and
-`safbox status` shows the box's tools and their versions, its services,
-and whether FIPS mode is on.
+`safbox status` shows the box's tools and their versions, its services
+(Heimdall, Vulcan, Keycloak and the TLS proxy), whether Keycloak is
+ready for sign-ins, and whether FIPS mode is on.
 
 ## How to sign in to SAFBox services
 

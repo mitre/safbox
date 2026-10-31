@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Stub packer for tests/scripts/*.bats. packer init: nothing.
 # packer build -var vm_name=<n> ...: record what build.sh handed it under
-# $STUB_DIR/<n>/, signal $STUB_DIR/started.<n>, wait for
-# $STUB_DIR/release.<n>, then check that the key and the debug log it was
-# given are still there and still the ones it saw at the start.
+# $STUB_DIR/<n>/ (the last -var vm_id in vm_id, empty without one),
+# signal $STUB_DIR/started.<n>, wait for $STUB_DIR/release.<n>, then
+# check that the key and the debug log it was given are still there and
+# still the ones it saw at the start.
 # STUB_LEAK=1 writes the token to the debug log; STUB_RO=1 leaves a
 # directory under the galaxy install that its owner cannot delete from;
 # STUB_RC=<n> is the exit status (default 0); STUB_UNREADABLE=1 leaves the
@@ -11,7 +12,7 @@
 set -u
 [ "$1" = build ] || exit 0
 shift
-name="" key="" galaxy="" site="" run_id="" scans=""
+name="" key="" galaxy="" site="" run_id="" scans="" vmid=""
 while [ $# -gt 0 ]; do
   case "$1" in
     -var)
@@ -22,6 +23,7 @@ while [ $# -gt 0 ]; do
         site_dir=*) site=${2#site_dir=} ;;
         build_run_id=*) run_id=${2#build_run_id=} ;;
         build_scans_dir=*) scans=${2#build_scans_dir=} ;;
+        vm_id=*) vmid=${2#vm_id=} ;;
       esac
       shift 2 ;;
     *) shift ;;
@@ -36,6 +38,7 @@ echo "$galaxy" > "$d/galaxy"
 echo "$site" > "$d/site"
 echo "$run_id" > "$d/run_id"
 echo "$scans" > "$d/scans"
+echo "$vmid" > "$d/vm_id"
 # What ansible-galaxy would install there.
 mkdir -p "$galaxy/roles/RHEL10-STIG"
 sum() { cksum < "$1" 2>/dev/null || echo missing; }

@@ -3,16 +3,36 @@
 # calls scripts/clone-and-ssh.sh makes (clone, start, task status, the guest
 # agent's interfaces), appends each call's URL to $STUB_DIR/curl.calls, and
 # writes the cloud-init sshkeys it was sent, URL-decoded, to
-# $STUB_DIR/sshkeys.
-url=""
+# $STUB_DIR/sshkeys. The VM ID picker (scripts/lib.sh) asks
+# /cluster/nextid?vmid=<id>, recorded with its query: the IDs in
+# STUB_VMS (space-separated) are in use (HTTP 400, curl -f's exit 22),
+# and so are those in STUB_HIDDEN, which /cluster/resources leaves out, as
+# it does the VMs the token may not audit; any other is free (200), and
+# STUB_API_DOWN=1 answers nothing (exit 7). /cluster/resources lists the
+# STUB_VMS as VMs named vm-<id> on node pve.
+url="" full=""
 for a in "$@"; do
   case "$a" in
-    http*) url=${a%%\?*} ;;
+    http*) full=$a url=${a%%\?*} ;;
     sshkeys=*) v=${a#sshkeys=}; printf '%b' "${v//%/\\x}" > "$STUB_DIR/sshkeys" ;;
   esac
 done
+case "$url" in */cluster/nextid) url=$full ;; esac
 echo "$url" >> "$STUB_DIR/curl.calls"
+if [ "${STUB_API_DOWN:-0}" = 1 ]; then echo "curl: (7) Failed to connect" >&2; exit 7; fi
 case "$url" in
+  */cluster/nextid\?vmid=*)
+    id=${url##*=}
+    for v in ${STUB_VMS:-} ${STUB_HIDDEN:-}; do
+      if [ "$v" = "$id" ]; then printf 400; exit 22; fi
+    done
+    printf 200 ;;
+  */cluster/resources)
+    sep="" out=""
+    for v in ${STUB_VMS:-}; do
+      out+="$sep{\"vmid\":$v,\"name\":\"vm-$v\",\"node\":\"pve\",\"template\":0}"; sep=,
+    done
+    echo "{\"data\":[$out]}" ;;
   */clone|*/status/start) echo '{"data":"UPID:stub"}' ;;
   */tasks/*/status) echo '{"data":{"status":"stopped","exitstatus":"OK"}}' ;;
   */agent/network-get-interfaces) echo '{"data":{"result":[{"name":"eth0","ip-addresses":[{"ip-address-type":"ipv4","ip-address":"192.0.2.50"}]}]}}' ;;

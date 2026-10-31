@@ -38,9 +38,10 @@ repos:
       - id: bats
         name: bats (script tests)
         # The suites under tests/ (tests/bats/run.sh fetches the pinned bats
-        # first), when a script they test, a suite, a stub or a fixture
-        # changes. The gitleaks rules suite needs gitleaks on PATH.
+        # first), when a script they test (the safbox command too), a suite,
+        # a stub or a fixture changes. The gitleaks rules suite needs gitleaks
+        # on PATH.
         entry: tests/bats/run.sh
         language: system
         pass_filenames: false
-        files: ^(scripts/(build|clone-and-ssh|validate|lib)\.sh|tests/(bats|scripts|secrets)/.*|\.gitleaks\.toml)$
+        files: ^(scripts/(build|clone-and-ssh|validate|lib)\.sh|ansible/roles/template_os/files/safbox|tests/(bats|scripts|secrets)/.*|\.gitleaks\.toml)$

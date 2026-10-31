@@ -459,6 +459,24 @@ not change a running box's realm: use the console. With Keycloak switched
 off, both applications keep local sign-in for their administrators (and
 Vulcan its self-registration, Accounts above).
 
+**Is Keycloak ready?** `safbox status`, as any user, lists Keycloak's unit
+state with Heimdall's and Vulcan's, and below it Keycloak's readiness,
+asked live:
+
+```
+Keycloak:                  active
+Keycloak readiness:        ready (realm safbox answers on 127.0.0.1:3002)
+```
+
+The unit turns active once `/health/ready` first answers, but stays
+active if Keycloak stops serving later, so the readiness row asks again
+each time. `/health/ready` is on Keycloak's management port, which only
+its pod reaches; the row instead fetches the `safbox` realm's OpenID
+configuration, the first request of every sign-in, from the HTTP port
+the pod publishes on the loopback address for the proxy. `not ready`
+means Keycloak runs but does not serve the realm; `not checked` means
+the unit is not active (before first boot, or while it starts).
+
 **Why Keycloak, and how it sits behind the proxy.** Keycloak is the one
 single sign-on server considered that both gives Heimdall and Vulcan real
 sign-on (OIDC) and documents a FIPS mode that runs here. Authelia and
@@ -511,7 +529,8 @@ sudo systemctl start heimdall.service vulcan.service safbox-proxy.service
 **Testing.** The release gate's safbox profile checks the units, secrets,
 loopback-only ports, each name over HTTPS, the start page,
 the certificate's names, `/etc/hosts` and the firewall from a shell on the
-box, and that Heimdall offers local log in and refuses a sign-up. Its
+box, that `safbox status` names Keycloak and, on a deployed box, finds
+it ready, and that Heimdall offers local log in and refuses a sign-up. Its
 client profile, `verify/profiles/safbox-client`, then acts as a browser
 would, from your workstation over HTTPS only: it checks the proxy's TLS
 (TLS 1.3 negotiated with a certificate for each name; TLS 1.0, 1.1 and

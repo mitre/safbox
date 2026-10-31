@@ -174,17 +174,31 @@ takes them as separate fields. `--privsep 0` means the token carries the
 user's permissions, so the ACLs below are granted to the user.
 
 Put the three values in a file only you can read, by default
-`~/.config/proxmox/packer.env`, which `scripts/build.sh` sources:
+`~/.config/proxmox/packer.env`, which `scripts/build.sh` and
+`scripts/clone-and-ssh.sh` source (`SAFBOX_PROXMOX_ENV` names another).
+`scripts/example.env` lists every variable the scripts read, grouped
+(credentials, the clone test's node and pool, VM ID ranges, CA and TLS,
+optional settings), each with a placeholder and a one-line comment. Start
+from it:
+
+```
+mkdir -p ~/.config/proxmox
+cp scripts/example.env ~/.config/proxmox/packer.env
+chmod 600 ~/.config/proxmox/packer.env
+```
+
+Then replace the placeholders. The required part is:
 
 ```
 PROXMOX_URL=https://<node-address>:8006/api2/json
-PROXMOX_USERNAME=<user>@pve!<token-name>
+PROXMOX_USERNAME='<user>@pve!<token-name>'
 PROXMOX_TOKEN=<token-secret>
+# VM ID ranges: templates and clones take the first free ID in theirs.
+SAFBOX_TEMPLATE_IDS=<first>-<last>
+SAFBOX_CLONE_IDS=<first>-<last>
 ```
 
-```
-chmod 600 ~/.config/proxmox/packer.env
-```
+The scripts refuse the file unless its mode is 0600.
 
 It is best practice to never put these in a Packer variables file, and to avoid putting them anywhere you might accidentally commit them to history.
 
@@ -203,7 +217,7 @@ pveum acl modify /nodes/<node>                    -user <user>@pve -role SAFBoxB
 ```
 
 Optionally, cap which VM IDs the account may ever use by granting the role on
-specific IDs, for example `/vms/9000`. Treat that as a ceiling, not the
+specific IDs, for example `/vms/<id>`. Treat that as a ceiling, not the
 grant: Proxmox removes every ACL on `/vms/<id>` whenever that VM is
 destroyed (the purge option is unrelated; it only clears backup, replication,
 and HA references), so a per-ID grant works exactly once. The pool grant is
@@ -214,7 +228,7 @@ fill the granted storage.
 |---|---|
 | Disk storage (thin pool) | `disk_storage` |
 | Bridge | `bridge` |
-| Template VM ID | `vm_id` |
+| Template and clone VM ID ranges | `SAFBOX_TEMPLATE_IDS`, `SAFBOX_CLONE_IDS` in the env file (step 5; see [How VM IDs are chosen](#how-vm-ids-are-chosen)) |
 
 Verify from your workstation. The output should list exactly the paths
 above and nothing on `/`, `/vms`, or `/nodes` itself:
@@ -273,8 +287,34 @@ with CINC's el9 build (its el10 build requires x86-64-v3).
 tests/packer/validate.sh
 tests/kickstart/ks-lint.sh
 scripts/build.sh
-SAFBOX_NODE=<node> SAFBOX_POOL=<pool> scripts/clone-and-ssh.sh <template-vmid> <clone-vmid>
+SAFBOX_NODE=<node> SAFBOX_POOL=<pool> scripts/clone-and-ssh.sh <template-vmid> [<clone-vmid>]
 ```
+
+`scripts/build.sh --help`, `scripts/clone-and-ssh.sh --help` and
+`scripts/validate.sh --help` list every argument, environment variable and
+file each script reads, with its default. `build.sh` passes every other
+argument to `packer build` unchanged.
+
+### How VM IDs are chosen
+
+The template's ID, first match wins:
+
+1. `-var vm_id=<id>` on the `build.sh` command line.
+2. `SAFBOX_TEMPLATE_IDS=<first>-<last>` in the env file (or the
+   environment): `build.sh` asks the Proxmox API, with the build token,
+   which IDs in that range are taken (`/cluster/nextid`, which answers for
+   the whole cluster, VMs outside the pool included), passes the first free
+   one to Packer as `-var vm_id`, and prints which ID it chose and which
+   were in use. A full range stops the run before Packer starts and lists
+   what holds each ID, as far as the token can see.
+3. `vm_id` in `packer/local.auto.pkrvars.hcl`. A fixed ID works once: the
+   next build fails because the previous template holds it.
+
+With none of them `build.sh` refuses to start and names the first two.
+The clone's ID is the second argument of `clone-and-ssh.sh`, or, without
+one, the first free ID in `SAFBOX_CLONE_IDS`, chosen the same way. Keep the
+ranges inside what step 6 lets the account use, and the template and
+clone ranges apart.
 
 `scripts/build.sh` mints an ephemeral build key and runs Packer. The build
 types a short GRUB edit at the ISO menu, serves the kickstart, waits
@@ -286,8 +326,9 @@ and installer residue, asserts the seal's own post-conditions), and
 converts the VM to a template.
 
 Add `SAFBOX_CA_FILE=<cluster-ca.pem>` (or, for a throwaway lab,
-`SAFBOX_INSECURE_TLS=1`) to the clone command. Pass `--keep` as a third
-argument to leave the clone running for you; its release gate then runs
+`SAFBOX_INSECURE_TLS=1`) to the clone command, or to the env file; without
+it the clone test trusts `SSL_CERT_FILE`, the CA Packer uses. Pass `--keep`
+after the IDs to leave the clone running for you; its release gate then runs
 the client profile read-only (below). Set `SAFBOX_CLONE_PASSWORD` to an
 `openssl passwd -6` hash to give `safuser` its password (see
 [Accounts on a clone](#accounts-on-a-clone)); without it first boot
@@ -401,10 +442,12 @@ First boot hands the new space out by share; [Partition
 layout](../../reference/platform.md#partition-layout) explains how, and how
 to grow a box that has already booted.
 
-Rebuilding reuses `vm_id`, and Packer never overwrites: delete the previous
-template first (through the API with the same token, which the pool grant
-allows, or in the GUI). Full clones made from it are unaffected; linked
-clones block the deletion.
+Packer never overwrites a VM. With a template range, a rebuild takes the
+next free ID; with a fixed `vm_id`, delete the previous template first.
+Either way, delete templates you no longer need (through the API with the
+same token, which the pool grant allows, or in the GUI) before the range
+fills. Full clones made from a template are unaffected by its deletion;
+linked clones block it.
 
 **Only sealed templates are distributable.** The build seals by default:
 it deletes the build user, its key, and its sudo rule, removes shared SSH
@@ -462,11 +505,13 @@ it reaches the right one, so name it with
 
 Two builds can run at the same time from one checkout, for example a Rocky
 and an AlmaLinux build, on a host large enough for both VMs. Give each its
-own template ID and name; everything else a run writes is already its own:
+own template ID and name; everything else a run writes is already its own.
+Two builds started together would pick the same ID from the template
+range, so give each its own:
 
 ```
-scripts/build.sh -var vm_id=9003 -var vm_name=safbox-rocky &
-scripts/build.sh -var vm_id=9004 -var vm_name=safbox-alma -var iso_file=<storage>:iso/<alma iso> &
+scripts/build.sh -var vm_id=<free-id-1> -var vm_name=safbox-rocky &
+scripts/build.sh -var vm_id=<free-id-2> -var vm_name=safbox-alma -var iso_file=<storage>:iso/<alma iso> &
 ```
 
 - Both IDs must be free and inside what the account may use (step 6: the

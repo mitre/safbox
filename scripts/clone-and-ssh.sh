@@ -6,55 +6,116 @@
 # profiles over SSH and the safbox-client profile from here, with the
 # passwords first boot generated (scripts/validate.sh --client-inputs).
 # Uses only the Proxmox API, so it runs with the same least-privilege token
-# as the build.
-#
-#   scripts/clone-and-ssh.sh <template-vmid> <clone-vmid> [--keep]
-#
-# --keep leaves the clone running for a person to use, so its release gate
-# runs the client profile read-only (validate.sh --client-read-only): the
-# controls that would change the box are skipped and reported as skipped,
-# and safuser's first Keycloak sign-in, with its forced password change, is
-# left for that person. Without --keep the clone is destroyed afterwards
-# and gets the full gate.
-#
-# Env: PROXMOX_URL, PROXMOX_USERNAME, PROXMOX_TOKEN (or the env file),
-#      SAFBOX_NODE (node holding the template), SAFBOX_POOL (resource pool the
-#      clone joins; authorizes the clone via VM.Allocate on /pool/<name>, which
-#      survives VM destruction, unlike an ACL on /vms/<id>), SAFBOX_SSH_KEY
-#      (private key; default .build/clone_key, RSA because the clone is FIPS;
-#      made if missing),
-#      SAFBOX_EXTRA_SSH_KEYS (optional: public key files, colon-separated,
-#      whose keys admin also gets, after the build key and every *.pub in
-#      .build/keys/; ECDSA or RSA of at least 2048 bits, since the clone's
-#      FIPS-mode sshd refuses Ed25519; any other key fails the run with 2
-#      before the clone is made). .build/ is the one in the checkout this
-#      script runs from: run from a worktree, it makes and uses that
-#      worktree's own clone_key and reads no keys from the main checkout's
-#      .build/keys/; point SAFBOX_SSH_KEY and SAFBOX_EXTRA_SSH_KEYS there
-#      to use them.
-#      SAFBOX_BUILD_KEY (optional: when SSH fails on a development template,
-#      the build key of the run that built it, .build/runs/<run id>/build_key,
-#      kept by SAFBOX_DEV=1; default: every kept run key, newest first),
-#      SAFBOX_SITE_INPUTS (optional: a site's inputs file for the release
-#      gate, validate.sh --site-inputs), SAFBOX_SSH_CONFIG
-#      (optional: the SSH client config CINC Auditor reads instead of its
-#      defaults, /dev/null for none; validate.sh --ssh-config),
-#      SAFBOX_READY_TIMEOUT (seconds to wait for the clone to finish
-#      booting before the release gate; default 600),
-#      SAFBOX_CLONE_USER (cloud-init's ciuser, its default user; default
-#      admin), SAFBOX_CLONE_PASSWORD (optional: cipassword, which first
-#      boot gives safuser, never admin; an 'openssl passwd -6' hash, since
-#      Proxmox hashes a plain one with SHA-256; without it first boot
-#      generates safuser's password).
+# as the build. scripts/clone-and-ssh.sh --help lists its arguments,
+# environment and files.
 set -euo pipefail
 # shellcheck source=scripts/lib.sh
 . "$(dirname "$0")/lib.sh"
-TEMPLATE_ID=${1:?template vmid}
-CLONE_ID=${2:?clone vmid}
-KEEP=${3:-}
+
+usage() {
+  cat <<'USAGE'
+usage: scripts/clone-and-ssh.sh [-h | --help] <template-vmid> [<clone-vmid>] [--keep]
+
+Clone a SAFBox template through the Proxmox API, give the clone a cloud-init
+user and SSH keys, boot it, log in over SSH as that user and as safuser,
+and run the release gate (scripts/validate.sh) against it.
+
+Arguments:
+  <template-vmid>  the template to clone
+  <clone-vmid>     the clone's VM ID; without it, the first ID in
+                   SAFBOX_CLONE_IDS that no VM or template in the cluster
+                   holds (asked of the API with the same token). A full
+                   range stops the run before anything is cloned, listing
+                   what holds it. With neither the run is refused.
+  --keep           leave the clone running for a person. Its release gate
+                   runs the client profile read-only (validate.sh
+                   --client-read-only): the controls that would change the
+                   box are reported as skipped, and safuser's first Keycloak
+                   sign-in is left for that person. Without --keep the clone
+                   gets the full gate and is destroyed afterwards (only if
+                   its description still carries this run's ID).
+  -h, --help       print this and exit
+
+Environment, from the shell or the env file (the file is read after the
+shell's environment, so a value set in both comes from the file).
+scripts/example.env lists every variable with a placeholder; copy it to
+~/.config/proxmox/packer.env and chmod 600 it:
+  SAFBOX_PROXMOX_ENV     the env file (default ~/.config/proxmox/packer.env);
+                         read when it exists, refused unless its mode is 0600
+  PROXMOX_URL            https://<node>:8006/api2/json (required)
+  PROXMOX_USERNAME       the API token ID, <user>@pve!<token-name> (required)
+  PROXMOX_TOKEN          the API token secret (required; never printed)
+  SAFBOX_NODE            the node holding the template (required)
+  SAFBOX_POOL            the resource pool the clone joins (required); the
+                         token's VM.Allocate on /pool/<name> authorizes it
+  SAFBOX_CLONE_IDS       the clone ID range, FIRST-LAST (default: none)
+  SAFBOX_CA_FILE         the CA trusted for the API (default: SSL_CERT_FILE)
+  SSL_CERT_FILE          the CA trusted when SAFBOX_CA_FILE is not set
+                         (default: the system trust store)
+  SAFBOX_INSECURE_TLS    1 turns off TLS verification, for a throwaway lab's
+                         self-signed certificate (default 0)
+  SAFBOX_CLONE_USER      cloud-init's user, ciuser (default admin); a site
+                         inputs file must then name it as admin_user
+  SAFBOX_CLONE_PASSWORD  cipassword, which first boot gives safuser, never
+                         admin: an 'openssl passwd -6' hash, since Proxmox
+                         hashes a plain one with SHA-256 (default: none, and
+                         first boot generates safuser's password)
+  SAFBOX_SSH_KEY         the private key admin gets (default
+                         .build/clone_key; RSA 4096, made if missing)
+  SAFBOX_EXTRA_SSH_KEYS  more public key files for admin (and safuser),
+                         colon-separated, after every .build/keys/*.pub;
+                         ECDSA or RSA of at least 2048 bits, since the
+                         clone's FIPS-mode sshd refuses Ed25519; any other
+                         key fails the run with 2 before the clone is made
+                         (default: none)
+  SAFBOX_READY_TIMEOUT   seconds to wait for the clone to finish booting
+                         before the release gate (default 600)
+  SAFBOX_SKIP_VALIDATE   1 stops after the first SSH check, before the wait
+                         and the release gate (default 0)
+  SAFBOX_SITE_INPUTS     a site's inputs file for the release gate
+                         (validate.sh --site-inputs; default: none)
+  SAFBOX_SSH_CONFIG      the SSH client config CINC Auditor reads instead of
+                         its defaults, /dev/null for none (validate.sh
+                         --ssh-config; default: its defaults)
+  SAFBOX_BUILD_KEY       when SSH fails on a development template, the key
+                         of the run that built it,
+                         .build/runs/<run id>/build_key (default: every key
+                         kept by SAFBOX_DEV=1 builds, newest first)
+  SAFBOX_BUILD_USER      the build user those diagnostics log in as
+                         (default packer)
+
+Files (.build/ is the one in the checkout this script runs from; run from a
+git worktree, that worktree's):
+  .build/clone_key          the default SSH key, made if missing
+  .build/keys/*.pub         extra public keys every clone's admin gets
+  .build/runs/*/build_key   build keys kept by SAFBOX_DEV=1 builds
+
+Guide: docs/guides/proxmox/build.md
+USAGE
+}
+
+KEEP="" ARGS=()
+for a in "$@"; do
+  case "$a" in
+    -h | --help) usage; exit 0 ;;
+    --keep) KEEP=--keep ;;
+    -*) echo "unknown option $a; see scripts/clone-and-ssh.sh --help" >&2; exit 2 ;;
+    *) ARGS+=("$a") ;;
+  esac
+done
+if [ ${#ARGS[@]} -lt 1 ] || [ ${#ARGS[@]} -gt 2 ]; then
+  echo "usage: scripts/clone-and-ssh.sh <template-vmid> [<clone-vmid>] [--keep]; see --help" >&2
+  exit 2
+fi
+TEMPLATE_ID=${ARGS[0]}
+CLONE_ID=${ARGS[1]:-}
 
 load_env
 : "${PROXMOX_URL:?}" "${PROXMOX_USERNAME:?}" "${PROXMOX_TOKEN:?}" "${SAFBOX_NODE:?set SAFBOX_NODE}" "${SAFBOX_POOL:?set SAFBOX_POOL}"
+if [ -z "$CLONE_ID" ] && [ -z "${SAFBOX_CLONE_IDS:-}" ]; then
+  echo "no VM ID for the clone: set SAFBOX_CLONE_IDS=FIRST-LAST in $ENV_FILE (the first free ID in that range is used), or give the clone ID as the second argument. See scripts/clone-and-ssh.sh --help." >&2
+  exit 2
+fi
 READY_TIMEOUT=${SAFBOX_READY_TIMEOUT:-600}
 case "$READY_TIMEOUT" in
   '' | *[!0-9]* | 0*) echo "SAFBOX_READY_TIMEOUT must be a positive whole number of seconds, not '$READY_TIMEOUT'" >&2; exit 2 ;;
@@ -111,19 +172,12 @@ for f in ${EXTRA_FILES[@]+"${EXTRA_FILES[@]}"}; do
   [ "$keys" -gt 0 ] || refuse_key "$f" "it holds no public key"
   echo "extra SSH key for $USER_NAME: $f"
 done
-# TLS verification stays on unless the caller opts out for a self-signed lab
-# API certificate (mirrors Packer's proxmox_insecure_skip_tls_verify).
-# The token never appears on a command line (visible in ps and /proc); curl
-# reads it from a 0600 config file that is removed on exit.
 umask 077
-CURLCFG=$(mktemp)
+# The API's curl and its token file (scripts/lib.sh), removed on exit.
+api_curl
 # The client profile's passwords, read from the clone (below), in a
 # directory of their own.
 CLIENT_DIR=""
-printf 'header = "Authorization: PVEAPIToken=%s=%s"\n' "$PROXMOX_USERNAME" "$PROXMOX_TOKEN" > "$CURLCFG"
-CURL=(curl -fsS -K "$CURLCFG")
-if [ -n "${SAFBOX_CA_FILE:-}" ]; then CURL+=(--cacert "$SAFBOX_CA_FILE"); fi
-if [ "${SAFBOX_INSECURE_TLS:-0}" = 1 ]; then CURL+=(-k); fi
 API=$PROXMOX_URL
 
 wait_task() { # upid
@@ -168,6 +222,12 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# No clone ID given: the first free one in SAFBOX_CLONE_IDS.
+if [ -z "$CLONE_ID" ]; then
+  pick_vmid SAFBOX_CLONE_IDS || exit 1
+  CLONE_ID=$PICKED
+  echo "$PICK_NOTE"
+fi
 echo "cloning $TEMPLATE_ID -> $CLONE_ID on $NODE (run $RUN_ID)"
 upid=$("${CURL[@]}" -X POST "$API/nodes/$NODE/qemu/$TEMPLATE_ID/clone" \
   --data-urlencode "newid=$CLONE_ID" --data-urlencode "name=safbox-clone-$CLONE_ID" --data-urlencode "full=1" --data-urlencode "pool=$POOL" \
