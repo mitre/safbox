@@ -7,8 +7,7 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$ROOT"
 
-# Every tool the build needs, not only Packer: this is the first command
-# docs/guides/proxmox/build.md step 8 runs.
+# Every tool the build needs, not only Packer.
 scripts/check-tools.sh
 
 # The plugin insists on non-empty credentials even for validate, which never
@@ -24,10 +23,8 @@ trap 'rm -rf "$tmp"' EXIT
 ssh-keygen -q -t rsa -b 2048 -N '' -C validate-only -f "$tmp/key"
 
 # pv -var...: packer validate with the example variables and the throwaway key.
-# The example sets no vm_id (scripts/build.sh picks one from a range and
-# passes it as -var vm_id), so a placeholder ID stands in here.
 pv() {
-  packer validate -var-file=packer/example.pkrvars.hcl -var vm_id=123456 \
+  packer validate -var-file=packer/example.pkrvars.hcl \
     -var "ssh_public_key=$(cat "$tmp/key.pub")" -var "ssh_private_key_file=$tmp/key" "$@" packer/
 }
 

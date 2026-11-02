@@ -4,8 +4,8 @@
 # firewall, the container runtime, the journal), the desktop, the site's
 # trusted CA bundles, the package update, the first-boot play and its unit,
 # the safbox command, the login greeting and safuser's packages. Task groups
-# keep their tags (safbox-platform-<n>, safbox-site-config-1,
-# safbox-base-<n>); the ones a site may turn off have a switch in
+# keep their tags (safbox-platform-<name>, safbox-site-config-ca-bundles,
+# safbox-base-<name>); the ones a site may turn off have a switch in
 # group_vars/all/main.yml.
 
 # ---------------------------------------------------------------------------
@@ -30,7 +30,7 @@ template_os_container_short_name_mode: enforcing
 # approves the GUI to the STIG hardening.
 template_os_desktop_enabled: "{{ safbox_desktop_enabled }}"
 
-# The desktop console's resolution (task group 7): a mode the console's
+# The desktop console's resolution (safbox-platform-desktop): a mode the console's
 # display adapter offers, at its refresh rate as GNOME lists it (Settings >
 # Displays, or mutter's DisplayConfig). See template_os_desktop_monitors.
 template_os_desktop_console_mode:
@@ -39,14 +39,14 @@ template_os_desktop_console_mode:
   rate: "60.000"
 
 # ---------------------------------------------------------------------------
-# Site CA bundles (safbox-site-config-1)
+# Site CA bundles (safbox-site-config-ca-bundles)
 # ---------------------------------------------------------------------------
 # Each entry of safbox_trust_bundles in group_vars (the DoD PKI bundle by
 # default) is fetched or copied, checked against its sha256, read as
-# certificates, checked against the system crypto policy, and installed in
-# the system trust store, one anchor file per certificate. Certificates of
-# a bundle no longer listed are removed. The group runs at build (baked into
-# the image) or against a deployed box (--tags safbox-site-config-1,
+# certificates, and installed in the system trust store, one anchor file
+# per certificate. Certificates of a bundle no longer listed are removed.
+# The group runs at build (baked into the image) or against a deployed box
+# (--tags safbox-site-config-ca-bundles,
 # docs/reference/site-config.md).
 
 # Downloads and archive members, in /var/tmp, which the seal clears.
@@ -60,7 +60,7 @@ template_os_trust_restart_units:
   - vulcan.service
 
 # ---------------------------------------------------------------------------
-# First boot (safbox-base-1)
+# First boot (safbox-base-firstboot)
 # ---------------------------------------------------------------------------
 # The run-once first-boot play owns every per-install secret, generated on
 # first boot and not at build so no two installs share one. Its directory
@@ -87,7 +87,7 @@ template_os_firstboot_roles_tree: >-
 template_os_firstboot_unit: safbox-firstboot.service
 
 # ---------------------------------------------------------------------------
-# The safbox command (safbox-base-2) and the login greeting (safbox-base-4)
+# The safbox command (safbox-base-command) and the login greeting (safbox-base-greeting)
 # ---------------------------------------------------------------------------
 template_os_cli_bin: /usr/local/bin/safbox
 

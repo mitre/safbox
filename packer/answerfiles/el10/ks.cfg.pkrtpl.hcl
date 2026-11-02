@@ -55,13 +55,6 @@ rootpw --lock
 user --name=${build_user} --groups=wheel --lock --gecos="Packer build user"
 sshkey --username=${build_user} "${ssh_public_key}"
 
-%{ if installer_ssh ~}
-# Installer-environment only (variable installer_ssh): lets the runner SSH
-# into Anaconda for log inspection when booted with inst.sshd. Never reaches
-# the installed system.
-sshpw --username=root --sshkey "${ssh_public_key}"
-%{ endif ~}
-
 # Only units that exist at this point. qemu-guest-agent and cloud-init are not
 # on the minimal ISO; %post installs and enables them. Naming them here makes
 # Anaconda's service step fail before %post runs.

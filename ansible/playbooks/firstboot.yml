@@ -19,8 +19,10 @@
 #   --tags proxy_tls             one role (grow_disk, accounts, admin,
 #                                safuser, secrets, proxy_tls); any --tags
 #                                run ignores the marker and writes none
-# Two tags run only their own task: --tags renew, the proxy certificate's
-# renewal (safbox-proxy-renew.timer), and --tags heimdall-scans, the import
+# Three tags run only their own task: --tags renew, the proxy certificate's
+# renewal (safbox-proxy-renew.timer), --tags heimdall-admin, the change of
+# Heimdall's administrator password from its bootstrap value
+# (safbox-heimdall-admin.service), and --tags heimdall-scans, the import
 # of the template's build-gate scan results into Heimdall
 # (safbox-heimdall-scans.service).
 - name: SAFBox first boot
@@ -73,13 +75,13 @@
     - role: clone_grow_disk
       tags: [grow_disk]
     - role: clone_accounts
-      when: safbox_base_5 | bool or safbox_base_6 | bool
+      when: safbox_base_safuser | bool or safbox_base_admin | bool
       tags: [accounts]
     - role: clone_secrets
-      when: safbox_services_1 | bool or safbox_services_2 | bool or safbox_services_5 | bool
+      when: safbox_services_heimdall | bool or safbox_services_vulcan | bool or safbox_services_keycloak | bool
       tags: [secrets]
     - role: clone_proxy_tls
-      when: safbox_services_3 | bool
+      when: safbox_services_proxy | bool
       tags: [proxy_tls]
 
   post_tasks:
@@ -97,13 +99,25 @@
     # safbox-proxy-renew.timer, at any time after first boot: signs the
     # proxy's certificate again from the local CA before it expires.
     - name: Renew the proxy's certificate when it is due
-      when: safbox_services_3 | bool
+      when: safbox_services_proxy | bool
       tags: [never, renew]
       ansible.builtin.include_role:
         name: clone_proxy_tls
         tasks_from: renew
         apply:
           tags: [renew]
+
+    # Not part of first boot: runs only with --tags heimdall-admin.
+    # safbox-heimdall-admin.service runs it at every boot, after Heimdall
+    # answers its healthcheck: the administrator's throwaway bootstrap
+    # password changed to the one first boot made. Not a first-boot role,
+    # for the reason below.
+    - name: Give Heimdall's administrator the password first boot made
+      tags: [never, heimdall-admin]
+      ansible.builtin.include_role:
+        name: clone_heimdall_admin
+        apply:
+          tags: [heimdall-admin]
 
     # Not part of first boot: runs only with --tags heimdall-scans.
     # safbox-heimdall-scans.service runs it once per box, after Heimdall

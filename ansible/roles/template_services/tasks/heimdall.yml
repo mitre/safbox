@@ -1,7 +1,7 @@
 ---
 # Heimdall and its PostgreSQL as a podman pod of Quadlet units: task group
-# safbox-services-1, imported by tasks/main.yml, which applies the group's
-# tag and its switch safbox_services_1.
+# safbox-services-heimdall, imported by tasks/main.yml, which applies the group's
+# tag and its switch safbox_services_heimdall.
 
 # Pulled at build so a clone starts its pod offline.
 - name: Pull the Heimdall and PostgreSQL images
@@ -97,8 +97,7 @@
       # scan results into Heimdall (safbox-heimdall-scans.service).
       {{ {'clone_heimdall_scans_url': 'http://127.0.0.1:' ~ template_services_heimdall_loopback_port,
           'clone_heimdall_scans_admin_email': 'admin@' ~ safbox_domain,
-          'clone_heimdall_scans_admin_secret': (template_services_secrets | selectattr('env.heimdall', 'defined')
-                                          | selectattr('env.heimdall', 'eq', 'ADMIN_PASSWORD') | first).name,
+          'clone_heimdall_scans_admin_secret': 'heimdall-admin-password',
           'clone_heimdall_scans_service': 'heimdall.service',
           'clone_heimdall_scans_dir': template_services_heimdall_scans_dir,
           'clone_heimdall_scans_marker': template_services_heimdall_scans_marker} | to_nice_yaml(indent=2) }}
@@ -123,4 +122,41 @@
 - name: Import the scan results at boot
   ansible.builtin.systemd_service:
     name: safbox-heimdall-scans.service
+    enabled: true
+
+# The change of the administrator's bootstrap password to the real one,
+# at every boot after Heimdall answers (defaults/main.yml,
+# template_services_heimdall_admin_file): the clone_heimdall_admin role's
+# settings beside the play, and the unit that runs it.
+- name: Tell the clone_heimdall_admin role where Heimdall is
+  ansible.builtin.copy:
+    content: |
+      # Written by the SAFBox template_services role: the settings of the first-boot
+      # play's clone_heimdall_admin role, which changes Heimdall's administrator
+      # password from its bootstrap value (safbox-heimdall-admin.service).
+      {{ {'clone_heimdall_admin_url': 'http://127.0.0.1:' ~ template_services_heimdall_loopback_port,
+          'clone_heimdall_admin_email': 'admin@' ~ safbox_domain,
+          'clone_heimdall_admin_secret': 'heimdall-admin-password',
+          'clone_heimdall_admin_bootstrap_secret': 'heimdall-admin-bootstrap-password'} | to_nice_yaml(indent=2) }}
+    dest: "{{ template_services_heimdall_admin_file }}"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Install the unit that gives the administrator its password
+  ansible.builtin.template:
+    src: safbox-heimdall-admin.service.j2
+    dest: /etc/systemd/system/safbox-heimdall-admin.service
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Reload systemd units
+
+- name: Reload systemd for the administrator's unit
+  ansible.builtin.meta: flush_handlers
+
+# Enabled, not started: it runs at boot, after Heimdall.
+- name: Give the administrator its password at boot
+  ansible.builtin.systemd_service:
+    name: safbox-heimdall-admin.service
     enabled: true

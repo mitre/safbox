@@ -22,35 +22,45 @@ clone (below).
 ## Choosing what the appliance layer does
 
 Every task group in the `template_os`, `template_tools` and
-`template_services` roles is a block tagged `safbox-<area>-<n>`, in the
-style of Ansible Lockdown. The `template_os` role keeps the tags of the
-areas it is made of (`platform`, `site-config`, `base`). A group a site
-may turn off has a switch `safbox_<area>_<n>` (default on, a hyphen in the
-tag for the underscore in the switch: `safbox-site-config-1`, switch
-`safbox_site_config_1`); the switches and a one-line description of each
-are listed in `ansible/group_vars/all/main.yml`. The groups the box cannot
-work without have a tag and no switch: they always run.
+`template_services` roles is a block tagged `safbox-<area>-<name>`, in
+the style of Ansible Lockdown. The `template_os` role keeps the tags of
+the areas it is made of (`platform`, `site-config`, `base`). A group a
+site may turn off has a switch `safbox_<area>_<name>` (default on, a
+hyphen in the tag for each underscore in the switch: tag
+`safbox-site-config-ca-bundles`, switch `safbox_site_config_ca_bundles`);
+the switches and a one-line description of each are listed in
+`ansible/group_vars/all/main.yml`. The groups the box cannot work without
+have a tag and no switch: they always run. A `safbox_<area>_*` variable
+that file does not define, such as a misspelled switch in
+`ansible/local.yml`, fails the build before any task runs.
 
 | Tag | Switch | What it does |
 |---|---|---|
-| `safbox-platform-1` | none | base packages and services |
-| `safbox-platform-3` | none | the firewall allows the base services |
-| `safbox-platform-4` | none | podman, Quadlet, the registry policy, containers read the host's trust store |
-| `safbox-platform-6` | `safbox_platform_6` | the journal kept on disk |
-| `safbox-platform-7` | `safbox_platform_7` | the desktop (also needs `safbox_desktop_enabled`) |
-| `safbox-site-config-1` | `safbox_site_config_1` | the site's CA bundles in the trust store |
-| `safbox-base-3` | `safbox_base_3` | update every installed package |
-| `safbox-base-1` | none | the first-boot play and its unit |
-| `safbox-base-2` | none | the `safbox` command |
-| `safbox-base-4` | `safbox_base_4` | the SAF login greeting |
-| `safbox-base-5` | `safbox_base_5` | `safuser`, made at first boot |
-| `safbox-base-6` | `safbox_base_6` | `admin` settled at first boot |
-| `safbox-tools-1` to `-4` | `safbox_tools_1` to `_4` | CINC Auditor, SAF CLI, Ansible, Packer |
-| `safbox-services-1` to `-5` | `safbox_services_1` to `_5` | Heimdall, Vulcan, the TLS proxy, Firefox bookmarks, Keycloak |
-| `safbox-hardening-1` | `safbox_hardening_1` | the RHEL 10 STIG |
+| `safbox-platform-packages` | none | base packages and services |
+| `safbox-platform-firewall` | none | the firewall allows the base services |
+| `safbox-platform-containers` | none | podman, Quadlet, the registry policy, containers read the host's trust store |
+| `safbox-platform-journal` | `safbox_platform_journal` | the journal kept on disk |
+| `safbox-platform-desktop` | `safbox_platform_desktop` | the desktop (also needs `safbox_desktop_enabled`) |
+| `safbox-site-config-ca-bundles` | `safbox_site_config_ca_bundles` | the site's CA bundles in the trust store |
+| `safbox-base-update` | `safbox_base_update` | update every installed package |
+| `safbox-base-firstboot` | none | the first-boot play and its unit |
+| `safbox-base-command` | none | the `safbox` command |
+| `safbox-base-greeting` | `safbox_base_greeting` | the SAF login greeting |
+| `safbox-base-safuser` | `safbox_base_safuser` | `safuser`, made at first boot |
+| `safbox-base-admin` | `safbox_base_admin` | `admin` settled at first boot |
+| `safbox-tools-cinc-auditor` | `safbox_tools_cinc_auditor` | CINC Auditor |
+| `safbox-tools-saf-cli` | `safbox_tools_saf_cli` | the SAF CLI |
+| `safbox-tools-ansible` | none | Ansible and the Lockdown collections; first boot runs on it |
+| `safbox-tools-packer` | `safbox_tools_packer` | Packer |
+| `safbox-services-heimdall` | `safbox_services_heimdall` | Heimdall |
+| `safbox-services-vulcan` | `safbox_services_vulcan` | Vulcan |
+| `safbox-services-proxy` | `safbox_services_proxy` | the TLS proxy |
+| `safbox-services-firefox` | `safbox_services_firefox` | Firefox bookmarks |
+| `safbox-services-keycloak` | `safbox_services_keycloak` | Keycloak |
+| `safbox-hardening-stig` | `safbox_hardening_stig` | the RHEL 10 STIG |
 
 - Turn a group off for every build by setting its switch to `false` in
-  `ansible/local.yml` (site overrides, git-ignored).
+  `ansible/local.yml` (site overrides, git-ignored; the build loads it).
 - The switches take effect when a template is built. Switching a group
   off and applying the roles again to a box that already has it does not
   undo it: no task removes a service's units, image or secrets,
@@ -61,49 +71,49 @@ work without have a tag and no switch: they always run.
   example against an existing host, from the repository root
   (`ANSIBLE_CONFIG` names the project's configuration, which finds the
   roles):
-  `ANSIBLE_CONFIG=ansible/ansible.cfg ansible-playbook -i <host>, -u <user> ansible/playbooks/safbox.yml -e @ansible/local.yml --tags safbox-site-config-1`
+  `ANSIBLE_CONFIG=ansible/ansible.cfg ansible-playbook -i <host>, -u <user> ansible/playbooks/safbox.yml -e @ansible/local.yml --tags safbox-site-config-ca-bundles`
 - The `template_seal` role's groups are tagged (`safbox-seal-<n>`) but have no
   switch: a partially sealed image carries build identity, so the seal runs
   whole. The one exception is the development seal (`seal = false`), which
   stops before the final group and marks the template `unsealed`.
-- `safbox_hardening_1` is a troubleshooting lever, not a deployment
+- `safbox_hardening_stig` is a troubleshooting lever, not a deployment
   choice: switching it off tells whether a fault comes from the STIG, and
   a box built without it fails validation.
 - Each `template_tools` group (CINC Auditor, SAF CLI, Ansible with the Lockdown
-  collections, Packer) has a validation control `safbox-tools-<n>`. The
+  collections, Packer) has a validation control, `safbox-tools-1` to `-4`. The
   profile's `expected_tools` input lists the tools the image ships (default
   `cinc-auditor`, `saf-cli`, `ansible`, `packer`); a tool expected but
   missing fails its control. When you switch a tools group off, drop its
   tool from that input in a site inputs file (see [Site inputs](validation.md#site-inputs));
   its control is then Not Applicable. A distributor who does not
-  want to ship Packer's Business Source License sets `safbox_tools_4:
+  want to ship Packer's Business Source License sets `safbox_tools_packer:
   false`; see the licence note in the [README](https://github.com/mitre/safbox#licences).
-  `safbox_tools_3` must stay on: first boot is an Ansible play run by the
-  box's own ansible-core and collections, and the build refuses it off.
+  Ansible has no switch: first boot is an Ansible play run by the box's
+  own ansible-core and collections.
 - The `template_services` role holds every long-running service, one task group and
-  one task file each: `safbox_services_1` Heimdall (`tasks/heimdall.yml`),
-  `safbox_services_2` Vulcan (`tasks/vulcan.yml`), `safbox_services_3` the
-  TLS proxy (`tasks/proxy.yml`), `safbox_services_4` Firefox bookmarks
-  (`tasks/firefox.yml`, desktop builds only), `safbox_services_5` Keycloak
+  one task file each: `safbox_services_heimdall` Heimdall (`tasks/heimdall.yml`),
+  `safbox_services_vulcan` Vulcan (`tasks/vulcan.yml`), `safbox_services_proxy` the
+  TLS proxy (`tasks/proxy.yml`), `safbox_services_firefox` Firefox bookmarks
+  (`tasks/firefox.yml`, desktop builds only), `safbox_services_keycloak` Keycloak
   (`tasks/keycloak.yml`). A host short of memory runs Heimdall alone
-  with `safbox_services_2: false`; the proxy then serves Heimdall only and
+  with `safbox_services_vulcan: false`; the proxy then serves Heimdall only and
   closes Vulcan's port. The profile's `expected_services` input lists
   the services the image ships (default `heimdall`, `vulcan`, `keycloak`,
   `proxy`): drop a switched-off service there in a site inputs file, as
   for a tools group.
-- `safbox_site_config_1` installs the site's CA bundles, the DoD PKI bundle
+- `safbox_site_config_ca_bundles` installs the site's CA bundles, the DoD PKI bundle
   by default; see [Site CA bundles](site-config.md).
-- `safbox_base_3` brings every installed package up to date and reboots
+- `safbox_base_update` brings every installed package up to date and reboots
   when the update needs it; see [Package updates](#package-updates).
-- `safbox_base_4` installs the SAF login greeting, the SAF shield and
+- `safbox_base_greeting` installs the SAF login greeting, the SAF shield and
   "Welcome to SAFBox!", as `/etc/motd.d/safbox`; it is shown after every
   console and SSH login. It does not touch `/etc/issue`, the login banner
   shown before the password prompt (`safbox_logon_banner`), or
   `/etc/motd`, which stays the site's.
-- `safbox_base_5` makes `safuser`, the account for using the tools, on
+- `safbox_base_safuser` makes `safuser`, the account for using the tools, on
   each clone's first boot; see [Accounts](accounts.md).
-- `safbox_base_6` settles `admin`, cloud-init's key-only default user, on
-  each clone's first boot: no password, exempt from password ageing,
+- `safbox_base_admin` settles `admin`, cloud-init's key-only default user, on
+  each clone's first boot: no password, so no password ageing until it has one,
   hidden from the desktop login screen; see [Accounts](accounts.md).
 
 ## First boot
@@ -133,9 +143,9 @@ The roles run in this order, each with its tag:
 | Role | Tag | Runs when |
 |---|---|---|
 | `clone_grow_disk` | `grow_disk` | always: it hands a clone's larger disk to the growing volumes ([Platform](platform.md)) |
-| `clone_accounts` | `accounts` (`admin`, `safuser` for one account) | `admin` with `safbox_base_6`, `safuser` with `safbox_base_5` ([Accounts](accounts.md)) |
-| `clone_secrets` | `secrets` | any of `safbox_services_1`, `_2` and `_5`: the services' secrets as podman secrets ([Services on the box](services.md), "First boot") |
-| `clone_proxy_tls` | `proxy_tls` | `safbox_services_3`: the proxy's certificate |
+| `clone_accounts` | `accounts` (`admin`, `safuser` for one account) | `admin` with `safbox_base_admin`, `safuser` with `safbox_base_safuser` ([Accounts](accounts.md)) |
+| `clone_secrets` | `secrets` | any of `safbox_services_heimdall`, `safbox_services_vulcan` and `safbox_services_keycloak`: the services' secrets as podman secrets ([Services on the box](services.md), "First boot") |
+| `clone_proxy_tls` | `proxy_tls` | `safbox_services_proxy`: the proxy's certificate |
 
 The dotfiles new accounts start with get their STIG modes at build
 instead, in `/etc/skel` ([Hardening](hardening.md)).
@@ -165,7 +175,11 @@ instead, in `/etc/skel` ([Hardening](hardening.md)).
   `--tags` ignores the marker and writes none. With `--tags renew` the play
   runs only the renewal of the proxy's certificate
   ([Services on the box](services.md), "Renewal"). With
-  `--tags heimdall-scans` it runs only the import of the template's
+  `--tags heimdall-admin` it runs only the change of Heimdall's
+  administrator password from its throwaway bootstrap value (the
+  `clone_heimdall_admin` role), which `safbox-heimdall-admin.service` runs
+  at every boot after Heimdall answers ([Services on the box](services.md),
+  "Accounts"). With `--tags heimdall-scans` it runs only the import of the template's
   build-gate scan results into Heimdall (the `clone_heimdall_scans` role). This
   is not part of first boot: Heimdall starts after first boot, so
   `safbox-heimdall-scans.service` runs it once, after Heimdall answers
@@ -178,8 +192,8 @@ instead, in `/etc/skel` ([Hardening](hardening.md)).
 - **The build's scan results.** The seal installs the build gate's
   results, for the `safbox` profile and the STIG overlay, in
   `/usr/local/share/safbox/scans/` (seal task group 1, which records
-  the build) with a `manifest.json` naming the build run. That run is the
-  directory `scripts/build.sh` made under `.build/runs/`.
+  the build) with a `manifest.json` naming the build run: the UTC time
+  `scripts/build.sh` started.
 - **Unit presets.** The seal leaves `/etc/machine-id` "uninitialized", so
   a clone's first boot is a systemd *First Boot*, which may reset every
   unit to its preset policy, and the distribution's presets end in
@@ -193,8 +207,8 @@ instead, in `/etc/skel` ([Hardening](hardening.md)).
 ## Package updates
 
 The kickstart installs from the ISO's own repository, so a fresh install
-carries the packages of the ISO's release. Task group `safbox-base-3`
-(switch `safbox_base_3`, on by default) updates every installed package
+carries the packages of the ISO's release. Task group `safbox-base-update`
+(switch `safbox_base_update`, on by default) updates every installed package
 from the configured repositories, on every playbook run: the build and any
 later run against a deployed box.
 
@@ -218,8 +232,8 @@ later run against a deployed box.
   and the build user, its key and its sudo rule are on disk and survive the
   reboot. A run with nothing to update neither changes nor reboots; a
   later run updates again only when the repositories carry newer packages.
-- **Switching it off.** Set `safbox_base_3: false` in `ansible/local.yml`,
-  or skip it for one run with `--skip-tags safbox-base-3`. An air-gapped
+- **Switching it off.** Set `safbox_base_update: false` in `ansible/local.yml`,
+  or skip it for one run with `--skip-tags safbox-base-update`. An air-gapped
   site whose box cannot reach any repository does this; it stays on by
   default.
 
@@ -229,8 +243,8 @@ The image is headless by default. The RHEL 10 STIG allows a graphical
 interface only where one is a documented requirement, so a desktop is a
 site decision, made in one place:
 
-1. In `ansible/local.yml`, set `safbox_desktop_enabled: true`. Platform
-   group 7 then installs GNOME (the "Server with GUI" environment group),
+1. In `ansible/local.yml`, set `safbox_desktop_enabled: true`. Task group
+   `safbox-platform-desktop` then installs GNOME (the "Server with GUI" environment group),
    enables the display manager, and makes the box boot to the graphical
    login. The same switch approves the GUI to the Lockdown role
    (`rhel10stig_gui`, `rhel10stig_gui_approved`) and stops it removing gdm

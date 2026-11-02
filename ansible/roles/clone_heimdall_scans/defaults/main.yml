@@ -1,6 +1,6 @@
 ---
 # clone_heimdall_scans role of the first-boot play (task group
-# safbox-services-1), run by safbox-heimdall-scans.service with --tags
+# safbox-services-heimdall), run by safbox-heimdall-scans.service with --tags
 # heimdall-scans.
 
 # Its settings, written by the template_services role at build:

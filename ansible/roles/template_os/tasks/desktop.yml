@@ -1,5 +1,5 @@
 ---
-# GNOME on the console and the SAF branding: task group safbox-platform-7,
+# GNOME on the console and the SAF branding: task group safbox-platform-desktop,
 # imported by tasks/main.yml, which applies its tag, its switch and the
 # desktop guard (safbox_desktop_enabled).
 
@@ -10,7 +10,7 @@
 - name: Keep the package manager from installing packages the STIG removes
   ansible.builtin.blockinfile:
     path: /etc/dnf/dnf.conf
-    marker: "# {mark} SAFBox desktop: packages the STIG removes (platform group 7)"
+    marker: "# {mark} SAFBox desktop: packages the STIG removes (safbox-platform-desktop)"
     block: |
       {% for item in template_os_desktop_package_excludes %}
       # {{ item.package }}: {{ item.stig_id }}

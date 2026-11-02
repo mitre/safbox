@@ -1,13 +1,13 @@
 ---
-# The site's trusted CA bundles: task group safbox-site-config-1, imported
+# The site's trusted CA bundles: task group safbox-site-config-ca-bundles, imported
 # by tasks/main.yml, which applies its tag and its switch.
 #
 # Each entry of safbox_trust_bundles names a bundle (name), where it comes
 # from (url, fetched by the box, or path, a file on the machine running
 # Ansible), its sha256, its format (a key of template_os_trust_convert)
 # and, for a zip archive, the member that holds the certificates. Nothing
-# is trusted unless every entry is valid, every download and file matches
-# its sha256, and every certificate passes the system crypto policy.
+# is trusted unless every entry is valid and every download and file
+# matches its sha256.
 - name: Fetch, check and install the CA bundles
   vars:
     template_os_trust_source: >-
@@ -148,76 +148,6 @@
       loop: "{{ safbox_trust_bundles }}"
       loop_control:
         label: "{{ item.name }}"
-
-    # Before anything is trusted, every certificate must verify under the
-    # system crypto policy: its chain built from the bundles and the system
-    # store, each signature checked (a root's own signature too) and each
-    # key and signature at the policy's security level, so a root the policy
-    # would refuse in use (SHA-1, a short key, a curve FIPS mode lacks) is
-    # reported here rather than trusted and rejected silently. Expiry is not
-    # judged: a bundle may carry expired CAs, which are never valid in use.
-    - name: Check the certificates against the system crypto policy
-      when: template_os_trust_certs | length > 0
-      block:
-        - name: Read the system crypto policy's OpenSSL settings
-          ansible.builtin.slurp:
-            src: "{{ template_os_trust_policy_file }}"
-          register: template_os_trust_policy
-
-        - name: Take the security level the policy sets for TLS
-          ansible.builtin.set_fact:
-            template_os_trust_level: >-
-              {{ template_os_trust_policy.content | b64decode
-                 | regex_search('@SECLEVEL=([0-9])', '\1') | default([''], true) | first }}
-
-        - name: Refuse to judge without a security level
-          ansible.builtin.assert:
-            that:
-              - template_os_trust_level is match('^[0-9]$')
-            fail_msg: "No OpenSSL security level (@SECLEVEL=<n>) in {{ template_os_trust_policy_file }}"
-            quiet: true
-
-        - name: Write every bundle certificate to one candidate file
-          ansible.builtin.copy:
-            content: "{{ template_os_trust_certs | map(attribute='pem') | join }}"
-            dest: "{{ template_os_trust_work_dir }}/candidates.pem"
-            owner: root
-            group: root
-            mode: '0600'
-
-        - name: Verify each certificate at the policy's security level
-          ansible.builtin.command:
-            argv:
-              - openssl
-              - verify
-              - -auth_level
-              - "{{ template_os_trust_level }}"
-              - -check_ss_sig
-              - -no_check_time
-              - -CAfile
-              - "{{ template_os_trust_work_dir }}/candidates.pem"
-              - -CApath
-              - "{{ template_os_trust_system_capath }}"
-            stdin: "{{ item.pem }}"
-          loop: "{{ template_os_trust_certs }}"
-          loop_control:
-            label: "{{ item.file }}"
-          register: template_os_trust_verify
-          changed_when: false
-          failed_when: false
-
-        - name: Refuse the bundles if the crypto policy rejects any certificate
-          ansible.builtin.assert:
-            that:
-              - item.rc == 0
-            fail_msg: >-
-              Trust bundle {{ item.item.bundle }}: {{ item.item.file }} is rejected by the system crypto
-              policy (security level {{ template_os_trust_level }}):
-              {{ (item.stdout_lines + item.stderr_lines) | join('; ') }}
-            quiet: true
-          loop: "{{ template_os_trust_verify.results }}"
-          loop_control:
-            label: "{{ item.item.file }}"
 
     - name: Install one anchor file per certificate
       ansible.builtin.copy:

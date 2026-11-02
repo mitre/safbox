@@ -1,0 +1,168 @@
+---
+# Heimdall's administrator gets the password first boot made for it.
+# Heimdall makes its administrator on its first start from ADMIN_PASSWORD
+# and prints that password in its log, so the journal; the container is
+# given a throwaway bootstrap password (a podman secret) for that. Once
+# Heimdall answers, safbox-heimdall-admin.service runs this at every boot,
+# with the first-boot play's --tags heimdall-admin:
+#
+#   ansible-playbook -c local -i localhost, /usr/local/lib/safbox/firstboot/firstboot.yml --tags heimdall-admin
+#
+#   - It signs in with the bootstrap password through Heimdall's API and
+#     changes the password to the real one (heimdall-admin-password) as
+#     Heimdall's own change-password form does: the current password and
+#     the new one twice. Heimdall still asks for a new password at the
+#     first sign-in (forcePasswordChange stays set).
+#   - It then signs in with the real password, and only then replaces the
+#     bootstrap secret's value with a new one nobody reads: Heimdall's unit
+#     needs the secret, which it reads only when its database has no
+#     administrator. The value in the journal opens nothing.
+#   - When the bootstrap password does not sign in, there is nothing to do:
+#     the password was changed before. A refused change, or a real password
+#     that then does not sign in, fails the unit (systemctl --failed lists
+#     it); Heimdall not answering fails it too.
+#   - Passwords travel in the module's arguments and the requests' bodies
+#     only, never in a process argument; every task that holds one is
+#     no_log, and a failure names the HTTP status only.
+
+- name: Read the role's settings
+  ansible.builtin.include_vars:
+    file: "{{ clone_heimdall_admin_settings_file }}"
+
+- name: Read the bootstrap and the real password
+  ansible.builtin.command:
+    argv: [podman, secret, inspect, --showsecret, --format, "{{ '{{' }}.SecretData{{ '}}' }}", "{{ item }}"]
+  loop:
+    - "{{ clone_heimdall_admin_bootstrap_secret }}"
+    - "{{ clone_heimdall_admin_secret }}"
+  register: clone_heimdall_admin_passwords
+  changed_when: false
+  no_log: true
+
+- name: Name the two passwords
+  ansible.builtin.set_fact:
+    clone_heimdall_admin_bootstrap: "{{ clone_heimdall_admin_passwords.results[0].stdout }}"
+    clone_heimdall_admin_password: "{{ clone_heimdall_admin_passwords.results[1].stdout }}"
+  no_log: true
+
+- name: Sign in with the bootstrap password
+  ansible.builtin.uri:
+    url: "{{ clone_heimdall_admin_url }}/authn/login"
+    method: POST
+    body_format: json
+    body:
+      email: "{{ clone_heimdall_admin_email }}"
+      password: "{{ clone_heimdall_admin_bootstrap }}"
+    status_code: [201, 401]
+  register: clone_heimdall_admin_bootstrap_login
+  failed_when: false
+  no_log: true
+
+# Not no_log, so the failure names its cause: the status alone.
+- name: Stop when Heimdall did not answer the sign-in
+  when: clone_heimdall_admin_bootstrap_login.status not in [201, 401]
+  ansible.builtin.fail:
+    msg: >-
+      Heimdall answered the sign-in with HTTP {{ clone_heimdall_admin_bootstrap_login.status }};
+      the administrator's password was not changed
+
+- name: Report that the password was changed before
+  when: clone_heimdall_admin_bootstrap_login.status == 401
+  ansible.builtin.debug:
+    msg: the bootstrap password does not sign in to Heimdall; nothing to do
+
+- name: Change the bootstrap password to the real one
+  when: clone_heimdall_admin_bootstrap_login.status == 201
+  block:
+    # At the administrator's first sign-in Heimdall (2.14.0 and 2.15.0)
+    # makes the session's signing key and signs the token with it, but
+    # answers before the key is written to its database. On a busy first
+    # boot that write can wait seconds for the disk (up to 15 s
+    # seen) while reads go on, so Heimdall checks the token against no
+    # key and answers 401. The same token works once the key is in, so a
+    # 401 is tried again for about a minute.
+    - name: Change the administrator's password through Heimdall's API
+      ansible.builtin.uri:
+        url: "{{ clone_heimdall_admin_url }}/users/{{ clone_heimdall_admin_bootstrap_login.json.userID }}"
+        method: PUT
+        headers:
+          Authorization: "Bearer {{ clone_heimdall_admin_bootstrap_login.json.accessToken }}"
+        body_format: json
+        body:
+          currentPassword: "{{ clone_heimdall_admin_bootstrap }}"
+          password: "{{ clone_heimdall_admin_password }}"
+          passwordConfirmation: "{{ clone_heimdall_admin_password }}"
+          forcePasswordChange: true
+        status_code: [200]
+      register: clone_heimdall_admin_change
+      until: clone_heimdall_admin_change.status != 401
+      retries: 20
+      delay: 3
+      # Ansible fails a task whose retries run out whatever failed_when
+      # says; ignored, so the next task names the status.
+      ignore_errors: true
+      failed_when: false
+      changed_when: clone_heimdall_admin_change.status == 200
+      no_log: true
+
+    - name: Stop when Heimdall refused the change
+      when: clone_heimdall_admin_change.status != 200
+      ansible.builtin.fail:
+        msg: >-
+          Heimdall answered the password change with HTTP {{ clone_heimdall_admin_change.status }};
+          the bootstrap password still signs in
+
+    - name: Sign in with the real password
+      ansible.builtin.uri:
+        url: "{{ clone_heimdall_admin_url }}/authn/login"
+        method: POST
+        body_format: json
+        body:
+          email: "{{ clone_heimdall_admin_email }}"
+          password: "{{ clone_heimdall_admin_password }}"
+        status_code: [201]
+      register: clone_heimdall_admin_login
+      failed_when: false
+      no_log: true
+
+    - name: Stop when the real password does not sign in
+      when: clone_heimdall_admin_login.status != 201
+      ansible.builtin.fail:
+        msg: >-
+          Heimdall answered the sign-in with the new password with HTTP {{ clone_heimdall_admin_login.status }};
+          the bootstrap secret is kept
+
+    - name: Read the bootstrap secret's description
+      ansible.builtin.command:
+        argv:
+          - podman
+          - secret
+          - inspect
+          - --format
+          - "{{ '{{' }}.Spec.Labels.description{{ '}}' }}"
+          - "{{ clone_heimdall_admin_bootstrap_secret }}"
+      register: clone_heimdall_admin_bootstrap_label
+      changed_when: false
+
+    - name: Generate a value for the bootstrap secret that nobody reads
+      ansible.builtin.command:
+        argv: [openssl, rand, -hex, "{{ clone_heimdall_admin_bootstrap_bytes }}"]
+      register: clone_heimdall_admin_bootstrap_new
+      changed_when: false
+      no_log: true
+
+    - name: Replace the bootstrap secret's value
+      ansible.builtin.command:
+        argv:
+          - podman
+          - secret
+          - create
+          - --replace
+          - --label
+          - "description={{ clone_heimdall_admin_bootstrap_label.stdout }}"
+          - "{{ clone_heimdall_admin_bootstrap_secret }}"
+          - "-"
+        stdin: "{{ clone_heimdall_admin_bootstrap_new.stdout }}"
+        stdin_add_newline: false
+      changed_when: true
+      no_log: true

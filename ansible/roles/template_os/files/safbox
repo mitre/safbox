@@ -24,7 +24,7 @@ readonly FIRSTBOOT_UNIT=safbox-firstboot.service
 readonly OS_RELEASE=/etc/os-release
 # Where the template_tools role installs each tool (ansible/roles/template_tools/defaults).
 readonly CINC_MANIFEST=/opt/cinc-auditor/version-manifest.txt
-readonly SAF_CLI_PACKAGE=/usr/local/lib/node_modules/@mitre/saf/package.json
+readonly SAF_CLI_PACKAGE=/usr/local/lib/saf-cli/node_modules/@mitre/saf/package.json
 readonly PACKER_BIN=/usr/local/bin/packer
 
 row() { printf '%-26s %s\n' "$1:" "$2"; }

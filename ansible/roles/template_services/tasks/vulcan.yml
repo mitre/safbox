@@ -1,7 +1,7 @@
 ---
 # Vulcan and its PostgreSQL as a podman pod of Quadlet units: task group
-# safbox-services-2, imported by tasks/main.yml, which applies the group's
-# tag and its switch safbox_services_2.
+# safbox-services-vulcan, imported by tasks/main.yml, which applies the group's
+# tag and its switch safbox_services_vulcan.
 
 # Pulled at build so a clone starts its pod offline.
 - name: Pull the Vulcan and PostgreSQL images

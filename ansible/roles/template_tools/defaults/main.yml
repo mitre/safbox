@@ -2,14 +2,14 @@
 # template_tools role: the assessment and build tools a SAFBox ships: CINC Auditor,
 # the SAF CLI, Ansible with the collections the Lockdown STIG role needs,
 # and Packer. Pins live in group_vars/all/main.yml and are overridable per
-# site. Task groups are tagged safbox-tools-<n> and switched off by setting
-# safbox_tools_<n> to false.
+# site. Task groups are tagged safbox-tools-<name> and switched off by
+# setting safbox_tools_<name> to false; Ansible has no switch.
 
-# SAF CLI: a global npm install under npm's global prefix (/usr/local on
-# the RHEL family), which links the saf command into /usr/local/bin. The
-# installed package's manifest records its version; npm's cache goes in
-# /var/tmp, which the seal clears.
-template_tools_saf_cli_manifest: /usr/local/lib/node_modules/@mitre/saf/package.json
+# SAF CLI: installed from files/saf-cli/package-lock.json into its own
+# directory, with the saf command linked onto the default PATH. npm's
+# cache goes in /var/tmp, which the seal clears.
+template_tools_saf_cli_prefix: /usr/local/lib/saf-cli
+template_tools_saf_cli_bin: /usr/local/bin/saf
 template_tools_saf_cli_npm_cache: /var/tmp/safbox-npm-cache
 
 # Ansible collections go in the system-wide collection path every user's

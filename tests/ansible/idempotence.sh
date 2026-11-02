@@ -6,17 +6,9 @@
 #   SAFBOX_USER  SSH user with passwordless sudo (the build user)
 #   SAFBOX_KEY   path to that user's SSH private key
 #
-# One known upstream defect is tolerated, by exact task name and nothing
-# else: the pinned Ansible Lockdown RHEL10-STIG role ends every run with
-# "POST | Warning a reboot required but skip option set", a debug task with
-# changed_when: true, so it reports one change on every run. Any other
-# changed task, or that task changing more than once, still fails. Remove
-# the tolerance when the pinned Lockdown release fixes the task.
-#
 #   tests/ansible/idempotence.sh [ansible-playbook args...]
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
-TOLERATED='RHEL10-STIG : POST | Warning a reboot required but skip option set'
 
 if [[ -z "${SAFBOX_HOST:-}" || -z "${SAFBOX_USER:-}" || -z "${SAFBOX_KEY:-}" ]]; then
   cat >&2 <<'MSG'
@@ -58,8 +50,6 @@ tasks=$(awk '/^(TASK|RUNNING HANDLER) \[/ { name = $0; sub(/^(TASK|RUNNING HANDL
   /^changed: / { print name }' "$log" | sort -u)
 if [[ "$changed" -eq 0 ]]; then
   echo "PASS: second run changed=0"
-elif [[ "$changed" -eq 1 && "$tasks" == "$TOLERATED" ]]; then
-  echo "PASS: second run changed only the tolerated upstream task ($TOLERATED)"
 else
   echo "FAIL: second run changed $changed task(s):" >&2
   printf '  changed: %s\n' "$tasks" >&2

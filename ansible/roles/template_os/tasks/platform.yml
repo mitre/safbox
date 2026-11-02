@@ -5,7 +5,7 @@
 # it.
 
 - name: Base packages and services
-  tags: [safbox-platform-1]
+  tags: [safbox-platform-packages]
   block:
     - name: Install the base packages
       ansible.builtin.package:
@@ -20,7 +20,7 @@
       loop: "{{ template_os_services_enabled }}"
 
 - name: Firewall
-  tags: [safbox-platform-3]
+  tags: [safbox-platform-firewall]
   block:
     # In the zone the box ends up in (safbox_firewall_zone in group_vars).
     - name: Allow the base services through the firewall
@@ -33,7 +33,7 @@
       loop: "{{ template_os_firewalld_services }}"
 
 - name: Container runtime
-  tags: [safbox-platform-4]
+  tags: [safbox-platform-containers]
   block:
     - name: Install podman from the distribution repositories
       ansible.builtin.package:
@@ -76,8 +76,8 @@
         persistent: true
 
 - name: Persistent journal
-  when: safbox_platform_6 | default(true) | bool
-  tags: [safbox-platform-6]
+  when: safbox_platform_journal | default(true) | bool
+  tags: [safbox-platform-journal]
   block:
     - name: Create the journald drop-in directory
       ansible.builtin.file:

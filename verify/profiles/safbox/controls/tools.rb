@@ -37,7 +37,7 @@ control 'safbox-tools-2' do
   desc "The SAF CLI is installed from npm and runs on the distribution's Node.js, which uses the system OpenSSL FIPS provider."
   only_if('The SAF CLI is switched off', impact: 0.0) { tools.include?('saf-cli') }
 
-  describe json('/usr/local/lib/node_modules/@mitre/saf/package.json') do
+  describe json('/usr/local/lib/saf-cli/node_modules/@mitre/saf/package.json') do
     its('version') { should cmp input('saf_cli_version') }
   end
   describe file('/usr/local/bin/saf') do
@@ -52,7 +52,6 @@ control 'safbox-tools-3' do
   impact 1.0
   title 'Ansible and the collections the Lockdown STIG role needs are installed at their pinned versions'
   desc 'ansible-core comes from the distribution; the collections are installed system-wide so every user can run Lockdown playbooks.'
-  only_if('Ansible is switched off', impact: 0.0) { tools.include?('ansible') }
 
   describe package('ansible-core') do
     it { should be_installed }

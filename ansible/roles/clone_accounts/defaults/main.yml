@@ -1,12 +1,15 @@
 ---
 # clone_accounts role of the first-boot play: admin (task group
-# safbox-base-6, tasks/admin.yml) and safuser (safbox-base-5,
+# safbox-base-admin, tasks/admin.yml) and safuser (safbox-base-safuser,
 # tasks/safuser.yml).
 
 # admin: AccountsService's per-user files, where it is hidden from the
 # login screen, and the service that reads them.
 clone_accounts_admin_accounts_dir: /var/lib/AccountsService/users
 clone_accounts_admin_accounts_service: accounts-daemon.service
+# The STIG's maximum password age, as /etc/login.defs gives every account
+# useradd makes; admin has no password, so it applies only once it has one.
+clone_accounts_admin_max_days: 60
 
 # safuser: its name and GECOS comment; the root-only file that keeps a
 # generated password (SAFUSER_PASSWORD=); its sudo rule, which asks for its

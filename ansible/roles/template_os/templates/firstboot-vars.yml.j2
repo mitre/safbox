@@ -8,9 +8,9 @@
     'safbox_tls_dir': safbox_tls_dir,
     'safbox_firstboot_dir': safbox_firstboot_dir,
     'safbox_firstboot_done': safbox_firstboot_done,
-    'safbox_base_5': safbox_base_5 | default(true) | bool,
-    'safbox_base_6': safbox_base_6 | default(true) | bool,
-    'safbox_services_1': safbox_services_1 | default(true) | bool,
-    'safbox_services_2': safbox_services_2 | default(true) | bool,
-    'safbox_services_3': safbox_services_3 | default(true) | bool,
-    'safbox_services_5': safbox_services_5 | default(true) | bool} | to_nice_yaml(indent=2, sort_keys=false) }}
+    'safbox_base_safuser': safbox_base_safuser | default(true) | bool,
+    'safbox_base_admin': safbox_base_admin | default(true) | bool,
+    'safbox_services_heimdall': safbox_services_heimdall | default(true) | bool,
+    'safbox_services_vulcan': safbox_services_vulcan | default(true) | bool,
+    'safbox_services_proxy': safbox_services_proxy | default(true) | bool,
+    'safbox_services_keycloak': safbox_services_keycloak | default(true) | bool} | to_nice_yaml(indent=2, sort_keys=false) }}

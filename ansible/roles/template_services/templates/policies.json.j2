@@ -1,4 +1,4 @@
-{#- Firefox enterprise policy (template_services role, task group safbox-services-4).
+{#- Firefox enterprise policy (template_services role, task group safbox-services-firefox).
     The applications' and the start page's bookmarks need the proxy, as
     does the homepage, the start page (unlocked: users may change it). The
     first-run and post-update pages open the start page with the proxy and
@@ -16,7 +16,7 @@
     bypass both tab and bar on their own too, so the notice stays away if
     the telemetry policy is ever dropped. Both are locked; the Preferences
     policy allows datareporting.policy. prefs. -#}
-{% set proxy = safbox_services_3 | default(true) | bool %}
+{% set proxy = safbox_services_proxy | default(true) | bool %}
 {% set start = ('https://' ~ safbox_domain ~ '/') | to_json %}
 {% set icon = ('data:' ~ template_services_firefox_bookmark_icon_type ~ ';base64,' ~ template_services_firefox_icon.content) | to_json %}
 {

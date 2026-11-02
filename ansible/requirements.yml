@@ -14,17 +14,29 @@ roles:
   - name: RHEL10-STIG
     src: https://github.com/ansible-lockdown/RHEL10-STIG.git
     scm: git
-    version: db177ced50f33a42d1ebbfafa86eb02733665602
+    version: b45366ba7e3820afa2b92c4511ec4bb58f6e9359
 
-# These match the versions bundled with the ansible 14.5.0 community
-# package. ansible.posix, community.general and community.crypto are the
-# collections the Lockdown role declares (its collections/requirements.yml).
+# The releases bundled with the ansible 14.5.0 community package, each
+# installed from its source repository at the commit its release tag names
+# (the release is in the comment), so a moved tag cannot change it.
+# ansible.posix and community.general are the collections the Lockdown role
+# declares (its collections/requirements.yml); community.crypto is the one
+# the first-boot play's certificate tasks use, so its syntax check resolves;
+# community.library_inventory_filtering_v1 is community.general's own
+# dependency, listed so it is pinned too.
 collections:
-  - name: ansible.posix
-    version: 2.2.2
-  - name: community.crypto
-    version: 3.5.0
-  - name: community.general
-    version: 13.5.0
-  - name: containers.podman
-    version: 1.21.0
+  - name: https://github.com/ansible-collections/ansible.posix.git
+    type: git
+    version: e98d9a0756458be1ac710988498000973889075c  # 2.2.2
+  - name: https://github.com/ansible-collections/community.crypto.git
+    type: git
+    version: fce4f220c3b54d5c6eb9c94ef74fc25ae3f5fb91  # 3.5.0
+  - name: https://github.com/ansible-collections/community.general.git
+    type: git
+    version: bbe4fa1a88a60db1000e18982849b4c54fa84fe0  # 13.5.0
+  - name: https://github.com/ansible-collections/community.library_inventory_filtering.git
+    type: git
+    version: 5f70dd8678885157cb186e8b64382a30cab3e12f  # 1.1.5
+  - name: https://github.com/containers/ansible-podman-collections.git
+    type: git
+    version: 1a9e62dde6e631adbbb604583187f088dc0d6e7d  # 1.21.0

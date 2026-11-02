@@ -6,23 +6,23 @@ copyright: The MITRE Corporation
 copyright_email: saf@mitre.org
 license: Apache-2.0
 summary: >-
-  Checks a deployed SAFBox the way a browser on another machine sees it,
-  through its TLS proxy only: the proxy's TLS, each application's page
-  and its scripts and stylesheets, that nothing but the proxy answers,
-  and each application's sign-in and main use, Keycloak single sign-on
-  included. Runs on this machine (-t local), never on the box: checks
-  that need a shell on the box are in the safbox profile. It creates
-  accounts and data and changes safuser's Keycloak password, so run it
-  against a clone, never an appliance in use. With read_only true it
-  skips the controls that do that and runs the rest.
+  Checks a deployed SAFBox the way another machine on its network sees it:
+  the TLS proxy's protocols and certificate, that only the proxy's ports
+  answer, and that Heimdall, Vulcan and Keycloak each answer through it.
+  Runs on this machine (-t local), never on the box: checks that need a
+  shell on the box are in the safbox profile. It only reads: it signs in
+  to nothing and changes nothing on the box.
 version: 1.0.0
 inspec_version: ">= 5.0"
+# This machine, a Linux workstation with OpenSSL 3 and nc or ncat.
+supports:
+  - platform-family: linux
 inputs:
   - name: address
     description: >-
-      The box's address. Requests for its names go there, as a DNS or
-      hosts entry on a client would send them (curl --resolve, openssl
-      -servername), so this machine needs neither.
+      The box's address. Requests for its names go there, with the name
+      as the TLS server name or the HTTP Host header, as a DNS or hosts
+      entry on a client would send them, so this machine needs neither.
     type: String
     required: true
   - name: domain
@@ -38,64 +38,3 @@ inputs:
       Remove one a site switches off.
     type: Array
     value: [heimdall, vulcan, keycloak, proxy]
-  - name: work_dir
-    description: >-
-      An empty directory on this machine, mode 0700, for the checks'
-      files (the certificate the box served, cookie jars, passwords);
-      the caller makes it and removes it afterwards.
-    type: String
-    required: true
-  - name: hdf_file
-    description: >-
-      An HDF results file to upload to Heimdall, such as the safbox
-      profile's results from the same gate. When they are the safbox
-      profile's, safbox-client-keycloak-2 also reads from them which of
-      the template's build-gate scans the box imported (safbox-heimdall-8)
-      and checks that safuser sees each one.
-    type: String
-    value: ""
-  - name: heimdall_admin_password
-    description: >-
-      The password of Heimdall's administrator, admin@<domain>:
-      the heimdall-admin-password podman secret on the box.
-    type: String
-    sensitive: true
-    value: ""
-  - name: vulcan_admin_password
-    description: >-
-      The password of Vulcan's administrator, admin@<domain>:
-      the vulcan-admin-password podman secret on the box.
-    type: String
-    sensitive: true
-    value: ""
-  - name: keycloak_safuser_password
-    description: >-
-      safuser's Keycloak password generated at first boot, a one-time
-      password its first sign-in changes: the keycloak-safuser-password
-      podman secret on the box.
-    type: String
-    sensitive: true
-    value: ""
-  - name: keycloak_safuser_password_file
-    description: >-
-      A file on this machine, mode 0600, where the checks keep the password
-      they give safuser: its first sign-in changes the generated one, and
-      the account console's password Update changes it again on every run.
-      Empty, the default: a file in work_dir, so each run expects a fresh
-      box. Name a lasting file to run the checks again against the same
-      box; while a change is under way the new password is in <file>.new.
-    type: String
-    value: ""
-  - name: read_only
-    description: >-
-      true for a box kept for a person (scripts/clone-and-ssh.sh --keep,
-      validate.sh --client-read-only): the controls that change the box
-      are skipped, each reported as skipped with the reason, and every
-      other control runs. Skipped: safbox-client-heimdall-2 (uploads an
-      evaluation), safbox-client-vulcan-2 (its sign-up makes an account),
-      safbox-client-vulcan-3 (creates a project) and
-      safbox-client-keycloak-2 to -5 (take safuser's first sign-in and
-      change its password), so safuser's first Keycloak sign-in is left
-      for that person. false, the default: every control runs.
-    type: Boolean
-    value: false

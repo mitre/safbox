@@ -28,8 +28,9 @@ upstream pages linked below. The versions listed are the ones CI uses
 | Node.js and npm | 18 or newer; the build uses them to build the documentation site the box serves (`site/`), from its lockfile | [nodejs.org](https://nodejs.org/en/download) |
 
 The scripts also use the usual command-line tools: git, the OpenSSH client
-(`ssh`, `ssh-keygen`), curl, jq, flock (util-linux; on macOS, Homebrew's
-`flock` or `util-linux`), netcat (`nc` or `ncat`) and OpenSSL 3 as `openssl`,
+(`ssh`, `ssh-keygen`), curl, jq, `uuidgen` (util-linux), `timeout`
+(coreutils; on macOS, Homebrew's `coreutils`), netcat (`nc` or `ncat`) and
+OpenSSL 3 as `openssl`,
 which the release gate's client checks use to probe the box's ports and
 TLS (on macOS, whose `openssl` is LibreSSL, put Homebrew's `openssl@3`
 first on `PATH`).
@@ -41,9 +42,9 @@ and it is easy to get the wrong one:
   collections. **This is the one to install**, at the version pinned in
   `tests/requirements.txt` (currently 14.5.0). `ansible/requirements.yml`
   pins collection versions that match it.
-- `ansible-core` on its own has no collections. It works for the build,
-  which installs its collections from `ansible/requirements.yml`, but it is
-  not what the static suite or the linters were verified with.
+- `ansible-core` on its own has no collections, and `scripts/build.sh`
+  refuses it: the build checks for the `ansible` package at the pinned
+  version.
 - Packages from an OS repository called `ansible` or `ansible-core` are
   often several releases old, and the version number they carry may be
   for either of the two above. Don't use them unless their version matches.
@@ -98,6 +99,16 @@ and cloud-init, and the install fetches them. Without egress the install fails
 early and visibly (`%post --erroronfail`) rather than leaving a silent
 template.
 
+The build VM also fetches its kickstart from the runner, on TCP port 8600
+(the `http_port` variable). If the runner has a firewall, allow that port from
+the build network, or the installer waits and the build times out waiting for
+SSH:
+
+```sh
+sudo firewall-cmd --permanent --add-port=8600/tcp && sudo firewall-cmd --reload  # firewalld
+sudo ufw allow 8600/tcp                                                            # ufw
+```
+
 The build account cannot upload files by design, so you do it. Either:
 
 - GUI: select the node, then its ISO storage (usually `local`), then
@@ -139,19 +150,21 @@ pveum pool add <pool> --comment "SAFBox builds"
 
 ## 4. Create the least-privilege role
 
-Two roles: one for building, one read-only for the ISO storage. These are
-the privileges the Packer Proxmox plugin and the clone test use, and nothing
-else. Notably absent: `Datastore.AllocateTemplate` (no ISO or template
-upload), `Pool.Allocate` (creating a VM into a pool is authorized by
-`VM.Allocate` on the pool, so the account never needs to modify or delete
-the pool itself), `Sys.Modify` (no node changes), and anything on `/`.
+Three roles: one for building, one read-only for the ISO storage, and one
+that only reads the node. These are the privileges the Packer Proxmox
+plugin and the clone test use, and nothing else. Notably absent:
+`Datastore.AllocateTemplate` (no ISO or template upload), `Pool.Allocate`
+(creating a VM into a pool is authorized by `VM.Allocate` on the pool, so
+the account never needs to modify or delete the pool itself), `Sys.Modify`
+(no node changes), and anything on `/`.
 
 ```
 pveum role add SAFBoxBuilder -privs "VM.Allocate VM.Clone VM.Audit VM.Console VM.PowerMgmt \
   VM.Config.CDROM VM.Config.CPU VM.Config.Memory VM.Config.Disk VM.Config.Network \
   VM.Config.Options VM.Config.Cloudinit VM.Config.HWType VM.GuestAgent.Audit \
-  Datastore.Audit Datastore.AllocateSpace Pool.Audit SDN.Use Sys.Audit"
+  Datastore.Audit Datastore.AllocateSpace Pool.Audit SDN.Use"
 pveum role add SAFBoxISOReader -privs "Datastore.Audit"
+pveum role add SAFBoxNodeAudit -privs "Sys.Audit"
 ```
 
 On Proxmox 8, `VM.GuestAgent.Audit` does not exist; use `VM.Monitor` in its
@@ -163,23 +176,24 @@ its network configuration.
 
 ```
 pveum user add <user>@pve --comment "SAFBox build runner"
-pveum user token add <user>@pve <token-name> --privsep 0
+pveum user token add <user>@pve <token-name> --privsep 1
 ```
 
 A Proxmox API token is two values. Its **ID** is `<user>@pve!<token-name>`,
 which identifies which of the user's tokens is being used and is not
 sensitive. Its **secret** is the UUID printed once by the command above.
 The API wants both, as `PVEAPIToken=<id>=<secret>`, and the Packer plugin
-takes them as separate fields. `--privsep 0` means the token carries the
-user's permissions, so the ACLs below are granted to the user.
+takes them as separate fields. `--privsep 1` separates the token's
+privileges from the user's: the token may do only what both the user and
+the token are granted, so step 6 grants each ACL to both.
 
-Put the three values in a file only you can read, by default
+Put the token and the cluster CA in a file only you can read, by default
 `~/.config/proxmox/packer.env`, which `scripts/build.sh` and
-`scripts/clone-and-ssh.sh` source (`SAFBOX_PROXMOX_ENV` names another).
-`scripts/example.env` lists every variable the scripts read, grouped
-(credentials, the clone test's node and pool, VM ID ranges, CA and TLS,
-optional settings), each with a placeholder and a one-line comment. Start
-from it:
+`scripts/clone-and-ssh.sh` source (`SAFBOX_PROXMOX_ENV` names another). It
+holds credentials only: the node, pool and every other site setting go in
+`packer/local.auto.pkrvars.hcl` (step 7), which both scripts read. A
+variable already set in your shell wins over the file. Start from
+`scripts/example.env`:
 
 ```
 mkdir -p ~/.config/proxmox
@@ -187,33 +201,37 @@ cp scripts/example.env ~/.config/proxmox/packer.env
 chmod 600 ~/.config/proxmox/packer.env
 ```
 
-Then replace the placeholders. The required part is:
+Then replace the placeholders. The whole file is four lines:
 
 ```
 PROXMOX_URL=https://<node-address>:8006/api2/json
 PROXMOX_USERNAME='<user>@pve!<token-name>'
 PROXMOX_TOKEN=<token-secret>
-# VM ID ranges: templates and clones take the first free ID in theirs.
-SAFBOX_TEMPLATE_IDS=<first>-<last>
-SAFBOX_CLONE_IDS=<first>-<last>
+PROXMOX_CA_FILE=~/.config/proxmox/pve-root-ca.pem
 ```
 
-The scripts refuse the file unless its mode is 0600.
+`PROXMOX_CA_FILE` is the cluster CA (step 6); leave it out to use the
+system trust store. When it is set, the scripts hand it to Packer as
+`SSL_CERT_FILE`, replacing any `SSL_CERT_FILE` in your shell. The scripts refuse the file unless its mode is 0600.
+An older file that still sets `SAFBOX_NODE`, `SAFBOX_POOL`,
+`SAFBOX_CA_FILE` or `SSL_CERT_FILE` keeps working for now; the scripts
+print a warning naming each line to move.
 
 It is best practice to never put these in a Packer variables file, and to avoid putting them anywhere you might accidentally commit them to history.
 
 ## 6. Grant the ACLs
 
-One grant per thing the build touches. Creation rights come from the pool:
-every create and clone request names it, and Proxmox authorizes the request
-through `VM.Allocate` on the pool path.
+One grant per thing the build touches, each to the user and to its token.
+Creation rights come from the pool: every create and clone request names
+it, and Proxmox authorizes the request through `VM.Allocate` on the pool
+path. The node gets only `Sys.Audit`.
 
 ```
-pveum acl modify /pool/<pool>                     -user <user>@pve -role SAFBoxBuilder
-pveum acl modify /storage/<disk-storage>          -user <user>@pve -role SAFBoxBuilder
-pveum acl modify /storage/<iso-storage>           -user <user>@pve -role SAFBoxISOReader
-pveum acl modify /sdn/zones/localnetwork/<bridge> -user <user>@pve -role SAFBoxBuilder
-pveum acl modify /nodes/<node>                    -user <user>@pve -role SAFBoxBuilder
+pveum acl modify /pool/<pool>                     --users <user>@pve --tokens '<user>@pve!<token-name>' --roles SAFBoxBuilder
+pveum acl modify /storage/<disk-storage>          --users <user>@pve --tokens '<user>@pve!<token-name>' --roles SAFBoxBuilder
+pveum acl modify /storage/<iso-storage>           --users <user>@pve --tokens '<user>@pve!<token-name>' --roles SAFBoxISOReader
+pveum acl modify /sdn/zones/localnetwork/<bridge> --users <user>@pve --tokens '<user>@pve!<token-name>' --roles SAFBoxBuilder
+pveum acl modify /nodes/<node>                    --users <user>@pve --tokens '<user>@pve!<token-name>' --roles SAFBoxNodeAudit
 ```
 
 Optionally, cap which VM IDs the account may ever use by granting the role on
@@ -228,19 +246,21 @@ fill the granted storage.
 |---|---|
 | Disk storage (thin pool) | `disk_storage` |
 | Bridge | `bridge` |
-| Template and clone VM ID ranges | `SAFBOX_TEMPLATE_IDS`, `SAFBOX_CLONE_IDS` in the env file (step 5; see [How VM IDs are chosen](#how-vm-ids-are-chosen)) |
+| Template VM ID, a free one the account may use | `vm_id` (step 7) |
 
 Verify from your workstation. The output should list exactly the paths
-above and nothing on `/`, `/vms`, or `/nodes` itself:
+above and nothing on `/`, `/vms`, or `/nodes` itself. curl reads the token
+from a file descriptor, so it never appears on a command line:
 
 ```
 set -a; . ~/.config/proxmox/packer.env; set +a
-curl -sS --cacert <cluster-ca.pem> -H "Authorization: PVEAPIToken=$PROXMOX_USERNAME=$PROXMOX_TOKEN" "$PROXMOX_URL/access/permissions"
+curl -sS ${PROXMOX_CA_FILE:+--cacert "$PROXMOX_CA_FILE"} -K <(printf 'header = "Authorization: PVEAPIToken=%s=%s"\n' "$PROXMOX_USERNAME" "$PROXMOX_TOKEN") \
+  "$PROXMOX_URL/access/permissions"
 ```
 
 For TLS, prefer trusting the cluster CA over skipping verification: copy
-`/etc/pve/pve-root-ca.pem` from a node, point `SSL_CERT_FILE` at it for
-Packer and `SAFBOX_CA_FILE` for the clone test. Reserve
+`/etc/pve/pve-root-ca.pem` from a node and point `PROXMOX_CA_FILE` at it;
+the scripts trust it for their own API calls and hand it to Packer. Reserve
 `proxmox_insecure_skip_tls_verify` and `SAFBOX_INSECURE_TLS=1` for throwaway
 labs: with verification off, the token is sent to whoever answers.
 
@@ -256,12 +276,12 @@ every variable from the tables above, plus:
 | `proxmox_insecure_skip_tls_verify = true` | a throwaway lab only, where you will not trust the cluster CA (step 6 explains why trusting it is better: with verification off, the token goes to whoever answers) |
 | `http_interface` | the workstation has several network interfaces |
 | `kickstart_url` | the VM's network cannot reach the workstation; host the rendered kickstart elsewhere |
-| `installer_ssh = true` | you want to SSH into a stuck installer while developing; `scripts/build.sh` refuses it unless `SAFBOX_DEV=1` |
 | `cpu_type` | the default `x86-64-v3` needs a v3 node; on older hardware see [Site overrides](#site-overrides) below. Named models expose no hardware RNG, which is why the source attaches a virtio-rng device (`rng0` needs `VM.Config.HWType`, already in the role) |
 | `disk_format = "qcow2"` | the disk storage is a directory, NFS, or CIFS storage |
 | `vlan_tag` | the build network is a tagged VLAN |
 | `vga = "std"` | only if SPICE cannot be used at all: the default `qxl` is what SPICE needs, and SPICE (Console → SPICE, `remote-viewer`) is the default, tested way to reach the console ([desktop.md](desktop.md)); noVNC works with either |
 | `http_bind_address` | the runner should offer the rendered kickstart on one address only |
+| `http_port` | port 8600 is taken on the runner, or your firewall allows another port for the kickstart |
 | `build_gate_ssh_config_file` | CINC Auditor cannot read or use the runner's SSH client config (the build gate fails with `Permission denied @ rb_sysopen - /etc/ssh/ssh_config`); `"/dev/null"` reads none. Set `SAFBOX_SSH_CONFIG` the same way for the clone test. See [`scripts/validate.sh`](../../reference/validation.md#scripts-validate-sh) |
 
 ### Site overrides
@@ -271,10 +291,10 @@ goes in two git-ignored files:
 
 - `packer/local.auto.pkrvars.hcl` for Packer variables (node, pool, storage,
   ISO, CPU model, resources).
-- `ansible/local.yml` for Ansible variables. Pass it to every playbook by
-  adding `"@<absolute path>/ansible/local.yml"` to `ansible_extra_vars` in
-  the Packer file, or `-e @ansible/local.yml` when running a playbook by
-  hand. Values there replace the project's defaults in
+- `ansible/local.yml` for Ansible variables. The build passes it to every
+  playbook when it exists, and its log says whether it did (`Ansible site
+  settings: ...`); when running a playbook by hand, add
+  `-e @ansible/local.yml`. Values there replace the project's defaults in
   `ansible/group_vars/all/main.yml`.
 
 Example: on x86-64-v2 hardware, set `cpu_type = "x86-64-v2-AES"` in the
@@ -284,10 +304,8 @@ with CINC's el9 build (its el10 build requires x86-64-v3).
 ## 8. Build and prove
 
 ```
-tests/packer/validate.sh
-tests/kickstart/ks-lint.sh
 scripts/build.sh
-SAFBOX_NODE=<node> SAFBOX_POOL=<pool> scripts/clone-and-ssh.sh <template-vmid> [<clone-vmid>]
+scripts/clone-and-ssh.sh <template-vmid> <clone-vmid>
 ```
 
 `scripts/build.sh --help`, `scripts/clone-and-ssh.sh --help` and
@@ -295,26 +313,10 @@ SAFBOX_NODE=<node> SAFBOX_POOL=<pool> scripts/clone-and-ssh.sh <template-vmid> [
 file each script reads, with its default. `build.sh` passes every other
 argument to `packer build` unchanged.
 
-### How VM IDs are chosen
-
-The template's ID, first match wins:
-
-1. `-var vm_id=<id>` on the `build.sh` command line.
-2. `SAFBOX_TEMPLATE_IDS=<first>-<last>` in the env file (or the
-   environment): `build.sh` asks the Proxmox API, with the build token,
-   which IDs in that range are taken (`/cluster/nextid`, which answers for
-   the whole cluster, VMs outside the pool included), passes the first free
-   one to Packer as `-var vm_id`, and prints which ID it chose and which
-   were in use. A full range stops the run before Packer starts and lists
-   what holds each ID, as far as the token can see.
-3. `vm_id` in `packer/local.auto.pkrvars.hcl`. A fixed ID works once: the
-   next build fails because the previous template holds it.
-
-With none of them `build.sh` refuses to start and names the first two.
-The clone's ID is the second argument of `clone-and-ssh.sh`, or, without
-one, the first free ID in `SAFBOX_CLONE_IDS`, chosen the same way. Keep the
-ranges inside what step 6 lets the account use, and the template and
-clone ranges apart.
+The template's VM ID is `vm_id` in `packer/local.auto.pkrvars.hcl`, or
+`-var vm_id=<id>` on the `build.sh` command line, which wins. The clone's
+is the second argument of `clone-and-ssh.sh`. Both must be free and
+inside what step 6 lets the account use.
 
 `scripts/build.sh` mints an ephemeral build key and runs Packer. The build
 types a short GRUB edit at the ISO menu, serves the kickstart, waits
@@ -323,13 +325,16 @@ agent over SSH, runs the appliance playbook, validates the VM from this
 machine (`scripts/validate.sh`: CINC Auditor over SSH, then the SAF CLI
 thresholds), seals the image (deletes the build user, scrubs host identity
 and installer residue, asserts the seal's own post-conditions), and
-converts the VM to a template.
+converts the VM to a template. A build that fails or is interrupted keeps
+its VM for diagnosis; see
+[When a build fails or is interrupted](#when-a-build-fails-or-is-interrupted).
 
-Add `SAFBOX_CA_FILE=<cluster-ca.pem>` (or, for a throwaway lab,
-`SAFBOX_INSECURE_TLS=1`) to the clone command, or to the env file; without
-it the clone test trusts `SSL_CERT_FILE`, the CA Packer uses. Pass `--keep`
-after the IDs to leave the clone running for you; its release gate then runs
-the client profile read-only (below). Set `SAFBOX_CLONE_PASSWORD` to an
+The clone test uses the same node, pool and CA as the build:
+`proxmox_node` and `proxmox_pool` from `packer/local.auto.pkrvars.hcl`,
+`PROXMOX_CA_FILE` from the env file (for a throwaway lab,
+`SAFBOX_INSECURE_TLS=1` on the command line turns verification off
+instead). Pass `--keep`
+after the IDs to leave the clone running for you. Set `SAFBOX_CLONE_PASSWORD` to an
 `openssl passwd -6` hash to give `safuser` its password (see
 [Accounts on a clone](#accounts-on-a-clone)); without it first boot
 generates `safuser`'s. To log in to the clones it makes with your own key,
@@ -345,10 +350,7 @@ the template through the API into the pool, injects a cloud-init user
 as `admin_user`) with its RSA build key and any extra keys, boots it,
 learns its address from the guest agent, logs in as that user and checks FIPS mode and the clone's
 host name, waits for the boot to finish (below), logs in as `safuser` with
-the same key, reads the passwords first boot generated (the Heimdall and
-Vulcan administrators' and `safuser`'s Keycloak password) over SSH into a
-file on your workstation that only you can read and that is removed when
-the test ends, then runs `scripts/validate.sh --client-inputs` against it:
+the same key, then runs `scripts/validate.sh --client` against it:
 the box's two profiles over SSH, then the client profile from your
 workstation (see [How SAFBox is validated](../../reference/validation.md)). SSH
 answers well before first boot has finished: the secrets, the certificate,
@@ -371,22 +373,18 @@ A switched-off service has no units, so it neither holds up the wait nor
 fails it. `SAFBOX_SKIP_VALIDATE=1` stops after the SSH check, before the
 wait.
 
-A clone kept with `--keep` is for a person, so its release gate leaves
-`safuser`'s first Keycloak sign-in alone: the client profile runs
-read-only (`validate.sh --client-read-only`), its controls that would sign
-in as `safuser`, change its password or create accounts and data are
-reported as skipped with the reason, and its other controls must pass
-(`client-release-read-only.yml`). Your first sign-in to Heimdall or Vulcan
-through Keycloak, with the password first boot generated (see
+The release gate signs in to nothing, so on a clone kept with `--keep`
+your first sign-in to Heimdall or Vulcan through Keycloak, with the
+password first boot generated (see
 [Accounts in the applications](../../reference/accounts.md#accounts-in-the-applications)),
-then asks for a new one, as it will for the box's users. The full gate, those controls
-included, runs on every clone that is not kept; prove a template with
-one. See [How SAFBox is validated](../../reference/validation.md).
+asks for a new one, as it will for the box's users. Check sign-in by hand
+there; see [How SAFBox is validated](../../reference/validation.md).
 
 The clone test only destroys a VM it created itself: each run writes a
 unique run ID into the clone's description and refuses to delete any VM
 whose description does not carry that ID, so a pre-existing VM with the
-same number is never touched.
+same number is never touched. Delete a clone kept with `--keep` with
+`scripts/delete-vm.sh <clone-vmid>` (below).
 
 ### Accounts on a clone
 
@@ -422,7 +420,7 @@ of a deployed box keeps that box's secrets, keys and databases (see
 and three wrong passwords in 15 minutes lock the account until an
 administrator releases it. As `admin`, `sudo passwd safuser` sets a new
 password and `sudo faillock --user safuser --reset` releases a lock.
-`admin` itself cannot be locked out or expire. [Accounts](../../reference/accounts.md)
+`admin` has no password, so it cannot be locked out and does not expire. [Accounts](../../reference/accounts.md)
 says more, including a deployment's own cloud-init users list.
 
 ### Giving a clone more disk
@@ -433,7 +431,7 @@ resize the disk after cloning and before the first start: the disk's
 `VM.Config.Disk` covers it):
 
 ```
-curl -sS --cacert <cluster-ca.pem> -H "Authorization: PVEAPIToken=$PROXMOX_USERNAME=$PROXMOX_TOKEN" \
+curl -sS ${PROXMOX_CA_FILE:+--cacert "$PROXMOX_CA_FILE"} -K <(printf 'header = "Authorization: PVEAPIToken=%s=%s"\n' "$PROXMOX_USERNAME" "$PROXMOX_TOKEN") \
   -X PUT --data-urlencode disk=scsi0 --data-urlencode size=+20G \
   "$PROXMOX_URL/nodes/<node>/qemu/<clone-vmid>/resize"
 ```
@@ -442,12 +440,11 @@ First boot hands the new space out by share; [Partition
 layout](../../reference/platform.md#partition-layout) explains how, and how
 to grow a box that has already booted.
 
-Packer never overwrites a VM. With a template range, a rebuild takes the
-next free ID; with a fixed `vm_id`, delete the previous template first.
-Either way, delete templates you no longer need (through the API with the
-same token, which the pool grant allows, or in the GUI) before the range
-fills. Full clones made from a template are unaffected by its deletion;
-linked clones block it.
+Packer never overwrites a VM: a rebuild needs a free `vm_id`, or the
+previous template deleted first. Delete templates you no longer need
+(`scripts/delete-vm.sh <vm_id>`, below, which uses the same token and the
+pool grant, or the GUI). Full clones made from a template are unaffected
+by its deletion; linked clones block it.
 
 **Only sealed templates are distributable.** The build seals by default:
 it deletes the build user, its key, and its sudo rule, removes shared SSH
@@ -463,76 +460,62 @@ over plain HTTP from the runner, so the build network segment is trusted;
 for release builds host it over HTTPS via `kickstart_url` or use one of
 the routes in [When the VM cannot reach your workstation](#when-the-vm-cannot-reach-your-workstation).
 
-### Where a run keeps its files
+### When a build fails or is interrupted
 
-Every `scripts/build.sh` run gets its own directory, `.build/runs/<run id>/`
-(the UTC start time and a random suffix, mode 0700), and prints it as its
-first line (`build log: .../build.log`). It holds:
+A failed build, a failed build gate included, keeps its VM so you can find
+out why: `build.sh` runs Packer with `-on-error=abort`, which leaves the VM
+as it was when the build stopped, usually running. Ctrl-C does the same.
+The build key stays in `.build/run/`, and the last lines of the build's
+output say how to reach the VM and how to delete it:
 
-| File | Kept after the run |
+```
+The build failed or was interrupted. Its VM is kept for diagnosis:
+  VM ID:   <vm_id>
+  ssh:     ssh -i .../.build/run/build_key ... packer@<address>
+  delete:  scripts/delete-vm.sh <vm_id> (or on the node: qm stop <vm_id>; qm destroy <vm_id> --purge)
+```
+
+The address is the one Packer connected to; a build that stopped before
+it reached SSH (during the install, say) shows it only in the Proxmox UI,
+on the VM's console or, once the guest agent runs, its summary. The kept
+VM holds its ID until you delete it, so delete it before you rebuild with
+the same `vm_id`. The next build empties `.build/run/`, the kept key with
+it.
+
+A build whose `vm_id` another VM already has fails at once without making
+a VM. `build.sh` then says the ID belongs to an existing VM and suggests no
+delete, because that VM is not the build's: give the build a free ID.
+
+`scripts/delete-vm.sh <vm_id>` deletes a VM or template through the API
+with the build's token and env file: it shows the VM's name, node and
+whether it is a template, asks you to type the ID, stops the VM if it
+runs, and deletes it with its disks (purge, so backup, replication and HA
+jobs lose it too). It works for a failed build's VM, a clone kept with
+`--keep` and a template you no longer need. List IDs it must never touch,
+space- or comma-separated, in `SAFBOX_PROTECTED_IDS` set in the shell.
+Deleting cannot be undone. Without the API, on the node: `qm stop <vm_id>`
+if it runs, then `qm destroy <vm_id> --purge --destroy-unreferenced-disks 1`.
+
+To have Packer delete the VM on failure instead, pass `-on-error=cleanup`
+to `build.sh`; any other `-on-error=` mode you pass is used as given.
+
+### Where a build keeps its files
+
+`scripts/build.sh` keeps its files in `.build/run/` (mode 0700), which the
+next build empties first, and prints the log's path as its first line
+(`build log: .../build.log`). It holds:
+
+| File | Kept after the build |
 |---|---|
-| `build.log`, everything the run printed | yes |
-| `packer-debug.log`, Packer's full debug log, checked for the API token when the run ends: normally, on failure, or on a SIGINT, SIGTERM or SIGHUP (a run whose debug log holds the token exits 2 and says so in `build.log`). A SIGKILL skips every end-of-run step; delete that run's key yourself | yes |
-| `build_key`, `build_key.pub`, the ephemeral key pair | only with `SAFBOX_DEV=1` |
-| `galaxy/`, the run's own install of `ansible/requirements.yml` | no |
+| `build.log`, everything the build printed | yes |
+| `packer-debug.log`, Packer's full debug log, checked for the API token when the build ends, however it ends, Ctrl-C included (a build whose debug log holds the token exits 2 and says so). A SIGKILL skips that check and leaves the build key; delete it yourself | yes |
+| `build_key`, `build_key.pub`, the ephemeral key pair | after a successful build, no; after a failed or interrupted one, yes (see above) |
+| `galaxy/`, the build's install of `ansible/requirements.yml` | yes |
+| `site/`, the documentation site the box serves | yes |
+| `scans/`, the build gate's results, which the seal installs in the template | yes |
 
-`.build/runs/latest` points at the newest run, and `last.log` in the
-repository root at `.build/runs/latest/build.log`, so `tail -F last.log`
-follows the current build and the next one. Run directories are not pruned;
-delete old ones when you no longer need their logs.
-
-To stop a run, signal its whole process group: Ctrl-C in its terminal
-(SIGINT), `kill -TERM -<pgid>`, or `kill -HUP -<pgid>` (what closing the
-terminal sends). Packer cancels the build and removes its VM, its output
-still reaches `build.log`, and then the end-of-run steps above run; the run
-exits 130 for SIGINT, 143 for SIGTERM and 129 for SIGHUP, or 2 if the token
-is in the debug log. A SIGTERM or SIGHUP sent to `build.sh` alone takes
-effect only once Packer has exited on its own.
-
-Earlier versions kept the key in `.build/build_key` (with `SAFBOX_DEV=1`),
-the logs in `.build/logs/` and the debug log in `.build/packer-debug.log`.
-Nothing uses or cleans those any more; delete them.
-
-When the clone's user cannot log in to a development template, the clone
-test reads cloud-init's state over SSH as the build user, for diagnostics.
-That needs the key of the run that built the template, which is kept only
-if the build ran with `SAFBOX_DEV=1`. The clone test offers every kept key,
-newest first; with many kept keys sshd's `MaxAuthTries` can refuse before
-it reaches the right one, so name it with
-`SAFBOX_BUILD_KEY=.build/runs/<run id>/build_key`.
-
-### Running builds in parallel
-
-Two builds can run at the same time from one checkout, for example a Rocky
-and an AlmaLinux build, on a host large enough for both VMs. Give each its
-own template ID and name; everything else a run writes is already its own.
-Two builds started together would pick the same ID from the template
-range, so give each its own:
-
-```
-scripts/build.sh -var vm_id=<free-id-1> -var vm_name=safbox-rocky &
-scripts/build.sh -var vm_id=<free-id-2> -var vm_name=safbox-alma -var iso_file=<storage>:iso/<alma iso> &
-```
-
-- Both IDs must be free and inside what the account may use (step 6: the
-  pool grant, and any per-ID ceiling you set).
-- `last.log` follows whichever run started last. Follow a particular run
-  with `tail -F .build/runs/<run id>/build.log`.
-- Each run installs the pinned Lockdown role from its Git source itself, so
-  each needs to reach it.
-- The build gates write separate results files: a second scan in the same
-  second gets `.build/validate-build-<profile>-<timestamp>-2.json`.
-- CINC Auditor shares one cache for profile dependencies (the STIG
-  baseline). The first scan after the baseline pin changes, or on a new
-  workstation, clones it into the cache while holding a lock, and a second
-  scan waits for that lock for at most 30 seconds. If the clone takes
-  longer, the second build's gate fails with `Giving up waiting on cache
-  lock` and `validate.sh: cinc-auditor exited 1`. It fails loudly, with
-  no verdict recorded, and the template is
-  not made. Rerun it. To avoid it, start the parallel builds only once one
-  scan has filled the cache, for example one earlier build, or
-  `cinc-auditor vendor verify/profiles/safbox-rhel10-stig-overlay` (as
-  `tests/ansible/lint.sh` does).
+One build at a time per checkout: a second build started from the same
+checkout empties the first one's directory.
 
 ## When the VM cannot reach your workstation
 

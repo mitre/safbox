@@ -88,7 +88,7 @@ else
 fi
 
 # Plain command-line tools: any version.
-for t in git "ssh:OpenSSH client (ssh)" "ssh-keygen:OpenSSH client (ssh-keygen)" curl jq flock; do
+for t in git "ssh:OpenSSH client (ssh)" "ssh-keygen:OpenSSH client (ssh-keygen)" curl jq uuidgen timeout; do
   command -v "${t%%:*}" >/dev/null || problem "${t#*:} not found; see $GUIDE"
 done
 

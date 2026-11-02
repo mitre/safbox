@@ -28,7 +28,7 @@ locals {
   default_boot_command = [
     "<up><wait>e<wait>",
     "<down><wait><down><wait><end><wait>",
-    " inst.text inst.ks=${local.kickstart_url} fips=1${var.installer_ssh ? " inst.sshd" : ""}<wait>",
+    " inst.text inst.ks=${local.kickstart_url} fips=1<wait>",
     "<f10>"
   ]
   boot_command = var.boot_command != null ? var.boot_command : local.default_boot_command
@@ -36,9 +36,9 @@ locals {
   repo_root   = abspath("${path.root}/..")
   ansible_dir = coalesce(var.ansible_dir, "${local.repo_root}/ansible")
   # Where ansible-galaxy installs the pinned third-party roles (the Lockdown
-  # STIG role) and collections from requirements.yml. scripts/build.sh gives
-  # every run its own galaxy_dir, so two builds at once never extract into
-  # the same directory; without one, the paths ansible.cfg names.
+  # STIG role) and collections from requirements.yml: galaxy_dir, which
+  # scripts/build.sh sets inside .build/run/; without one, the paths
+  # ansible.cfg names.
   galaxy_roles       = var.galaxy_dir == null ? "${local.ansible_dir}/galaxy_roles" : "${var.galaxy_dir}/roles"
   galaxy_collections = var.galaxy_dir == null ? "${local.ansible_dir}/collections" : "${var.galaxy_dir}/collections"
   ansible_env = [
@@ -50,8 +50,11 @@ locals {
     "ANSIBLE_COLLECTIONS_PATH=${local.galaxy_collections}:~/.ansible/collections:/usr/share/ansible/collections",
     "ANSIBLE_FORCE_COLOR=0",
   ]
+  # The site's Ansible settings (git-ignored), passed to every playbook
+  # when the file exists.
+  ansible_local = "${local.ansible_dir}/local.yml"
   ansible_extra = concat(
-    flatten([for v in var.ansible_extra_vars : ["-e", v]]),
+    fileexists(local.ansible_local) ? ["-e", "@${local.ansible_local}"] : [],
     var.site_dir == null ? [] : ["-e", "template_services_site_src=${var.site_dir}/"],
   )
   # The build gate's results (build_scans_dir), which the seal installs in
@@ -82,6 +85,12 @@ build {
       "level=$(/lib64/ld-linux-x86-64.so.2 --help | grep -E 'x86-64-v[234] \\(supported' | head -1); echo \"microarch:$level\"; test -n \"$level\"",
       "systemctl is-enabled qemu-guest-agent cloud-init sshd",
       "systemctl is-active qemu-guest-agent sshd",
+    ]
+  }
+
+  provisioner "shell-local" {
+    inline = [
+      "echo 'Ansible site settings: ${fileexists(local.ansible_local) ? "${local.ansible_local} (loaded)" : "none (${local.ansible_local} not found)"}'",
     ]
   }
 

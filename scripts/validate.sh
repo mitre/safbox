@@ -2,11 +2,11 @@
 # Validate a SAFBox from the outside: scan it over SSH with CINC Auditor
 # using the profiles in verify/profiles/, check each result against its SAF
 # CLI threshold in verify/thresholds/, and in the release context, with
-# --client-inputs, run the safbox-client profile from this machine.
+# --client, run the safbox-client profile from this machine.
 # scripts/validate.sh --help lists its arguments, options and files.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-SYNOPSIS="usage: scripts/validate.sh [-h | --help] [--site-inputs FILE] [--ssh-config FILE] [--client-inputs FILE [--client-read-only]] [--results-dir DIR] <user@host[:port]> <private-key> <build|release> [label]"
+SYNOPSIS="usage: scripts/validate.sh [-h | --help] [--site-inputs FILE] [--ssh-config FILE] [--client] [--results-dir DIR] <user@host[:port]> <private-key> <build|release> [label]"
 usage() {
   echo "$SYNOPSIS" >&2
   exit 2
@@ -18,7 +18,7 @@ help() {
 Scan a SAFBox over SSH with CINC Auditor, using the profiles in
 verify/profiles/ (safbox, safbox-rhel10-stig-overlay), and check each
 result against its SAF CLI threshold in verify/thresholds/. In the release
-context, with --client-inputs, also run the safbox-client profile on this
+context, with --client, also run the safbox-client profile on this
 machine against the box's names at its address, as a browser here would.
 
 Arguments:
@@ -32,26 +32,17 @@ Arguments:
 
 Every scan first gets the guest agents the answer file installs, by
 hypervisor (packer/answerfiles/el10/guest-agents.yml); the box's profiles
-check the one for the hypervisor they detect.
+check the one for the hypervisor they detect. Then the pinned tool
+versions (verify/inputs/pins.yml).
 
 Options:
   --site-inputs FILE    a site's inputs, layered after the context's
   --ssh-config FILE     the SSH client config CINC Auditor reads instead of
                         ~/.ssh/config and /etc/ssh/ssh_config; /dev/null
                         reads none
-  --client-inputs FILE  release only: the box's passwords for the
-                        safbox-client profile, a .yml or .yaml inputs file
-                        of mode 0600 (scripts/clone-and-ssh.sh writes one).
-                        That profile signs in, uploads the safbox profile's
-                        results to Heimdall, creates a Vulcan project and
-                        changes safuser's Keycloak password, so give it for
-                        a clone only, never an appliance in use.
-  --client-read-only    with --client-inputs, for a clone kept for a person:
-                        the client profile skips its controls that change
-                        the box (read_only), each reported as skipped with
-                        the reason, so safuser's first Keycloak sign-in is
-                        left for that person, and its results are held to
-                        client-release-read-only.yml instead.
+  --client              release only: also run the safbox-client profile
+                        from this machine, which must reach the box's
+                        ports 80 and 443. It only reads.
   --results-dir DIR     also keep the box profiles' results (safbox and
                         safbox-rhel10-stig-overlay) as DIR/<profile>.json,
                         with the time each scan ended as the file's
@@ -74,16 +65,14 @@ HELP
 
 INPUT_ARGS=()
 SITE_INPUTS=""
-CLIENT_INPUTS=""
-CLIENT_READ_ONLY=0
+CLIENT=0
 RESULTS_DIR=""
 SSH_ARGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --site-inputs) [ -n "${2:-}" ] || usage; SITE_INPUTS=$2; shift 2 ;;
     --ssh-config) [ -n "${2:-}" ] || usage; SSH_ARGS=(--ssh-config-file "$2"); shift 2 ;;
-    --client-inputs) [ -n "${2:-}" ] || usage; CLIENT_INPUTS=$2; shift 2 ;;
-    --client-read-only) CLIENT_READ_ONLY=1; shift ;;
+    --client) CLIENT=1; shift ;;
     --results-dir) [ -n "${2:-}" ] || usage; RESULTS_DIR=$2; shift 2 ;;
     -h | --help) help ;;
     -*) usage ;;
@@ -97,30 +86,16 @@ CONTEXT=$3
 LABEL=${4:-$3}
 AGENT_INPUTS="$ROOT/packer/answerfiles/el10/guest-agents.yml"
 [ -f "$AGENT_INPUTS" ] || { echo "validate.sh: $AGENT_INPUTS is missing" >&2; exit 2; }
-INPUT_ARGS=("$AGENT_INPUTS")
+INPUT_ARGS=("$AGENT_INPUTS" "$ROOT/verify/inputs/pins.yml")
 case "$CONTEXT" in
   build) INPUT_ARGS+=("$ROOT/verify/inputs/build.yml") ;;
   release) ;;
   *) usage ;;
 esac
 if [ -n "$SITE_INPUTS" ]; then INPUT_ARGS+=("$(realpath "$SITE_INPUTS")"); fi
-if [ "$CLIENT_READ_ONLY" = 1 ] && [ -z "$CLIENT_INPUTS" ]; then
-  echo "validate.sh: --client-read-only is for the client profile, which runs only with --client-inputs" >&2
+if [ "$CLIENT" = 1 ] && [ "$CONTEXT" != release ]; then
+  echo "validate.sh: --client is for the release context only" >&2
   exit 2
-fi
-if [ -n "$CLIENT_INPUTS" ]; then
-  [ "$CONTEXT" = release ] || { echo "validate.sh: --client-inputs is for the release context only" >&2; exit 2; }
-  # CINC Auditor reads an inputs file by its extension.
-  case "$CLIENT_INPUTS" in
-    *.yml | *.yaml) ;;
-    *) echo "validate.sh: $CLIENT_INPUTS must be a YAML inputs file named .yml or .yaml" >&2; exit 2 ;;
-  esac
-  # The passwords stay readable by this user only.
-  if [ -z "$(find "$CLIENT_INPUTS" -maxdepth 0 -type f -perm 0600 2>/dev/null)" ]; then
-    echo "validate.sh: $CLIENT_INPUTS must be a file of mode 0600" >&2
-    exit 2
-  fi
-  CLIENT_INPUTS=$(realpath "$CLIENT_INPUTS")
 fi
 
 for tool in cinc-auditor saf; do
@@ -139,8 +114,7 @@ fi
 find "$ROOT/verify" -name inspec.lock -type f -exec rm -f -- {} +
 
 # The SAF CLI writes saf-cli.log to its working directory; keep it out of
-# the caller's. The client profile keeps its files (the certificate the box
-# served, cookie jars, passwords) in a 0700 directory in here.
+# the caller's.
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
 
@@ -190,23 +164,12 @@ failed=0
 box=(-t "ssh://$TARGET" -i "$KEY" --sudo ${SSH_ARGS[@]+"${SSH_ARGS[@]}"})
 scan safbox "safbox-$CONTEXT.yml" -- "${box[@]}"
 keep safbox
-safbox_results=$results
 scan safbox-rhel10-stig-overlay "stig-$CONTEXT.yml" -- "${box[@]}"
 keep safbox-rhel10-stig-overlay
-if [ -n "$CLIENT_INPUTS" ]; then
+if [ "$CLIENT" = 1 ]; then
   # From this machine, as a browser: the box's address is the target's host.
   address=${TARGET#*@}
   address=${address%:*}
-  mkdir -m 700 "$scratch/client"
-  client=(--input "address=$address" "work_dir=$scratch/client" "hdf_file=$safbox_results")
-  threshold="client-release.yml"
-  if [ "$CLIENT_READ_ONLY" = 1 ]; then
-    # A clone kept for a person: the controls that change the box are
-    # skipped, so safuser's first Keycloak sign-in is left for that person.
-    echo "validate.sh: safbox-client read-only (--client-read-only): its controls that change the box are skipped, each reported as skipped (Not Reviewed) with the reason"
-    client+=(read_only=true)
-    threshold="client-release-read-only.yml"
-  fi
-  scan safbox-client "$threshold" "$CLIENT_INPUTS" -- -t local:// "${client[@]}"
+  scan safbox-client client-release.yml -- -t local:// --input "address=$address"
 fi
 exit "$failed"

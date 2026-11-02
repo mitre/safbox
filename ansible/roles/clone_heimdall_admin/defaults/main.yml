@@ -1,0 +1,13 @@
+---
+# clone_heimdall_admin role of the first-boot play (task group
+# safbox-services-heimdall), run by safbox-heimdall-admin.service with
+# --tags heimdall-admin.
+
+# Its settings, written by the template_services role at build: Heimdall's
+# loopback URL (clone_heimdall_admin_url), its administrator's email
+# (_email), and the podman secrets holding the real and the bootstrap
+# password (_secret, _bootstrap_secret).
+clone_heimdall_admin_settings_file: "{{ safbox_firstboot_dir }}/heimdall-admin.yml"
+# The bytes of randomness in the value that replaces the bootstrap
+# password once it is no longer the administrator's.
+clone_heimdall_admin_bootstrap_bytes: 16

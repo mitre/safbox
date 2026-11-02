@@ -2,15 +2,15 @@
 # template_hardening role: applies the RHEL 10 STIG to the appliance with the Ansible
 # Lockdown role pinned in group_vars (safbox_hardening_lockdown), as the last
 # role of the appliance play, so the STIG covers everything the roles before
-# it installed. The task group is tagged safbox-hardening-1 and switched off
-# by setting safbox_hardening_1 to false.
+# it installed. The task group is tagged safbox-hardening-stig and switched off
+# by setting safbox_hardening_stig to false.
 #
 # What is applied is decided by:
 #   - the Lockdown role's own variables (rhel10stig_* in its defaults), which
 #     a site sets in ansible/local.yml to make its own risk decisions;
 #   - the Lockdown rules SAFBox switches off, one per line in group_vars:
-#     deviations (Not Applicable, with their justification, in the STIG
-#     overlay) and rules whose Lockdown task fails on SAFBox.
+#     requirements SAFBox does not meet (their controls fail and are listed
+#     in docs/reference/hardening.md) and rules whose Lockdown task fails.
 
 # Where ansible-galaxy records, inside an installed role, the version it
 # installed; used to refuse a Lockdown release other than the pin.

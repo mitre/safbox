@@ -1,7 +1,7 @@
 ---
 - name: RHEL 10 STIG with Ansible Lockdown
-  when: safbox_hardening_1 | default(true) | bool
-  tags: [safbox-hardening-1]
+  when: safbox_hardening_stig | default(true) | bool
+  tags: [safbox-hardening-stig]
   vars:
     template_hardening_lockdown_record: >-
       {{ lookup('ansible.builtin.first_found',
@@ -40,7 +40,7 @@
     # 600610 then only check the with-faillock feature
     # (ansible/group_vars/all/main.yml). Lockdown sets the rest
     # of /etc/security/faillock.conf (3 failures in 15 minutes, no
-    # even_deny_root: root's lockout is a deviation in the STIG overlay).
+    # even_deny_root: root is not locked out, a known failure).
     # admin, which logs in with a key and has passwordless sudo, runs no
     # PAM authentication and so is never locked out; admin releases a
     # locked account with faillock --reset.
@@ -95,7 +95,7 @@
       ansible.builtin.include_role:
         name: "{{ safbox_hardening_lockdown.name }}"
         apply:
-          tags: [safbox-hardening-1]
+          tags: [safbox-hardening-stig]
 
     # STIG settings SAFBox applies itself, where Lockdown's task is off
     # because it fails or is harmful (the Lockdown section of group_vars)
@@ -259,7 +259,7 @@
         mode: '0600'
 
     # Written only after the Lockdown role completed; the validation profile
-    # checks it names the pinned release (safbox-hardening-1).
+    # checks it names the pinned release (safbox-hardening-stig).
     - name: Create the directory of the SAFBox records
       ansible.builtin.file:
         path: "{{ template_hardening_record_path | dirname }}"

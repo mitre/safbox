@@ -1,5 +1,5 @@
 ---
-# clone_secrets role of the first-boot play (task groups safbox-services-1,
+# clone_secrets role of the first-boot play (task groups safbox-services-heimdall,
 # -2 and -5): the services' per-install secrets as podman secrets.
 
 # The secrets to make (name, hex_bytes, suffix, description), written by

@@ -1,26 +1,5 @@
 # Troubleshooting
 
-## Inspecting a stuck install
-
-Set `installer_ssh = true` in your local vars for a development build. The
-installer then boots with `inst.sshd`, and the kickstart's `sshpw` line lets
-the runner SSH into the Anaconda environment as root with the ephemeral build
-key while an install is wedged:
-
-```
-ssh -i .build/runs/<run id>/build_key root@<installer-ip>
-less /tmp/anaconda.log /tmp/storage.log /tmp/packaging.log
-```
-
-`<run id>` is the stuck build's run directory, from its first line
-(`build log: ...`). `.build/runs/latest` is only that run if no other build
-started after it.
-
-The installer's IP is whatever DHCP handed the VM's MAC; the guest agent is
-not running yet, so read the MAC from the VM's hardware tab and look it up
-in your DHCP leases or ARP table. Nothing from `sshpw` reaches the installed
-system. Leave the option off for release builds.
-
 ## First boot of a clone takes a while
 
 Proxmox's generated cloud-init user data sets `package_upgrade: true` by

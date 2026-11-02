@@ -25,7 +25,7 @@ features:
   - title: Vulcan
     details: Write and manage security guidance, from a STIG or SRG to the InSpec profile that tests it.
   - title: The command-line tools
-    details: CINC Auditor, the SAF CLI, Ansible with the Lockdown hardening content, and Packer, all installed and pinned.
+    details: CINC Auditor, the SAF CLI, Ansible and Packer, installed and pinned. Fetch the profiles and hardening roles you need.
     link: /reference/tools
 ---
 
@@ -35,7 +35,9 @@ SAFBox is a virtual machine that carries the
 [MITRE Security Automation Framework](https://saf.mitre.org): the tools to
 harden systems, test them against security guidance, and look at the
 results, on a box that is itself hardened to the RHEL 10 STIG and runs in
-FIPS mode. Everything here works without reaching the internet.
+FIPS mode. Heimdall, Vulcan and the tools work without reaching the
+internet; the profiles and hardening roles you run with them are fetched
+when you need them (below).
 
 ## Service status
 
@@ -68,10 +70,13 @@ Log in over SSH (or at the console) and the SAF tools are on your path:
 |---|---|
 | CINC Auditor (InSpec) | `cinc-auditor exec <profile> -t ssh://user@host --reporter json:results.json` scans a system against a profile |
 | SAF CLI | `saf convert` turns other scanners' output into Heimdall Data Format; `saf view summary -i results.json` summarises a scan; `saf validate threshold` gates on it |
-| Ansible | `ansible-playbook` with the Ansible Lockdown hardening content applies STIG settings to a host |
+| Ansible | `ansible-playbook` runs a hardening role, such as an Ansible Lockdown STIG role, against a host; the collections those roles use are installed |
 | Packer | builds machine images, the way this SAFBox was built |
 
-Results you produce here can go straight into Heimdall.
+The box carries the tools, not the content they run: fetch the profile or
+hardening role you need, as
+[Tools on the box](/reference/tools#fetching-a-profile-or-a-hardening-role)
+shows. Results you produce here can go straight into Heimdall.
 
 ### The `safbox` command
 

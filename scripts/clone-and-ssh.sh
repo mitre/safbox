@@ -3,8 +3,8 @@
 # a cloud-init user and key, boot it, learn its IP from the guest agent, and
 # prove SSH works, as admin (the deployer's key-only account) and, once
 # first boot has made it, as safuser, then run the release gate: the box's
-# profiles over SSH and the safbox-client profile from here, with the
-# passwords first boot generated (scripts/validate.sh --client-inputs).
+# profiles over SSH and the safbox-client profile from here
+# (scripts/validate.sh --client).
 # Uses only the Proxmox API, so it runs with the same least-privilege token
 # as the build. scripts/clone-and-ssh.sh --help lists its arguments,
 # environment and files.
@@ -14,7 +14,7 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-usage: scripts/clone-and-ssh.sh [-h | --help] <template-vmid> [<clone-vmid>] [--keep]
+usage: scripts/clone-and-ssh.sh [-h | --help] <template-vmid> <clone-vmid> [--keep]
 
 Clone a SAFBox template through the Proxmox API, give the clone a cloud-init
 user and SSH keys, boot it, log in over SSH as that user and as safuser,
@@ -22,36 +22,32 @@ and run the release gate (scripts/validate.sh) against it.
 
 Arguments:
   <template-vmid>  the template to clone
-  <clone-vmid>     the clone's VM ID; without it, the first ID in
-                   SAFBOX_CLONE_IDS that no VM or template in the cluster
-                   holds (asked of the API with the same token). A full
-                   range stops the run before anything is cloned, listing
-                   what holds it. With neither the run is refused.
-  --keep           leave the clone running for a person. Its release gate
-                   runs the client profile read-only (validate.sh
-                   --client-read-only): the controls that would change the
-                   box are reported as skipped, and safuser's first Keycloak
-                   sign-in is left for that person. Without --keep the clone
-                   gets the full gate and is destroyed afterwards (only if
-                   its description still carries this run's ID).
+  <clone-vmid>     the clone's VM ID, a free one the token may use
+  --keep           leave the clone running for a person. Without --keep
+                   the clone is destroyed after the gate (only if its
+                   description still carries this run's ID).
   -h, --help       print this and exit
 
-Environment, from the shell or the env file (the file is read after the
-shell's environment, so a value set in both comes from the file).
-scripts/example.env lists every variable with a placeholder; copy it to
-~/.config/proxmox/packer.env and chmod 600 it:
+Credentials, from the env file (scripts/example.env is its template; copy
+it to ~/.config/proxmox/packer.env and chmod 600 it) or the shell, which
+wins over the file:
   SAFBOX_PROXMOX_ENV     the env file (default ~/.config/proxmox/packer.env);
                          read when it exists, refused unless its mode is 0600
   PROXMOX_URL            https://<node>:8006/api2/json (required)
   PROXMOX_USERNAME       the API token ID, <user>@pve!<token-name> (required)
   PROXMOX_TOKEN          the API token secret (required; never printed)
-  SAFBOX_NODE            the node holding the template (required)
-  SAFBOX_POOL            the resource pool the clone joins (required); the
-                         token's VM.Allocate on /pool/<name> authorizes it
-  SAFBOX_CLONE_IDS       the clone ID range, FIRST-LAST (default: none)
-  SAFBOX_CA_FILE         the CA trusted for the API (default: SSL_CERT_FILE)
-  SSL_CERT_FILE          the CA trusted when SAFBOX_CA_FILE is not set
-                         (default: the system trust store)
+  PROXMOX_CA_FILE        the cluster CA trusted for the API (default: the
+                         system trust store)
+
+Node and pool come from proxmox_node and proxmox_pool in
+packer/local.auto.pkrvars.hcl, the same values the build uses. The pool
+is the one the clone joins: the token's VM.Allocate on /pool/<name>
+authorizes it.
+
+Environment, set in the shell (SAFBOX_NODE=... scripts/clone-and-ssh.sh):
+  SAFBOX_NODE            the node holding the template, instead of
+                         proxmox_node
+  SAFBOX_POOL            the pool the clone joins, instead of proxmox_pool
   SAFBOX_INSECURE_TLS    1 turns off TLS verification, for a throwaway lab's
                          self-signed certificate (default 0)
   SAFBOX_CLONE_USER      cloud-init's user, ciuser (default admin); a site
@@ -77,18 +73,13 @@ scripts/example.env lists every variable with a placeholder; copy it to
   SAFBOX_SSH_CONFIG      the SSH client config CINC Auditor reads instead of
                          its defaults, /dev/null for none (validate.sh
                          --ssh-config; default: its defaults)
-  SAFBOX_BUILD_KEY       when SSH fails on a development template, the key
-                         of the run that built it,
-                         .build/runs/<run id>/build_key (default: every key
-                         kept by SAFBOX_DEV=1 builds, newest first)
-  SAFBOX_BUILD_USER      the build user those diagnostics log in as
-                         (default packer)
 
 Files (.build/ is the one in the checkout this script runs from; run from a
 git worktree, that worktree's):
-  .build/clone_key          the default SSH key, made if missing
-  .build/keys/*.pub         extra public keys every clone's admin gets
-  .build/runs/*/build_key   build keys kept by SAFBOX_DEV=1 builds
+  packer/*.auto.pkrvars.hcl  the build's site settings: proxmox_node and
+                             proxmox_pool are read from here
+  .build/clone_key           the default SSH key, made if missing
+  .build/keys/*.pub          extra public keys every clone's admin gets
 
 Guide: docs/guides/proxmox/build.md
 USAGE
@@ -103,25 +94,24 @@ for a in "$@"; do
     *) ARGS+=("$a") ;;
   esac
 done
-if [ ${#ARGS[@]} -lt 1 ] || [ ${#ARGS[@]} -gt 2 ]; then
-  echo "usage: scripts/clone-and-ssh.sh <template-vmid> [<clone-vmid>] [--keep]; see --help" >&2
+if [ ${#ARGS[@]} -ne 2 ]; then
+  echo "usage: scripts/clone-and-ssh.sh <template-vmid> <clone-vmid> [--keep]; see --help" >&2
   exit 2
 fi
 TEMPLATE_ID=${ARGS[0]}
-CLONE_ID=${ARGS[1]:-}
+CLONE_ID=${ARGS[1]}
 
 load_env
-: "${PROXMOX_URL:?}" "${PROXMOX_USERNAME:?}" "${PROXMOX_TOKEN:?}" "${SAFBOX_NODE:?set SAFBOX_NODE}" "${SAFBOX_POOL:?set SAFBOX_POOL}"
-if [ -z "$CLONE_ID" ] && [ -z "${SAFBOX_CLONE_IDS:-}" ]; then
-  echo "no VM ID for the clone: set SAFBOX_CLONE_IDS=FIRST-LAST in $ENV_FILE (the first free ID in that range is used), or give the clone ID as the second argument. See scripts/clone-and-ssh.sh --help." >&2
-  exit 2
-fi
+: "${PROXMOX_URL:?}" "${PROXMOX_USERNAME:?}" "${PROXMOX_TOKEN:?}"
 READY_TIMEOUT=${SAFBOX_READY_TIMEOUT:-600}
 case "$READY_TIMEOUT" in
   '' | *[!0-9]* | 0*) echo "SAFBOX_READY_TIMEOUT must be a positive whole number of seconds, not '$READY_TIMEOUT'" >&2; exit 2 ;;
 esac
-NODE=$SAFBOX_NODE
-POOL=$SAFBOX_POOL
+# Node and pool are set once, in the Packer variables file; the shell may
+# override them for one run.
+NODE=${SAFBOX_NODE:-$(site_var proxmox_node)}
+POOL=${SAFBOX_POOL:-$(site_var proxmox_pool)}
+: "${NODE:?set proxmox_node in packer/local.auto.pkrvars.hcl}" "${POOL:?set proxmox_pool in packer/local.auto.pkrvars.hcl}"
 USER_NAME=${SAFBOX_CLONE_USER:-admin}
 KEY=${SAFBOX_SSH_KEY:-$ROOT/.build/clone_key}
 if [ ! -f "$KEY" ]; then
@@ -175,9 +165,6 @@ done
 umask 077
 # The API's curl and its token file (scripts/lib.sh), removed on exit.
 api_curl
-# The client profile's passwords, read from the clone (below), in a
-# directory of their own.
-CLIENT_DIR=""
 API=$PROXMOX_URL
 
 wait_task() { # upid
@@ -210,7 +197,7 @@ cleanup() {
     desc=$("${CURL[@]}" "$API/nodes/$NODE/qemu/$CLONE_ID/config" 2>/dev/null | jq -r '.data.description // ""')
     if [ "$desc" != "$RUN_MARK" ]; then
       echo "refusing to destroy VM $CLONE_ID: its description does not match this run ($RUN_ID)" >&2
-      rm -rf "$CURLCFG" ${CLIENT_DIR:+"$CLIENT_DIR"}; return
+      rm -rf "$CURLCFG"; return
     fi
     echo "destroying clone $CLONE_ID (run $RUN_ID)"
     u=$("${CURL[@]}" -X POST "$API/nodes/$NODE/qemu/$CLONE_ID/status/stop" | jq -r .data) && wait_task "$u" || echo "stop failed; not deleting a running VM" >&2
@@ -218,16 +205,10 @@ cleanup() {
     # to that and is never used here.
     u=$("${CURL[@]}" -X DELETE "$API/nodes/$NODE/qemu/$CLONE_ID?destroy-unreferenced-disks=1" | jq -r .data) && wait_task "$u" || echo "destroy failed; clone $CLONE_ID left in place" >&2
   fi
-  rm -rf "$CURLCFG" ${CLIENT_DIR:+"$CLIENT_DIR"}
+  rm -rf "$CURLCFG"
 }
 trap cleanup EXIT
 
-# No clone ID given: the first free one in SAFBOX_CLONE_IDS.
-if [ -z "$CLONE_ID" ]; then
-  pick_vmid SAFBOX_CLONE_IDS || exit 1
-  CLONE_ID=$PICKED
-  echo "$PICK_NOTE"
-fi
 echo "cloning $TEMPLATE_ID -> $CLONE_ID on $NODE (run $RUN_ID)"
 upid=$("${CURL[@]}" -X POST "$API/nodes/$NODE/qemu/$TEMPLATE_ID/clone" \
   --data-urlencode "newid=$CLONE_ID" --data-urlencode "name=safbox-clone-$CLONE_ID" --data-urlencode "full=1" --data-urlencode "pool=$POOL" \
@@ -304,65 +285,16 @@ for _ in $(seq 1 72); do
       exit 1
     fi
     echo "PASS: safuser logs in with the deployer's key"
-    # The passwords first boot generated, for the safbox-client profile:
-    # podman secrets on the box, read over SSH as root may, into a file on
-    # this machine readable by this user only (umask 077), removed on exit,
-    # never printed. A switched-off service has no secret, and its value
-    # stays empty.
-    CLIENT_DIR=$(mktemp -d)
-    CLIENT_INPUTS=$CLIENT_DIR/inputs.yml
-    secret() { # input-name podman-secret
-      local value
-      value=$(timeout 30 ssh "${SSH_OPTS[@]}" "$USER_NAME@$ip" \
-        "sudo -n podman secret inspect --showsecret --format '{{.SecretData}}' $2" 2>/dev/null) || value=""
-      printf "%s: '%s'\n" "$1" "${value//\'/\'\'}"
-    }
-    {
-      echo '---'
-      secret heimdall_admin_password heimdall-admin-password
-      secret vulcan_admin_password vulcan-admin-password
-      secret keycloak_safuser_password keycloak-safuser-password
-    } > "$CLIENT_INPUTS"
     # Release gate: the box's profiles over SSH and the client profile from
     # here, against what a consumer receives, after first boot.
     site=()
     if [ -n "${SAFBOX_SITE_INPUTS:-}" ]; then site+=(--site-inputs "$SAFBOX_SITE_INPUTS"); fi
     if [ -n "${SAFBOX_SSH_CONFIG:-}" ]; then site+=(--ssh-config "$SAFBOX_SSH_CONFIG"); fi
-    if [ "$KEEP" = --keep ]; then
-      echo "kept clone: the client profile runs read-only, leaving safuser's first Keycloak sign-in (and its password change) for you"
-      site+=(--client-read-only)
-    fi
-    "$ROOT/scripts/validate.sh" ${site[@]+"${site[@]}"} --client-inputs "$CLIENT_INPUTS" \
+    "$ROOT/scripts/validate.sh" ${site[@]+"${site[@]}"} --client \
       "$USER_NAME@$ip" "$KEY" release "clone-$CLONE_ID"
     exit 0
   fi
   sleep 5
 done
 echo "FAIL: SSH to $ip as $USER_NAME never succeeded" >&2
-# Development aid: a development template (seal = false) still carries the
-# build user, and a build run with SAFBOX_DEV=1 keeps its ephemeral key in its
-# own run directory, so cloud-init's own view can be read. SAFBOX_BUILD_KEY
-# names the key of the run that built this template; without it every kept
-# run key is offered, newest first, and the template accepts only its own.
-BUILD_KEYS=()
-if [ -n "${SAFBOX_BUILD_KEY:-}" ]; then
-  BUILD_KEYS=("$SAFBOX_BUILD_KEY")
-  [ -f "$SAFBOX_BUILD_KEY" ] || echo "SAFBOX_BUILD_KEY $SAFBOX_BUILD_KEY not found; no build-user diagnostics" >&2
-else
-  for k in "$ROOT"/.build/runs/*/build_key; do
-    # runs/latest is a link to one of the others.
-    case "$k" in */runs/latest/build_key) continue ;; esac
-    if [ -f "$k" ]; then BUILD_KEYS=("$k" ${BUILD_KEYS[@]+"${BUILD_KEYS[@]}"}); fi
-  done
-fi
-ID_ARGS=()
-for k in ${BUILD_KEYS[@]+"${BUILD_KEYS[@]}"}; do
-  if [ -f "$k" ]; then ID_ARGS+=(-i "$k"); fi
-done
-if [ ${#ID_ARGS[@]} -gt 0 ]; then
-  echo "--- diagnostics via build user (development templates only)" >&2
-  ssh "${ID_ARGS[@]}" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 \
-    "${SAFBOX_BUILD_USER:-packer}@$ip" \
-    'cloud-init status --long 2>&1 | head -6; echo "--- id"; id '"$USER_NAME"' 2>&1; echo "--- cloud-init errors"; sudo -n grep -iE "error|traceback|warn" /var/log/cloud-init.log 2>/dev/null | tail -8' >&2 || true
-fi
 exit 1

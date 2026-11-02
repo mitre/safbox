@@ -1,0 +1,7 @@
+{
+  "name": "safbox-saf-cli",
+  "private": true,
+  "dependencies": {
+    "@mitre/saf": "1.7.0"
+  }
+}

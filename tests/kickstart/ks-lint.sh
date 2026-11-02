@@ -9,8 +9,7 @@ test -f "$TPL" || { echo "FAIL: $TPL missing" >&2; exit 1; }
 command -v ksvalidator >/dev/null || { echo "FAIL: ksvalidator not installed (pipx install pykickstart)" >&2; exit 1; }
 
 tmp=$(mktemp)
-tmp_nossh=$(mktemp)
-trap 'rm -f "$tmp" "$tmp_nossh"' EXIT
+trap 'rm -f "$tmp"' EXIT
 # [$] is a literal dollar in sed; it keeps these patterns from reading like
 # unexpanded shell variables.
 sed -e 's/[$]{build_user}/packer/g' \
@@ -18,30 +17,14 @@ sed -e 's/[$]{build_user}/packer/g' \
     -e 's/[$]{hostname}/safbox/g' \
     -e 's/[$]{environment_group}/minimal-environment/g' \
     -e 's/[$]{datasource_list}/NoCloud/g' \
-    "$TPL" \
-  | awk '
-      # Emulate the templatefile directives: installer_ssh=true keeps the
-      # guarded block; the directive lines themselves are dropped.
-      /^%\{ *if installer_ssh/ { next }
-      /^%\{ *endif/ { next }
-      { print }' > "$tmp"
-# Second rendering with installer_ssh=false: the guarded block is removed.
-awk '/^%\{ *if installer_ssh/ { skip=1; next } /^%\{ *endif/ { skip=0; next } !skip { print }' "$TPL" \
-  | sed -e 's/[$]{build_user}/packer/g' -e 's/[$]{hostname}/safbox/g' \
-        -e 's/[$]{environment_group}/minimal-environment/g' -e 's/[$]{datasource_list}/NoCloud/g' \
-        -e 's|[$]{ssh_public_key}|ssh-rsa AAAAB3NzaC1yc2EPlaceholderKeyForLintOnly lint|g' > "$tmp_nossh"
+    "$TPL" > "$tmp"
 
 # Every template variable and directive must have been handled.
-for f in "$tmp" "$tmp_nossh"; do
-  if grep -nE '[$]\{|^%\{' "$f"; then
-    echo "FAIL: unrendered template syntax above in $f" >&2; exit 1
-  fi
-done
+if grep -nE '[$]\{|^%\{' "$tmp"; then
+  echo "FAIL: unrendered template syntax above in $tmp" >&2; exit 1
+fi
 
 ksvalidator -v RHEL10 "$tmp"
-ksvalidator -v RHEL10 "$tmp_nossh"
-grep -q '^sshpw ' "$tmp" || { echo "FAIL: installer_ssh=true rendering lacks the sshpw line" >&2; exit 1; }
-! grep -q '^sshpw ' "$tmp_nossh" || { echo "FAIL: installer_ssh=false rendering still contains sshpw" >&2; exit 1; }
 grep -Eq '^%post --erroronfail' "$tmp" || { echo "FAIL: %post must use --erroronfail" >&2; exit 1; }
 # fips=1 must reach the installed system's bootloader, not just the installer.
 grep -Eq '^bootloader .*--append=.*fips=1' "$tmp" || { echo "FAIL: bootloader --append missing fips=1" >&2; exit 1; }

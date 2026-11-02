@@ -1,17 +1,9 @@
 ---
-# The first-boot play and its unit: task group safbox-base-1, imported by
-# tasks/main.yml, which applies its tag.
-
-# First boot is a local play run by the box's own ansible-core and its
-# collections (community.crypto for the proxy's certificate), which the
-# template_tools role installs; there is no network to fetch them then.
-- name: Refuse first boot without the box's ansible-core
-  ansible.builtin.assert:
-    that: safbox_tools_3 | default(true) | bool
-    fail_msg: >-
-      The first-boot play runs on the box's ansible-core and collections
-      (tools task group 3): leave safbox_tools_3 on.
-    quiet: true
+# The first-boot play and its unit: task group safbox-base-firstboot,
+# imported by tasks/main.yml, which applies its tag. First boot is a local
+# play run by the box's own ansible-core and its collections
+# (community.crypto for the proxy's certificate), which the template_tools
+# role installs; there is no network to fetch them then.
 
 - name: Install the packages first boot uses
   ansible.builtin.package:

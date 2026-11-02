@@ -50,7 +50,7 @@ control 'safbox-accounts-3' do
   impact 1.0
   title 'safuser has a password that expires, the deployer\'s SSH key, and sudo that asks for its password'
   desc 'First boot creates safuser, the account for using the tools day to day. It logs in with the deployer\'s SSH key, or with its password at the console and the desktop login screen. Its password is the one the deployer supplied through cloud-init, or one generated at first boot, which meets the password quality policy, and kept readable by root only in /etc/safbox/safuser.env. It is not expired, so the first login does not force a change, and it follows the STIG\'s ageing: at most 60 days, then 35 days of grace before the account is disabled. Its sudo asks for that password.'
-  only_if('First boot creates safuser on a deployed clone when safbox_base_5 is on', impact: 0.0) { deployed && input('safuser') }
+  only_if('First boot creates safuser on a deployed clone when safbox_base_safuser is on', impact: 0.0) { deployed && input('safuser') }
 
   describe user('safuser') do
     it { should exist }
@@ -109,7 +109,7 @@ end
 control 'safbox-accounts-6' do
   impact 1.0
   title 'admin has no password, never expires, and is not offered at the login screen'
-  desc 'admin logs in with the deployer\'s SSH key only. Its password field is a lock with no hash, so no password works for it and none can expire; first boot exempts it from password ageing and inactivity, so its key login is never refused for an old password. On a desktop build it is a system account to AccountsService, so the login screen does not list it.'
+  desc 'admin logs in with the deployer\'s SSH key only. Its password field is a lock with no hash, so no password works for it. First boot gives it the STIG\'s 60-day maximum password age with an empty last-change date and no inactivity: with no password there is nothing to age, so its key login is never refused for an expired password, and a password it is ever given ages from the day it is set. On a desktop build it is a system account to AccountsService, so the login screen does not list it.'
   only_if('cloud-init creates admin on a deployed clone', impact: 0.0) { deployed && !admin_user.empty? }
 
   describe shadow.where(user: admin_user) do
@@ -118,7 +118,8 @@ control 'safbox-accounts-6' do
   describe command("chage -l #{admin_user}") do
     its('stdout') { should match(/^Password expires\s*:\s*never$/) }
     its('stdout') { should match(/^Password inactive\s*:\s*never$/) }
-    its('stdout') { should match(/^Maximum number of days between password change\s*:\s*-1$/) }
+    its('stdout') { should match(/^Last password change\s*:\s*never$/) }
+    its('stdout') { should match(/^Maximum number of days between password change\s*:\s*60$/) }
   end
   if input('desktop')
     describe ini("/var/lib/AccountsService/users/#{admin_user}") do

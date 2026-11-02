@@ -40,7 +40,7 @@ inputs:
     value: admin
   - name: safuser
     description: >-
-      True when first boot makes safuser (safbox_base_5 on, the default);
+      True when first boot makes safuser (safbox_base_safuser on, the default);
       false for an image built with that group switched off.
     type: Boolean
     value: true
@@ -48,7 +48,7 @@ inputs:
     description: >-
       True when the build enables usbguard: Ansible Lockdown's
       RHEL-10-200561 with its CAT II rules (rhel10stig_cat2 and
-      rhel10stig_200561 on, the default, and safbox_hardening_1 on); false
+      rhel10stig_200561 on, the default, and safbox_hardening_stig on); false
       for an image built with any of them off.
     type: Boolean
     value: true
@@ -84,14 +84,6 @@ inputs:
     description: Services the image ships. Remove one a site switches off.
     type: Array
     value: [heimdall, vulcan, keycloak, proxy]
-  - name: build_scans
-    description: >-
-      True when the template holds the build gate's scan results, which
-      scripts/build.sh packages and first boot imports into Heimdall. False
-      for a box built without them, such as one the playbooks were applied
-      to directly.
-    type: Boolean
-    value: true
   - name: domain
     description: >-
       The domain the TLS proxy serves (safbox_domain in group_vars): the
@@ -105,26 +97,36 @@ inputs:
       DoD roots by default; [] for an image built without the DoD bundle.
     type: Array
     value: [DoD Root CA 3, DoD Root CA 4, DoD Root CA 5, DoD Root CA 6]
-  # Versions pinned in ansible/group_vars/all/main.yml. A site that
-  # overrides a pin sets the matching input.
+  # The versions pinned in ansible/group_vars/all/main.yml. Their values
+  # are in verify/inputs/pins.yml, which scripts/validate.sh passes to
+  # every scan.
   - name: cinc_auditor_version
+    description: CINC Auditor's pinned version (safbox_tool_cinc_auditor), without the release.
     type: String
-    value: 7.2.1
+    required: true
   - name: saf_cli_version
+    description: The SAF CLI's pinned npm version (safbox_tool_saf_cli).
     type: String
-    value: 1.7.0
+    required: true
   - name: ansible_core_version
+    description: >-
+      The pinned upstream version of the distribution's ansible-core
+      (safbox_tool_ansible_core), without the release.
     type: String
-    value: 2.16.16
+    required: true
   - name: ansible_collections
+    description: >-
+      The pinned Ansible collections (safbox_tool_ansible_collections),
+      each name to its version.
     type: Hash
-    value:
-      ansible.posix: 2.2.2
-      community.crypto: 2.26.9
-      community.general: 11.4.9
+    required: true
   - name: packer_version
+    description: Packer's pinned version (safbox_tool_packer).
     type: String
-    value: 1.16.1
+    required: true
   - name: lockdown_version
+    description: >-
+      The Ansible Lockdown RHEL 10 STIG role's pinned release
+      (safbox_hardening_lockdown), as the hardening record names it.
     type: String
-    value: 1.1.0
+    required: true

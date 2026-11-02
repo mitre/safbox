@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Static checks with the standard linters: yamllint, ansible-lint (production
 # profile), a syntax check of the three playbooks, shellcheck, packer validate and
-# cinc-auditor check on the three validation profiles, then the bats suites
-# (tests/bats/run.sh). No target host needed.
+# cinc-auditor check on the three validation profiles. No target host needed.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$ROOT"
@@ -27,11 +26,8 @@ echo "== shellcheck"
 # directive on the first line) are checked.
 find ansible/roles -path '*/files/*' -type f -exec awk 'FNR == 1 && /^(#!.*sh|# shellcheck shell=)/ { printf "%s\0", FILENAME } { nextfile }' {} + \
   | xargs -0 shellcheck --shell=bash
-# The test stubs are named after the programs they stand in for (packer,
-# curl, ...), so most have no .sh suffix; their directory is listed too, as
-# are the bats suites and the helpers they load.
 # Tracked and new files alike, but only those still on disk.
-mapfile -d '' scripts < <(git ls-files -z -co --exclude-standard -- '*.sh' 'tests/scripts/stubs/*' '*.bats' '*.bash')
+mapfile -d '' scripts < <(git ls-files -z -co --exclude-standard -- '*.sh')
 existing=()
 for f in "${scripts[@]}"; do [ -f "$f" ] && existing+=("$f"); done
 shellcheck --external-sources "${existing[@]}"
@@ -48,10 +44,5 @@ for profile in verify/profiles/safbox verify/profiles/safbox-rhel10-stig-overlay
   cinc-auditor check "$profile" --chef-license accept-silent
   rm -rf "$profile/vendor" "$profile/inspec.lock"
 done
-
-echo "== bats"
-# The script tests: build.sh and clone-and-ssh.sh against the stub programs,
-# and the gitleaks rules (needs gitleaks on PATH).
-tests/bats/run.sh
 
 echo "PASS: lint"

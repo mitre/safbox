@@ -1,8 +1,7 @@
 ---
 # SAFBox appliance layer entrypoint.
 # Turns any booted RHEL 10 family host with SSH and sudo into a SAFBox.
-# Platform-agnostic by design: nothing here may name a hypervisor or cloud;
-# tests/platform-discipline.sh enforces it.
+# Platform-agnostic by design: nothing here may name a hypervisor or cloud.
 #
 # The build runs this playbook, then checks the result from outside with the
 # validation profiles (verify/profiles/), then runs seal.yml. This playbook is
@@ -17,6 +16,25 @@
   gather_facts: true
   vars_files:
     - ../group_vars/all/main.yml
+  pre_tasks:
+    # A misspelled switch (in ansible/local.yml or -e) would otherwise be
+    # ignored without a word: every safbox_<area>_* variable must be one
+    # that group_vars/all/main.yml defines.
+    - name: Refuse switch names group_vars does not define
+      tags: [always]
+      vars:
+        switch_pattern: '^safbox_(platform|site_config|base|tools|services|hardening)_'
+        switch_names: "{{ query('ansible.builtin.varnames', switch_pattern) }}"
+        group_vars_file: "{{ playbook_dir }}/../group_vars/all/main.yml"
+        known_names: "{{ (lookup('ansible.builtin.file', group_vars_file) | from_yaml).keys() | list }}"
+        unknown_names: "{{ switch_names | difference(known_names) }}"
+      ansible.builtin.assert:
+        that: unknown_names | length == 0
+        fail_msg: >-
+          unknown switch {{ unknown_names | join(', ') }}: no such variable in
+          ansible/group_vars/all/main.yml, which lists every switch; check the
+          spelling in ansible/local.yml or the -e arguments
+        quiet: true
   roles:
     # The OS, the site's trusted CA bundles (before any role fetches over
     # TLS), the package update and the first-boot play.

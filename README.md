@@ -3,30 +3,34 @@
 [![static](https://github.com/mitre/safbox/actions/workflows/static.yml/badge.svg)](https://github.com/mitre/safbox/actions/workflows/static.yml)
 
 SAF in a box: a pre-built virtual machine image carrying the MITRE Security
-Automation Framework toolchain and a curated library of validation profiles
-and hardening content, ready to deploy into a network as an assessment and
-hardening appliance, or to explore the SAF tools without setting anything up.
+Automation Framework toolchain, ready to deploy into a network as an
+assessment and hardening appliance, or to explore the SAF tools without
+setting anything up.
 
-What's inside (v1 target):
+What's inside:
 
 - Heimdall and Vulcan, hosted as podman Quadlet services
-- CINC Auditor, Ansible, the SAF CLI, and Packer
-- Pinned InSpec STIG profiles and Ansible Lockdown hardening roles for the
-  major operating systems
+- CINC Auditor, the SAF CLI, Packer, and Ansible (ansible-core with the
+  collections the Ansible Lockdown roles use)
+- No validation profiles or hardening roles: fetch the MITRE baseline or
+  Lockdown role you need on the box
+  ([Tools on the box](docs/reference/tools.md#fetching-a-profile-or-a-hardening-role))
 - A RHEL 10 family base (the packaged image uses Rocky Linux 10; AlmaLinux 10
   builds the same way), FIPS mode enabled from installation, hardened to the
-  RHEL 10 STIG with every deviation documented
+  RHEL 10 STIG; not every control passes, and the failures by choice and
+  the CAT I failures are listed with their causes
 
 **Encryption at rest.** SAFBox does not presently have a way to build disk
 encryption into the VM itself: a template that boots unattended would share
-its key with every copy. In most deployment contexts the STIG's data-at-rest
-requirement is inherited from the hypervisor or storage layer instead, and
-SAFBox's STIG overlay marks it Not Applicable on that basis. Make sure the
-storage that holds your SAFBox is encrypted.
+its key with every copy. The STIG's data-at-rest control fails on SAFBox;
+in most deployment contexts the requirement is met by the hypervisor or
+storage layer instead. Make sure the storage that holds your SAFBox is
+encrypted.
 
-SAFBox is hardened to the DISA RHEL 10 STIG with documented deviations; what
-is relaxed, and why, is in the STIG overlay profile,
-[verify/profiles/safbox-rhel10-stig-overlay/controls/overlay.rb](verify/profiles/safbox-rhel10-stig-overlay/controls/overlay.rb).
+SAFBox is hardened to the DISA RHEL 10 STIG, and not every control passes.
+The STIG controls that failed in the scans the thresholds were measured
+from are listed, with their causes where known, in
+[Known failures](docs/reference/hardening.md#known-failures).
 
 The design is recorded in [docs/adrs/0001-safbox-appliance-pipeline.md](docs/adrs/0001-safbox-appliance-pipeline.md).
 
@@ -76,13 +80,13 @@ permits production use except offering Packer to third parties as a hosted or em
 competes with the licensor's paid versions. SAFBox is free, is not a
 Packer service, and ships the unmodified binary with its licence at
 `/usr/local/share/licenses/packer/LICENSE.txt`. A distributor who does not
-want to ship BSL software sets `safbox_tools_4: false`; the image then
+want to ship BSL software sets `safbox_tools_packer: false`; the image then
 contains no Packer. Re-check the licence on every Packer version bump.
 
 Some components carry more than one licence: community.crypto has files
 under Apache-2.0, BSD-2-Clause, BSD-3-Clause and PSF-2.0 beside its GPL;
 the SAF CLI's npm dependencies keep their own licences, each in its
-package under `/usr/local/lib/node_modules`; each Ansible collection
+package under `/usr/local/lib/saf-cli/node_modules`; each Ansible collection
 carries its licence files in its install directory. Rocky Linux's
 cryptographic modules carry no FIPS 140-3 certificate of their own.
 Keycloak's FIPS provider is Bouncy Castle FIPS (bc-fips) 2.1.3, the version

@@ -1,0 +1,35 @@
+# {{ ansible_managed }}
+# Gives Heimdall's administrator the password first boot made
+# (heimdall-admin-password). Heimdall makes its administrator on its first
+# start with a throwaway bootstrap password, which it prints in its log.
+# This runs the first-boot play with --tags heimdall-admin, which runs only
+# the clone_heimdall_admin role: it signs in with the bootstrap password,
+# changes it to the real one through Heimdall's API, and replaces the
+# bootstrap secret's value. At every boot; once the bootstrap password no
+# longer signs in, it does nothing. A change that fails fails this unit.
+#
+# Ordered after heimdall.service, which is active only once Heimdall
+# answers its healthcheck (Notify=healthy), and so after first boot. Not a
+# first-boot role: Heimdall starts after first boot, so it would wait on
+# itself. To run it again, after Heimdall's database was made anew:
+#   systemctl start safbox-heimdall-admin.service
+#
+# The play's temporary files are in this unit's own runtime directory.
+[Unit]
+Description=Give Heimdall's administrator the password first boot made
+Documentation=file:{{ template_services_firstboot_play }}
+After=heimdall.service safbox-firstboot.service
+
+[Service]
+Type=oneshot
+Environment=ANSIBLE_CONFIG={{ template_services_firstboot_play | dirname }}/ansible.cfg HOME=/root
+Environment=ANSIBLE_LOCAL_TEMP=/run/safbox-heimdall-admin/ansible ANSIBLE_REMOTE_TEMP=/run/safbox-heimdall-admin/ansible
+RuntimeDirectory=safbox-heimdall-admin
+ExecStart=/usr/bin/ansible-playbook -c local -i localhost, {{ template_services_firstboot_play }} --tags heimdall-admin
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=safbox-heimdall-admin
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

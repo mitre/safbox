@@ -1,5 +1,5 @@
 ---
-# Every installed package up to date: task group safbox-base-3, imported by
+# Every installed package up to date: task group safbox-base-update, imported by
 # tasks/main.yml, which applies its tag and its switch. Before the
 # first-boot unit is enabled: a reboot after that would run first boot
 # inside the template.

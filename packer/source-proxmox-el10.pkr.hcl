@@ -91,12 +91,13 @@ source "proxmox-iso" "el10" {
       ssh_public_key    = var.ssh_public_key
       hostname          = var.hostname
       environment_group = var.environment_group
-      installer_ssh     = var.installer_ssh
       datasource_list   = var.datasource_list
     })
   }
   http_interface    = var.http_interface
   http_bind_address = var.http_bind_address
+  http_port_min     = var.http_port
+  http_port_max     = var.http_port
 
   boot_wait         = var.boot_wait
   boot_key_interval = var.boot_key_interval

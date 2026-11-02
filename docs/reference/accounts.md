@@ -7,8 +7,8 @@ left in the template.
 
 | Account | Made by | For | Logs in with | Password | sudo |
 | --- | --- | --- | --- | --- | --- |
-| `admin` | cloud-init, as its default user (`/etc/cloud/cloud.cfg.d/80-safbox-users.cfg`); first boot settles it (the first-boot play's `clone_accounts` role, task group `safbox-base-6`) | deploying and automation: Ansible, the release gate, recovering `safuser` | the deployer's SSH key only | none, ever: the field is a lock with no hash | passwordless |
-| `safuser` | first boot (the first-boot play's `clone_accounts` role, task group `safbox-base-5`; see [First boot](appliance.md#first-boot)) | using the tools day to day, at the console, over SSH and at the desktop login screen | the deployer's SSH key, or its password at the console and on the desktop | the deployer's, or one first boot generates; it expires and can be locked out | asks for its password (`/etc/sudoers.d/50-safuser`) |
+| `admin` | cloud-init, as its default user (`/etc/cloud/cloud.cfg.d/80-safbox-users.cfg`); first boot settles it (the first-boot play's `clone_accounts` role, task group `safbox-base-admin`) | deploying and automation: Ansible, the release gate, recovering `safuser` | the deployer's SSH key only | none, ever: the field is a lock with no hash | passwordless |
+| `safuser` | first boot (the first-boot play's `clone_accounts` role, task group `safbox-base-safuser`; see [First boot](appliance.md#first-boot)) | using the tools day to day, at the console, over SSH and at the desktop login screen | the deployer's SSH key, or its password at the console and on the desktop | the deployer's, or one first boot generates; it expires and can be locked out | asks for its password (`/etc/sudoers.d/50-safuser`) |
 
 SSH never accepts passwords (`PasswordAuthentication no` in
 `/etc/ssh/sshd_config.d/40-safbox.conf`, written at install); a password is
@@ -75,11 +75,17 @@ then told the name (below).
   `set_passwords` module, so the password a deployment supplies never
   reaches it (that password is `safuser`'s). If a deployment's own users
   list gives it one anyway, first boot removes it.
-- **Never expires.** First boot exempts it from password ageing and
-  inactivity (`chage -M -1 -I -1`). Without that, the STIG's 60-day
-  maximum would expire its unusable password, and sshd then refuses even
-  its key login, demanding a change it cannot make. This is the deviation
-  the STIG overlay records for SV-281170.
+- **Never expires while it has no password.** First boot gives it the
+  STIG's 60-day maximum password age (SV-281170), an empty last-change
+  date and no inactivity (`chage -d -1 -M 60 -I -1`). With no password
+  there is nothing to age, and an empty last-change date turns ageing off
+  (shadow(5)), so `sudo chage -l admin` shows the password never expires.
+  Ageing it would expire a password it does not have on day 61, and sshd
+  then refuses even its key login, demanding a change it cannot make;
+  passwordless sudo would carry on. If anyone gives `admin` a password,
+  that sets the date and the 60 days apply from then: after day 60 its
+  key login over SSH without a terminal fails ("Password change required
+  but no TTY available") until the password is changed.
 - **Cannot be locked out.** Failed passwords lock accounts through
   pam_faillock, but SSH key login and passwordless sudo run no password
   check, so a lock on `admin` stops neither.
@@ -89,8 +95,9 @@ then told the name (below).
 - **Passwordless sudo is a deviation.** The STIG requires a password for
   privilege escalation (SV-281211). `admin` keeps passwordless sudo
   because Ansible, the release gate and the idempotence check escalate
-  through it unattended; the STIG overlay records this as a Not Applicable
-  override scoped to `admin`, and the safbox profile's `safbox-accounts-4`
+  through it unattended. The baseline's SV-281211 control passes anyway,
+  because it does not detect the rule; see the known failures in
+  [Hardening](hardening.md#known-failures). The safbox profile's `safbox-accounts-4`
   fails if any other account has a `NOPASSWD` rule.
 
 ## safuser
@@ -132,7 +139,10 @@ by a change: delete it once the password is changed or noted.
 **It expires.** `safuser`'s password follows the STIG: it must be changed
 within 60 days of being set (`/etc/login.defs`), and 35 days after it
 expires the account is disabled. When it has expired, the next console or
-desktop login asks for a new one.
+desktop login, or SSH login with a terminal, asks for the old password and
+a new one; an SSH login without a terminal (`scp`, `ssh safuser@box
+command`) fails until then. Once the account is disabled, every login is
+refused, its SSH key included, until `admin` sets a new password (below).
 
 **It can be locked out.** Three wrong passwords within 15 minutes lock
 `safuser` (pam_faillock), and the lock holds until an administrator
@@ -177,12 +187,12 @@ one as above. Without `set_passwords`, cloud-init ignores `chpasswd` and
 A cloud-init user named something other than `admin` (including
 `SAFBOX_CLONE_USER` for `scripts/clone-and-ssh.sh`) is given to the safbox
 profile as its `admin_user` input in the site inputs file. A site that
-switches `safbox_base_5` off sets the profile's `safuser` input to `false`,
+switches `safbox_base_safuser` off sets the profile's `safuser` input to `false`,
 and `safbox-accounts-3` is then Not Applicable. The STIG overlay lists the
 accounts SAFBox creates, `admin` and `safuser`, as its `user_accounts`
 input (SV-281199, no unauthorized accounts); a site with other accounts,
 or another cloud-init user name, sets that input to its own list in the
-same file. `safbox_base_6` should stay
+same file. `safbox_base_admin` should stay
 on: without it `admin`'s key login ends when its password ages out.
 
 ## Accounts in the applications

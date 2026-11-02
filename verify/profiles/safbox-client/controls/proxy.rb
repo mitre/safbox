@@ -8,10 +8,11 @@
 services = input('expected_services')
 address = input('address')
 domain = input('domain')
-client = safbox_client(address, domain, input('work_dir'))
-names = client.apps.select { |app| services.include?(app) }.map { |app| "#{app}.#{domain}" }
+names = %w[heimdall vulcan keycloak].select { |app| services.include?(app) }.map { |app| "#{app}.#{domain}" }
+# openssl s_client to the proxy for NAME, with ARGS; both streams on stdout.
+s_client = ->(name, args) { "openssl s_client -connect #{address}:443 -servername #{name} #{args} </dev/null 2>&1" }
 # Each application and its database listen on the box's loopback address
-# only (safbox-heimdall-3, safbox-vulcan-3 and safbox-keycloak-4 check the
+# only (safbox-heimdall-1, safbox-vulcan-1 and safbox-keycloak-1 check the
 # binding on the box).
 app_ports = { 'heimdall' => 3000, 'vulcan' => 3001, 'keycloak' => 3002 }
 
@@ -23,20 +24,23 @@ control 'safbox-client-proxy-1' do
 
   names.each do |name|
     describe "#{name} offered TLS" do
-      subject { command(client.s_client(name, '-brief')) }
+      subject { command(s_client.call(name, '-brief')) }
       its('stdout') { should match(/^Protocol version: TLSv1\.3$/) }
     end
     describe "The certificate served for #{name}" do
-      subject { command("#{client.s_client(name, '-showcerts')} | openssl x509 -noout -checkhost #{name}") }
+      subject { command("#{s_client.call(name, '-showcerts')} | openssl x509 -noout -checkhost #{name}") }
       its('stdout') { should eq "Hostname #{name} does match certificate\n" }
     end
+    # -propquery '?fips=no' lets a FIPS-mode workstation's OpenSSL use its
+    # non-FIPS algorithms, so it makes these offers too; elsewhere it
+    # changes nothing.
     {
       'TLS 1.0' => "-tls1 -cipher 'ALL:@SECLEVEL=0'",
       'TLS 1.1' => "-tls1_1 -cipher 'ALL:@SECLEVEL=0'",
       'ChaCha20-Poly1305 alone over TLS 1.2' => '-tls1_2 -cipher ECDHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-CHACHA20-POLY1305',
     }.each do |offer, args|
       describe "#{name} offered #{offer}" do
-        subject { command(client.s_client(name, args)) }
+        subject { command(s_client.call(name, "-propquery '?fips=no' #{args}")) }
         its('stdout') { should match(/alert (protocol version|handshake failure|insufficient security)|wrong version number/) }
         # No cipher agreed: OpenSSL reports "Cipher is (NONE)" after an alert.
         its('stdout') { should_not match(/Cipher is (?!\(NONE\))/) }
@@ -77,10 +81,9 @@ control 'safbox-client-proxy-3' do
 
   ([domain, address] + names).each do |name|
     [80, 443].each do |port|
-      url = port == 80 ? "http://#{name}/safbox/check?probe=1" : "http://#{name}:443/safbox/check?probe=1"
-      describe "#{url} from here" do
-        subject { command("curl -sS -o /dev/null -w '%{http_code} %{redirect_url}' --resolve #{name}:#{port}:#{address} '#{url}'") }
-        its('stdout') { should eq "301 https://#{name}/safbox/check?probe=1" }
+      describe http("http://#{address}:#{port}/safbox/check?probe=1", headers: { 'Host' => name }) do
+        its('status') { should eq 301 }
+        its('headers.Location') { should eq "https://#{name}/safbox/check?probe=1" }
       end
     end
   end

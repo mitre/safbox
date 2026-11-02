@@ -7,12 +7,14 @@
 #   - No password, ever: its password field is a lock with no hash.
 #     cloud-init creates it locked and does not run set_passwords, so this
 #     acts only when a deployment's own users list gave it a password.
-#   - Exempt from password ageing and inactivity (chage -M -1 -I -1). The
-#     STIG's 60-day maximum in /etc/login.defs would otherwise expire its
-#     unusable password, and sshd then refuses its key login because a
-#     password change is required that it cannot make. ansible-core 2.16's
-#     user module sets the maximum but not the inactivity, so chage does
-#     both, and only when either is set.
+#   - The STIG's 60-day maximum password age, with no last-change date
+#     and no inactivity (chage -d -1 -M 60 -I -1). It has no password, so
+#     there is nothing to age: an empty last-change date turns ageing off
+#     (shadow(5)). Ageing a password it does not have would expire it on
+#     day 61, and sshd then refuses even its key login, demanding a change
+#     it cannot make. If it is ever given a password, that sets the date,
+#     and the 60 days apply from then. chage sets all three, and only when
+#     one differs.
 #   - Hidden from the desktop login screen (AccountsService SystemAccount),
 #     where AccountsService is installed.
 # pam_faillock cannot lock it out of what it is for: SSH key login and
@@ -76,7 +78,8 @@
       ansible.builtin.set_fact:
         clone_accounts_admin_has_password: "{{ getent_shadow[clone_accounts_admin_name][0] is not match('^[!*]+$') }}"
         clone_accounts_admin_ageing: >-
-          {{ getent_shadow[clone_accounts_admin_name][3] ~ ':' ~ getent_shadow[clone_accounts_admin_name][5] }}
+          {{ getent_shadow[clone_accounts_admin_name][1] ~ ':' ~ getent_shadow[clone_accounts_admin_name][3]
+             ~ ':' ~ getent_shadow[clone_accounts_admin_name][5] }}
       no_log: true
 
     - name: Remove the password a deployment's own user data gave it
@@ -92,11 +95,15 @@
           WARNING: {{ clone_accounts_admin_name }} had a password, from the deployment's own user data;
           removed it: {{ clone_accounts_admin_name }} logs in with its SSH key only
 
-    # Empty maximum and inactivity fields: never expires, never disabled.
-    - name: Exempt it from password ageing and inactivity
-      when: clone_accounts_admin_ageing != ':'
+    # Empty last change and inactivity, maximum 60: no ageing until it has a
+    # password, never disabled. Removing a password above sets the last
+    # change, so that always runs this too.
+    - name: Set its password ageing
+      when: >-
+        clone_accounts_admin_has_password
+        or clone_accounts_admin_ageing != (':' ~ clone_accounts_admin_max_days ~ ':')
       ansible.builtin.command:
-        argv: [chage, -M, '-1', -I, '-1', "{{ clone_accounts_admin_name }}"]
+        argv: [chage, -d, '-1', -M, "{{ clone_accounts_admin_max_days }}", -I, '-1', "{{ clone_accounts_admin_name }}"]
       changed_when: true
 
     - name: Look for AccountsService's user files

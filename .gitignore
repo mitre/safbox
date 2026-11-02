@@ -42,9 +42,6 @@ ansible/local.yml
 # Third-party roles ansible-galaxy installs from ansible/requirements.yml
 ansible/galaxy_roles/
 
-# Symlink to the current build log (scripts/build.sh maintains it)
-last.log
-
 # Site validation overrides (inputs and thresholds a site names through the
 # Packer variables build_gate_site_* or SAFBOX_SITE_* for the release gate)
 verify/local/
@@ -56,5 +53,7 @@ docs/research/
 docs/spikes/
 docs/upstream/
 
-# Agent session leftovers
+# Agent session leftovers and local scratch space
 claude-*-cwd
+tmp/
+.scratch/

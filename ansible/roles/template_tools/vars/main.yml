@@ -10,6 +10,9 @@ template_tools_saf_cli_packages:
 # dnf package spec for the pinned upstream ansible-core version.
 template_tools_ansible_core_package: "ansible-core-{{ safbox_tool_ansible_core.version }}"
 
+# ansible-galaxy needs git to install the collections from their repositories.
+template_tools_git_package: git-core
+
 # unarchive needs unzip to unpack the Packer release zip.
 template_tools_packer_packages:
   - unzip

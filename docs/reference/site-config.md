@@ -1,6 +1,6 @@
 # Site CA bundles
 
-Task group `safbox-site-config-1` of the `template_os` role adds CA
+Task group `safbox-site-config-ca-bundles` of the `template_os` role adds CA
 certificates to the system trust store, so the box, its tools, and the
 Heimdall and Vulcan containers trust servers those CAs sign. It runs right
 after the OS contract (the base packages, firewall, container runtime,
@@ -77,14 +77,11 @@ before anything is fetched.
 anchor file per certificate (`safbox-<bundle>-<id>.pem` in
 `/etc/pki/ca-trust/source/anchors`), runs `update-ca-trust`, and removes
 the anchors of any certificate no longer configured, so dropping a bundle
-from the list untrusts it. Before installing anything it verifies every
-certificate under the system crypto policy (`openssl verify` at the
-policy's security level, each signature checked, a root's own included,
-expiry not judged): a root the FIPS policy would refuse in use, such as a
-SHA-1 signature, an RSA key shorter than 2048 bits or an elliptic curve
-FIPS mode does not offer, fails the run and is named, rather than trusted
-on paper and rejected silently later. Every certificate of the DoD bundle
-passes on a FIPS-mode SAFBox.
+from the list untrusts it. It does not judge the certificates against
+the system crypto policy: a root the FIPS policy refuses in use (a SHA-1
+signature, an RSA key shorter than 2048 bits) is installed, and TLS
+through it fails later. The pinned DoD bundle's certificates met the
+FIPS policy when it was pinned.
 
 **Containers.** Heimdall and Vulcan mount the host's extracted trust store
 (`/etc/pki/ca-trust/extracted`) read-only where their Red Hat UBI images
@@ -108,7 +105,7 @@ would change the label the host's own programs rely on. Mount nothing
 else under `/etc/pki` into a container.
 
 **At build or on a deployed box.** The list in effect at build (the
-default, or `ansible/local.yml` named to the build, see [Site overrides](../guides/proxmox/build.md#site-overrides))
+default, or `ansible/local.yml`, which the build loads, see [Site overrides](../guides/proxmox/build.md#site-overrides))
 is baked into the image. On a box that is already deployed, apply only
 this group from the repository root on your workstation, with the same
 `ansible/local.yml` if you use one (drop `-e @ansible/local.yml` for the
@@ -117,7 +114,7 @@ which finds the roles):
 
 ```
 ANSIBLE_CONFIG=ansible/ansible.cfg ansible-playbook -i <box>, -u <user> --private-key <key> \
-  ansible/playbooks/safbox.yml -e @ansible/local.yml --tags safbox-site-config-1
+  ansible/playbooks/safbox.yml -e @ansible/local.yml --tags safbox-site-config-ca-bundles
 ```
 
 A second run changes nothing.

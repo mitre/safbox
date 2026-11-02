@@ -31,7 +31,7 @@ template_os_container_packages:
 template_os_container_trust_volume: /etc/pki/ca-trust/extracted:/etc/pki/ca-trust/extracted:ro
 
 # ---------------------------------------------------------------------------
-# Desktop (task group 7)
+# Desktop (safbox-platform-desktop)
 # ---------------------------------------------------------------------------
 # The distribution's "Server with GUI" environment group, the same set the
 # kickstart's graphical-server-environment installs.
@@ -165,14 +165,6 @@ template_os_trust_packages:
 template_os_trust_anchor_dir: /etc/pki/ca-trust/source/anchors
 template_os_trust_anchor_ext: pem
 template_os_trust_update: [update-ca-trust, extract]
-
-# The extracted store as a hashed directory, where the policy check finds
-# the issuers of a bundle certificate the bundle itself does not carry.
-template_os_trust_system_capath: /etc/pki/ca-trust/extracted/pem/directory-hash
-
-# The system crypto policy's OpenSSL back end, which names the security
-# level (@SECLEVEL) TLS enforces; the FIPS and DEFAULT policies set 2.
-template_os_trust_policy_file: /etc/crypto-policies/back-ends/opensslcnf.config
 
 # The formats a bundle may come in, each with the command that prints its
 # certificates as PEM; the bundle file is appended. A format not listed

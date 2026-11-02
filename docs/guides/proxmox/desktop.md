@@ -23,7 +23,7 @@ desktop is chosen at build time: switching it on in a clone of a headless
 template does not install GNOME, so build a desktop template and clone
 that.
 
-1. In `ansible/local.yml` (git-ignored; see
+1. In `ansible/local.yml` (git-ignored, and loaded by the build; see
    [Site configuration](../../reference/site-config.md)), set:
 
    ```
@@ -112,13 +112,10 @@ directly.
    `safuser`, with its Keycloak password (its own, not the login
    password; see
    [Accounts in the applications](../../reference/accounts.md#accounts-in-the-applications)).
-   On a clone kept by `scripts/clone-and-ssh.sh --keep` this is the
-   first Keycloak sign-in, so Keycloak asks for a new password before it
-   goes on: the release gate ran its client checks read-only and left that
-   sign-in for you (see
-   [Build and prove](build.md#_8-build-and-prove)). On a clone the gate
-   ran in full, the password was already changed and the generated one
-   no longer works.
+   This is the first Keycloak sign-in, so Keycloak asks for a new
+   password before it goes on: the release gate signs in to nothing and
+   leaves that sign-in for you (see
+   [Build and prove](build.md#_8-build-and-prove)).
 
 ### Console size
 

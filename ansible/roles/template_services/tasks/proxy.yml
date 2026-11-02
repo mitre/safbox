@@ -1,7 +1,7 @@
 ---
 # The nginx TLS proxy in front of the enabled applications: task group
-# safbox-services-3, imported by tasks/main.yml, which applies the group's
-# tag and its switch safbox_services_3.
+# safbox-services-proxy, imported by tasks/main.yml, which applies the group's
+# tag and its switch safbox_services_proxy.
 
 # Pulled at build so a clone starts the proxy offline.
 - name: Pull the nginx image

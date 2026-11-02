@@ -152,6 +152,12 @@ variable "http_bind_address" {
   default     = null
 }
 
+variable "http_port" {
+  type        = number
+  description = "TCP port of Packer's kickstart HTTP server on the runner. The build VM fetches its answer file from it, so the runner's firewall must accept it from the build network."
+  default     = 8600
+}
+
 variable "seal" {
   type        = bool
   description = "Run the full seal (scrub instance identity and installer residue, delete the build user, host keys and logs, assert the result) and produce a distributable template. false runs the development seal, which scrubs identity and residue but keeps the build user, its key, the host keys and the logs so the template can be inspected; such templates are tagged 'unsealed'."
@@ -166,32 +172,26 @@ variable "ansible_dir" {
 
 variable "galaxy_dir" {
   type        = string
-  description = "Directory ansible-galaxy installs ansible/requirements.yml into for this build: roles under roles/, collections under collections/, both searched first by the playbooks. scripts/build.sh passes one inside the run's own directory so concurrent builds never install into the same place. Null installs into ansible/galaxy_roles/ and ansible/collections/, the paths ansible.cfg names."
+  description = "Directory ansible-galaxy installs ansible/requirements.yml into for this build: roles under roles/, collections under collections/, both searched first by the playbooks. scripts/build.sh passes .build/run/galaxy, which the next build replaces. Null installs into ansible/galaxy_roles/ and ansible/collections/, the paths ansible.cfg names."
   default     = null
 }
 
 variable "site_dir" {
   type        = string
-  description = "The built documentation site (VitePress output) the template_services role copies to the box as its start page. scripts/build.sh builds it into the run's own directory so concurrent builds never share one. Null uses the role's default, site/.vitepress/dist in the checkout."
+  description = "The built documentation site (VitePress output) the template_services role copies to the box as its start page. scripts/build.sh builds it into .build/run/site. Null uses the role's default, site/.vitepress/dist in the checkout."
   default     = null
 }
 
 variable "build_run_id" {
   type        = string
-  description = "The ID of the scripts/build.sh run that builds the template (its directory under .build/runs/), recorded with the build gate's results the template holds. Null when Packer is run by hand."
+  description = "The ID of the scripts/build.sh run that builds the template (the UTC time it started), recorded with the build gate's results the template holds. Null when Packer is run by hand."
   default     = null
 }
 
 variable "build_scans_dir" {
   type        = string
-  description = "Directory the build gate keeps the box profiles' results in (scripts/validate.sh --results-dir); the seal installs them in the template, where first boot imports them into Heimdall. scripts/build.sh passes one inside the run's own directory. Null keeps none, and the template holds no scan results."
+  description = "Directory the build gate keeps the box profiles' results in (scripts/validate.sh --results-dir); the seal installs them in the template, where first boot imports them into Heimdall. scripts/build.sh passes .build/run/scans. Null keeps none, and the template holds no scan results."
   default     = null
-}
-
-variable "ansible_extra_vars" {
-  type        = list(string)
-  description = "Extra variables passed to every appliance playbook as key=value, e.g. [\"safbox_services_2=false\"]."
-  default     = []
 }
 
 variable "git_revision" {
@@ -262,12 +262,6 @@ variable "kickstart_url" {
   type        = string
   description = "Where the installer fetches the kickstart. Null uses Packer's temporary HTTP server on the runner, which the VM's network must be able to reach. In environments where the VM network cannot reach the runner, host the rendered kickstart on an internal web server and set this URL; see docs/guides/proxmox/build.md, \"When the VM cannot reach your workstation\"."
   default     = null
-}
-
-variable "installer_ssh" {
-  type        = bool
-  description = "Boot the installer with inst.sshd so the runner can SSH into the Anaconda environment as root with the build key to read /tmp/*.log while an install is stuck. Development aid; off by default."
-  default     = false
 }
 
 variable "boot_command" {

@@ -1,0 +1,14 @@
+---
+# The versions pinned in ansible/group_vars/all/main.yml, which the safbox
+# profile checks the box carries. Change a pin there and here together. A
+# site that overrides a pin in ansible/local.yml sets the same input in its
+# site inputs file.
+cinc_auditor_version: 7.2.1
+saf_cli_version: 1.7.0
+ansible_core_version: 2.16.16
+ansible_collections:
+  ansible.posix: 2.2.2
+  community.crypto: 2.26.9
+  community.general: 11.4.9
+packer_version: 1.16.1
+lockdown_version: 1.2.0

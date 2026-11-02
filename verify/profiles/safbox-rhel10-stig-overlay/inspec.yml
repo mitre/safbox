@@ -6,13 +6,14 @@ copyright: The MITRE Corporation
 copyright_email: saf@mitre.org
 license: Apache-2.0
 summary: >-
-  The MITRE RHEL 10 STIG baseline with SAFBox's deviations applied.
-  This is the record of how SAFBox deviates from the STIG. Every baseline control
-  runs; a deviation is marked and explained, never dropped.
+  The MITRE RHEL 10 STIG baseline as SAFBox runs it. Every baseline control
+  runs; a control that does not apply to SAFBox is marked Not Applicable with
+  its reason, and a requirement SAFBox does not meet fails.
 version: 0.1.0
 inspec_version: ">= 5.0"
 supports:
   - platform-family: redhat
+    release: 10.*
 depends:
   # Pinned by commit; update deliberately and re-run the release gate.
   - name: redhat-enterprise-linux-10-stig-baseline
@@ -24,13 +25,6 @@ depends:
 # banner controls check the configured text against these instead.
 # A site that changes safbox_logon_banner sets these to the same text.
 inputs:
-  # SAFBox's own input, not the baseline's: the remote log server a site has
-  # configured (group_vars safbox_remote_log_server). While it is empty,
-  # SV-280985 is Not Applicable as a deploy-time deviation; a site that sets
-  # it sets this input to the same value, and the control is evaluated.
-  - name: remote_log_server
-    type: String
-    value: ""
   - name: banner_message_text_cli
     profile: redhat-enterprise-linux-10-stig-baseline
     value: "Welcome to SAFBox!"
@@ -80,6 +74,22 @@ inputs:
       - systemd-oom
       - tss
       - unbound
+      # Desktop builds only: the system accounts the desktop package set creates.
+      - avahi
+      - clevis
+      - colord
+      - dnsmasq
+      - flatpak
+      - gdm
+      - geoclue
+      - gnome-initial-setup
+      - gnome-remote-desktop
+      - libstoragemgmt
+      - pipewire
+      - rtkit
+      - setroubleshoot
+      - tcpdump
+      - wsdd
   # Groups that system commands may belong to besides root: the groups the
   # distribution's packages give their setgid and restricted helpers (tty:
   # write; utmp: utempter; postdrop: postdrop, postlog, postqueue; sssd: the

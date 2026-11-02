@@ -1,14 +1,15 @@
 # Copy to packer/local.auto.pkrvars.hcl (git-ignored) and fill in your site.
-# Credentials are NOT set here; export PROXMOX_URL, PROXMOX_USERNAME,
-# PROXMOX_TOKEN in the environment (scripts/build.sh sources a 0600 env file).
+# Credentials and the cluster CA are NOT set here: they go in the 0600 env
+# file the scripts source (template: scripts/example.env).
 
+# The node and pool, by name; scripts/clone-and-ssh.sh reads them from here
+# too, so this is the one place they are set.
 proxmox_node = "your-node"
 proxmox_pool = "your-pool"
-# The template's VM ID. Rather than fixing one here, set a range in the
-# env file (SAFBOX_TEMPLATE_IDS=FIRST-LAST) and scripts/build.sh takes the
-# first ID in it that is free on the cluster; a fixed ID fails as soon as a
-# template holds it. scripts/build.sh --help says which wins.
-# vm_id      = 123456
+# The template's VM ID: a free one the token may use. Packer never reuses
+# an ID, so a rebuild needs another (-var vm_id=N on the command line wins)
+# or the previous template deleted first.
+vm_id = 123456
 
 # Rocky 10 for release; AlmaLinux 10 x86_64_v2 for hosts without AVX2.
 iso_file     = "local:iso/Rocky-10-latest-x86_64-minimal.iso"

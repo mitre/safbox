@@ -1,5 +1,5 @@
 ---
-# clone_proxy_tls role of the first-boot play (task group safbox-services-3):
+# clone_proxy_tls role of the first-boot play (task group safbox-services-proxy):
 # a local CA limited to server certificates for names under the box's
 # domain, a certificate it signs for exactly the names the proxy serves,
 # and the box's trust in that CA. Existing files are kept.

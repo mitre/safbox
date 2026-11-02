@@ -7,17 +7,18 @@
 # does not run again.
 #
 # Ordered after heimdall.service, which is active only once Heimdall
-# answers its healthcheck (Notify=healthy), and so after first boot. Not a
-# first-boot role: Heimdall starts after first boot, so it would wait on
-# itself. With Heimdall not running, the role skips without a marker,
-# and the next boot tries again. A template without scan results (built
+# answers its healthcheck (Notify=healthy), and so after first boot, and
+# after safbox-heimdall-admin.service, which gives the administrator the
+# password this signs in with. Not a first-boot role: Heimdall starts
+# after first boot, so it would wait on itself. With Heimdall not running,
+# the role skips without a marker, and the next boot tries again. A template without scan results (built
 # without the build gate's) has nothing to import.
 #
 # The play's temporary files are in this unit's own runtime directory.
 [Unit]
 Description=Import the SAFBox template's build-gate scan results into Heimdall
 Documentation=file:{{ template_services_firstboot_play }}
-After=heimdall.service safbox-firstboot.service
+After=heimdall.service safbox-firstboot.service safbox-heimdall-admin.service
 ConditionPathExists=!{{ template_services_heimdall_scans_marker }}
 ConditionPathExists={{ template_services_heimdall_scans_dir }}/manifest.json
 

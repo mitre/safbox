@@ -8,7 +8,8 @@
 #
 #   - A missing secret's value comes from openssl rand -hex, which draws on
 #     OpenSSL's FIPS DRBG in FIPS mode, at the strength the list gives
-#     (with Vulcan's administrator password's fixed suffix).
+#     (with the separator and suffix the list gives: the fixed characters
+#     that make an administrator password meet its application's rules).
 #   - The value reaches podman secret create on its standard input, never
 #     in a process argument; every task that holds one is no_log, so a
 #     failure names the task and nothing more.
@@ -67,7 +68,9 @@
     - name: Create each missing secret
       ansible.builtin.command:
         argv: [podman, secret, create, --label, "description={{ item.description }}", "{{ item.name }}", "-"]
-        stdin: "{{ clone_secrets_generated.stdout_lines[clone_secrets_index] ~ item.suffix | default('') }}"
+        stdin: >-
+          {{ clone_secrets_generated.stdout_lines[clone_secrets_index] | batch(2) | map('join')
+             | join(item.separator | default('')) ~ item.suffix | default('') }}
         stdin_add_newline: false
       loop: "{{ clone_secrets_missing }}"
       loop_control:

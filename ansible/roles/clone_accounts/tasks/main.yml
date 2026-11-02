@@ -14,11 +14,11 @@
   no_log: true
 
 - name: Settle admin
-  when: safbox_base_6 | default(true) | bool
+  when: safbox_base_admin | default(true) | bool
   tags: [admin]
   ansible.builtin.import_tasks: admin.yml
 
 - name: Make safuser
-  when: safbox_base_5 | default(true) | bool
+  when: safbox_base_safuser | default(true) | bool
   tags: [safuser]
   ansible.builtin.import_tasks: safuser.yml

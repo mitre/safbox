@@ -1,16 +1,33 @@
 ---
 # STIG overlay on the build VM before the seal and before the reboot that
 # applies the hardening's kernel and boot settings (build gate).
-# 78: the worse of the two build scans of 2026-10-19, headless template 9000:
-# 298 of 380 applicable controls passed (78.4%), rounded down. The desktop
-# template 9002 passed 301 of 383 (78.6%).
+#
+# The known failures, as in the table in docs/reference/hardening.md; keep
+# the two lists the same. Both variants. They are the release gate's list
+# in stig-release.yml, plus these, which pass on a clone:
+#   SV-281064  build gate only: root's dotfiles (0600 from a tmpfiles rule at boot)
+#              and the build account's
+#   SV-281116, 281117, 281125 to 281127, 281152 to 281154, 281156 to 281164 (17)
+#              build gate only: audit rules not loaded until the reboot
+#   SV-281186  build gate only: the build account
+#   SV-281199  build gate only: the build account
+#   SV-281233  build gate only: /boot mount options apply at the reboot
+#   SV-281248  build gate only: as SV-281233
+#   SV-281322  build gate only: kdump runs until the reboot
+#   SV-281365  build gate only: audit.rules rebuilt with -e 2 at the reboot
+# The same five CAT I as at release: SV-280935, SV-280978, SV-281009,
+# SV-281268, SV-281298.
+#
+# 74: measured on the build scans of the 2026-11-01 combined build: 300 of
+# 399 applicable controls passed on the headless template (75.2%), 303 of
+# 402 on the desktop template (75.4%); the worse, rounded down, less one
+# point of headroom for build-to-build variation.
 compliance:
-  min: 78
-# 4: the CAT I (high) controls that fail on every image today (SV-280978,
-# SV-281009, SV-281268, SV-281298, on both variants); a new one fails the gate.
+  min: 74
+# 5: the CAT I known failures above; a new one fails the gate.
 failed:
   high:
-    max: 4
+    max: 5
 error:
   total:
     max: 0

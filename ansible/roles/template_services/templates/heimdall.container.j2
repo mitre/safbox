@@ -24,7 +24,10 @@ Environment=DATABASE_USERNAME={{ template_services_heimdall_db_user }}
 Environment=JWT_EXPIRE_TIME={{ template_services_heimdall_jwt_expire_time }}
 Environment=EXTERNAL_URL=https://{{ template_services_heimdall_host }}
 # The one local account is the administrator, made on the first start
-# from ADMIN_PASSWORD (a podman secret); nobody registers (.env-example).
+# from ADMIN_PASSWORD; nobody registers (.env-example). Heimdall prints
+# that password in its log, so it gets a throwaway bootstrap password
+# (a podman secret), which safbox-heimdall-admin.service changes to the
+# real one, heimdall-admin-password, through Heimdall's API once it answers.
 Environment=REGISTRATION_DISABLED=true
 Environment=ADMIN_EMAIL=admin@{{ safbox_domain }}
 {% if template_services_keycloak_enabled | bool %}

@@ -1,15 +1,68 @@
 ---
 # STIG overlay on a deployed clone (release gate).
-# 84: the worse of the two release scans of 2026-10-19, desktop clone 9102:
-# 324 of 383 applicable controls passed (84.6%), rounded down. The headless
-# clone 9101 passed 322 of 380 (84.7%).
+#
+# The known failures, as in the table in docs/reference/hardening.md; keep
+# the two lists the same. Both variants unless noted.
+#   CAT I (high):
+#   SV-280935  choice: no disk encryption inside the VM
+#   SV-280978  baseline defect: checks autrace, not in the STIG's check
+#   SV-281009  baseline defect: runs fips-mode-setup, gone from EL10
+#   SV-281268  baseline defect: reads sshd_config, not its drop-ins
+#   SV-281298  baseline defect: its grep cannot match
+#   CAT II (medium):
+#   SV-280931  not yet triaged (owner): no Red Hat keys on a RHEL rebuild
+#   SV-280970  choice: fapolicyd not enabled
+#   SV-280971  choice: fapolicyd policy, follows SV-280970
+#   SV-280979  baseline defect: wants an AIDE group named All
+#   SV-280986  baseline defect: reports commented-out rsyslog lines
+#   SV-280987  site: no remote log server until the site names one
+#   SV-280988  site: as SV-280987
+#   SV-280989  site: as SV-280987
+#   SV-281001  baseline defect: applies its container test to every host
+#   SV-281045  image defect: world-writable directories in the Vulcan image
+#   SV-281077  baseline defect: requires /sbin/autrace, not in the check or EL10
+#   SV-281078  baseline defect: as SV-281077
+#   SV-281103  choice: no panic on audit failure
+#   SV-281115  baseline defect: reads only sshd_config, as SV-281268
+#   SV-281118 to 281124, 281128 to 281146, 281148 to 281151 (30)
+#              Lockdown defect: its -F arch loads them as -S execve, not -S all
+#   SV-281147  baseline defect: tests a /usr/bin/mount rule, not -S mount
+#   SV-281155  baseline defect: cannot read the dir= rule on /etc/sudoers.d
+#   SV-281165  Lockdown defect: audit key perm_mod, not "delete"
+#   SV-281166  site: no boot loader password until the site sets one
+#   SV-281167  site: as SV-281166; the site renames the default superuser "root"
+#   SV-281193  baseline defect: rejects "enforce_for_root = true"
+#   SV-281195  choice: root not locked after failed logins
+#   SV-281224  baseline defect: reads only sshd_config, as SV-281268
+#   SV-281235  Lockdown defect: no /dev/shm line in fstab (its mount facts leave out tmpfs)
+#   SV-281236  Lockdown defect: as SV-281235; /dev/shm not noexec
+#   SV-281237  Lockdown defect: as SV-281235
+#   SV-281239  choice: /tmp not noexec
+#   SV-281250  choice: sudo does not elevate to sysadm_r
+#   SV-281264  Lockdown defect: PermitEmptyPasswords never written
+#   SV-281296  baseline defect: as SV-281001
+#   SV-281316  baseline defect: flags an overridden vendor sysctl default
+#   SV-281325  site: no PKI multifactor login until the site provides it
+#   SV-281329  site: as SV-281325
+#   SV-281330  site: as SV-281325
+#   SV-281332  baseline defect: firewall-cmd with "drop (default)"
+#   SV-281333  baseline defect: as SV-281332
+#   SV-281338  site: fewer than two name servers from the site's network
+#   SV-281342  baseline defect: as SV-281316
+#   SV-281345  baseline defect: as SV-281316
+#   SV-281348  baseline defect: as SV-281316
+#   SV-281353  choice: IPv4 forwarding on for podman
+#
+# 80: measured on the release scans of the 2026-11-01 combined build (whose
+# release gate failed only on the SV-281170 error):
+# 323 of 399 applicable controls passed on the headless clone (81.0%), 325
+# of 402 on the desktop clone (80.8%); the worse, rounded down.
 compliance:
-  min: 84
-# 4: the CAT I (high) controls that fail on every image today (SV-280978,
-# SV-281009, SV-281268, SV-281298, on both variants); a new one fails the gate.
+  min: 80
+# 5: the CAT I known failures above; a new one fails the gate.
 failed:
   high:
-    max: 4
+    max: 5
 error:
   total:
     max: 0

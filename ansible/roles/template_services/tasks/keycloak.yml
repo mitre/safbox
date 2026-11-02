@@ -1,8 +1,8 @@
 ---
 # Keycloak and its PostgreSQL as a podman pod of Quadlet units, the single
-# sign-on for Heimdall and Vulcan: task group safbox-services-5, imported
+# sign-on for Heimdall and Vulcan: task group safbox-services-keycloak, imported
 # by tasks/main.yml, which applies the group's tag and its switch
-# safbox_services_5.
+# safbox_services_keycloak.
 
 # The image is built here, at image build, so a clone starts Keycloak
 # offline and fetches nothing.

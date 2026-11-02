@@ -3,7 +3,7 @@
 # contract and the desktop, then the site's CA bundles before anything
 # fetches over TLS, then the package update, which must come before the
 # first-boot unit is enabled (a reboot after that would run first boot
-# inside the template). Each group is a block tagged safbox-<area>-<n>;
+# inside the template). Each group is a block tagged safbox-<area>-<name>;
 # imported files carry the tag and switch to every task in them. Groups
 # without a switch always run: the appliance does not work without them.
 
@@ -16,35 +16,35 @@
 # the next boot, not during the build.
 - name: Desktop
   when:
-    - safbox_platform_7 | default(true) | bool
+    - safbox_platform_desktop | default(true) | bool
     - template_os_desktop_enabled | bool
-  tags: [safbox-platform-7]
+  tags: [safbox-platform-desktop]
   block:
     - name: GNOME and the SAF branding
       ansible.builtin.import_tasks: desktop.yml
 
 - name: Trusted CA bundles
-  when: safbox_site_config_1 | default(true) | bool
-  tags: [safbox-site-config-1]
+  when: safbox_site_config_ca_bundles | default(true) | bool
+  tags: [safbox-site-config-ca-bundles]
   block:
     - name: The site's CA bundles in the system trust store
       ansible.builtin.import_tasks: trust.yml
 
 - name: Package updates
-  when: safbox_base_3 | default(true) | bool
-  tags: [safbox-base-3]
+  when: safbox_base_update | default(true) | bool
+  tags: [safbox-base-update]
   block:
     - name: Every installed package up to date
       ansible.builtin.import_tasks: update.yml
 
 - name: First-boot framework
-  tags: [safbox-base-1]
+  tags: [safbox-base-firstboot]
   block:
     - name: The first-boot play and its unit
       ansible.builtin.import_tasks: firstboot.yml
 
 - name: The safbox command
-  tags: [safbox-base-2]
+  tags: [safbox-base-command]
   block:
     - name: Install the safbox command
       ansible.builtin.copy:
@@ -55,8 +55,8 @@
         mode: '0755'
 
 - name: The SAF login greeting
-  when: safbox_base_4 | default(true) | bool
-  tags: [safbox-base-4]
+  when: safbox_base_greeting | default(true) | bool
+  tags: [safbox-base-greeting]
   block:
     - name: Create the message of the day directory
       ansible.builtin.file:
@@ -80,8 +80,8 @@
 # that asks for its password. Only admin, the account cloud-init creates,
 # has passwordless sudo.
 - name: The safuser account
-  when: safbox_base_5 | default(true) | bool
-  tags: [safbox-base-5]
+  when: safbox_base_safuser | default(true) | bool
+  tags: [safbox-base-safuser]
   block:
     - name: Install the packages the clone_accounts role uses for safuser
       ansible.builtin.package:
@@ -91,7 +91,7 @@
 # admin, cloud-init's default user, is the deployer's key-only account for
 # deploying and automation. cloud-init creates it with passwordless sudo
 # and a locked password; on each clone's first boot the clone_accounts role
-# (run for admin when safbox_base_6 is on) exempts it from password ageing
+# (run for admin when safbox_base_admin is on) exempts it from password ageing
 # (the STIG's 60 days would otherwise end its key login) and hides it from
 # the desktop login screen. The switch only reaches the play (vars.yml);
 # this role has no task of its own for it.

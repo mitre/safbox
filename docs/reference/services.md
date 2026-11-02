@@ -84,7 +84,7 @@ issue certificates for names under the domain, which the importing
 machine will accept.
 
 **Firefox bookmarks.** On a desktop build (`safbox_desktop_enabled`), task
-group `safbox-services-4` writes Firefox's system-wide enterprise policy,
+group `safbox-services-firefox` writes Firefox's system-wide enterprise policy,
 `/etc/firefox/policies/policies.json`: its `Bookmarks` policy puts
 Heimdall, Vulcan, Keycloak (its account page), SAF (saf.mitre.org), SAF
 Training and SAFBox - Start Here on the bookmarks toolbar, one button each, and
@@ -119,7 +119,7 @@ icon URL), so the file is larger than the bookmarks alone:
 
 | Bookmark | Icon | From |
 |---|---|---|
-| Heimdall | Heimdall's orange logo | `apps/frontend/src/assets/logo-orange-tsp.svg` in [mitre/heimdall2](https://github.com/mitre/heimdall2) at v2.14.0 (the release of the Heimdall image the box runs), Apache-2.0 |
+| Heimdall | Heimdall's orange logo | `apps/frontend/src/assets/logo-orange-tsp.svg` in [mitre/heimdall2](https://github.com/mitre/heimdall2) at v2.15.0 (the release of the Heimdall image the box runs), Apache-2.0 |
 | Keycloak | Keycloak's logo | `js/apps/admin-ui/public/favicon.svg` (the admin console's icon) in [keycloak/keycloak](https://github.com/keycloak/keycloak) at 26.8.1 (the release of the Keycloak image), Apache-2.0 |
 | Vulcan, SAF, SAF Training, SAFBox - Start Here | the SAF shield | the SAF logo the desktop installs (`/usr/share/pixmaps/saf-logo.svg`, installed by the template_os role); Vulcan has no logo of its own |
 
@@ -143,7 +143,8 @@ ordered after `safbox-firstboot.service`). First boot
 - the first-boot play's `clone_secrets` role (tag `secrets`) makes each
   service's secrets as podman secrets: Heimdall's
   `heimdall-database-password`, `heimdall-jwt-secret`,
-  `heimdall-api-key-secret` and `heimdall-admin-password`; Vulcan's
+  `heimdall-api-key-secret`, `heimdall-admin-password` and
+  `heimdall-admin-bootstrap-password`; Vulcan's
   `vulcan-database-password`, `vulcan-secret-key-base`,
   `vulcan-cipher-password`, `vulcan-cipher-salt` and
   `vulcan-admin-password`; Keycloak's `keycloak-database-password`,
@@ -245,7 +246,8 @@ realm at its first start, so change it there too (the client's
 Credentials tab in the administration console). The administrators'
 passwords and `safuser`'s initial Keycloak password are read on each
 application's first start only, so replacing those secrets later changes
-nothing.
+nothing (Heimdall's is set from `heimdall-admin-password` when
+`safbox-heimdall-admin.service` changes the bootstrap password, below).
 
 **Renewal.** The certificate is valid for a year; the CA for ten. Daily
 (at a random time within an hour of midnight, or at the next boot after a
@@ -263,9 +265,8 @@ trusting the box; nothing else needs restarting. Otherwise it changes
 nothing. Its log is `journalctl -u safbox-proxy-renew`, and
 `systemctl list-timers safbox-proxy-renew.timer` shows its next run. A
 renewal also picks up names added since the last one (an application
-switched on later). Control `safbox-proxy-7` checks the timer is enabled
-and waiting, that the proxy serves the certificate on disk, and that it
-(and the local CA that signed it) has more than 14 days left.
+switched on later). Control `safbox-proxy-3` checks the timer is enabled
+and waiting, and that the certificate has more than 14 days left.
 
 **Renew now.** As root, either let the service decide, or renew whatever
 the certificate's remaining validity:
@@ -284,7 +285,7 @@ must cover the names in `/etc/safbox/proxy-names`. The renewal recognises
 the box's own certificate by its signature: it never replaces a
 certificate the local CA did not sign, and its log says it left a site's
 own certificate alone. Your site renews it: put the new pair in the same
-place and restart the proxy again before it expires (`safbox-proxy-7`
+place and restart the proxy again before it expires (`safbox-proxy-3`
 fails once 14 days or fewer are left). Then retire the local CA, which
 nothing needs any more:
 
@@ -347,10 +348,47 @@ sudo podman secret inspect --showsecret --format '{{.SecretData}}' vulcan-admin-
 ```
 
 Heimdall asks its administrator for a new password at the first sign-in.
-It also prints the administrator's password in its log on the first start
-(`journalctl -u heimdall.service`), even when given one: upstream
-behaviour, so change it at that first sign-in. A box deployed before this
-change made its administrators the old way (Heimdall's
+Heimdall prints the password it makes its administrator with in its log,
+so in the journal, even when it is given one. So Heimdall is given a
+throwaway one, `heimdall-admin-bootstrap-password`, and once it answers,
+`safbox-heimdall-admin.service` signs in with it and changes the password
+to `heimdall-admin-password` through Heimdall's API, as Heimdall's own
+change-password form does, keeping the request for a new password at the
+first sign-in. Only then does it replace the bootstrap secret's value
+with one nobody reads, so the value in the journal opens nothing. It runs
+at every boot and does nothing once the bootstrap password no longer
+signs in; a change Heimdall refuses fails the unit
+(`systemctl --failed`), and the bootstrap password then still signs in.
+After Heimdall's database is made anew (its `heimdall-db` volume
+removed), Heimdall makes its administrator again with the bootstrap
+secret's current value; `sudo systemctl start safbox-heimdall-admin.service`
+changes it at once instead of at the next boot. If the unit is stopped
+between the change and the replacement, the bootstrap secret keeps the
+value in the journal, which opens nothing but fails the release gate's
+secret checks; replace it by hand (`sudo podman secret rm` and
+`--tags secrets`, as in **Reading a secret** above).
+
+**A box deployed before that change** has its real initial password in
+its journal under `heimdall.service`, readable by root and the `adm`,
+`wheel` and `systemd-journal` groups (`admin` is in two of them) until
+the journal files holding it are removed. Count the lines without
+printing them (on a newer box the count is 1 or more too, one for each
+time Heimdall made its administrator, but each value is a spent bootstrap
+password):
+
+```
+sudo journalctl -u heimdall.service -o cat | grep -c 'New administrator password is'
+```
+
+Change the password at the first sign-in (Heimdall asks), or now under
+the administrator's profile: the logged value then opens nothing. journald
+cannot delete single entries; `journalctl --rotate` followed by
+`journalctl --vacuum-time=` removes whole journal files, with every
+other log and audit trail in them, so only do that if the site's log
+retention allows it.
+
+A box deployed before the administrators' passwords came from first boot
+made its administrators the old way (Heimdall's
 `admin@heimdall.local` with a random password in its log; Vulcan's first
 registered user), and keeps them. LDAP and SMTP are site settings
 (`template_services_vulcan_settings` in the template_services role's defaults).
@@ -363,7 +401,7 @@ included:
 
 - **Names and tags.** Each is named
   `safbox-build-<run>-<profile>.json`, where `<run>` is the build's run ID
-  (its directory under `.build/runs/` on the build machine). Each is
+  (the UTC time `scripts/build.sh` started). Each is
   tagged `safbox-build-scan`, `run <run>` and `scanned <date>` (UTC).
   The STIG overlay's evaluation is also tagged `STIG`.
 - **Where they come from.** `scripts/build.sh` gives the build gate the
@@ -374,7 +412,7 @@ included:
   sha256. A template built without `scripts/build.sh` (Packer without
   `build_scans_dir`) holds none.
 - **How they are imported.** `safbox-heimdall-scans.service` (with
-  Heimdall, task group `safbox-services-1`) imports them once per box
+  Heimdall, task group `safbox-services-heimdall`) imports them once per box
   after Heimdall answers its healthcheck. It runs the first-boot play's
   `clone_heimdall_scans` role:
 
@@ -415,15 +453,9 @@ included:
   sign-in. Heimdall's administrator owns the evaluations and can delete
   them.
 
-`safbox-heimdall-7` and `safbox-heimdall-8` check the unit, the files,
-the marker, and that each evaluation is public and has its tags. They
-also check that Heimdall stores each one as HDF: the source file's
-profiles, with as many controls in each. `safbox-client-keycloak-2`
-fetches each one as `safuser` and checks that its content is HDF.
-
 **Single sign-on (Keycloak).** Keycloak 26.8.1, in FIPS strict mode, signs
 users in to both applications at `https://keycloak.safbox.internal/` (task
-group `safbox-services-5`, switch `safbox_services_5`). It runs from an
+group `safbox-services-keycloak`, switch `safbox_services_keycloak`). It runs from an
 image the build makes from Keycloak's image, pinned by digest, and the four
 Bouncy Castle FIPS jars its FIPS guide asks for, pinned by sha256; the
 Containerfile and the jars' sums stay on the box in `/etc/safbox-keycloak`.
@@ -507,7 +539,7 @@ through 20 rounds of sign-ins to both applications, its database at about
 0.5 GB of disk.
 
 **Switching a service off applies at build time.** The services' switches
-(`safbox_services_1` to `safbox_services_5`) decide what a template is
+(`safbox_services_<name>`) decide what a template is
 built with. Setting one to `false` and applying the roles again to a box
 that already has the service does not remove it: no task deletes its
 units, image or secrets, so it keeps running, and nothing
@@ -526,38 +558,19 @@ sudo env ANSIBLE_CONFIG=/usr/local/lib/safbox/firstboot/ansible.cfg \
 sudo systemctl start heimdall.service vulcan.service safbox-proxy.service
 ```
 
-**Testing.** The release gate's safbox profile checks the units, secrets,
-loopback-only ports, each name over HTTPS, the start page,
-the certificate's names, `/etc/hosts` and the firewall from a shell on the
-box, that `safbox status` names Keycloak and, on a deployed box, finds
-it ready, and that Heimdall offers local log in and refuses a sign-up. Its
-client profile, `verify/profiles/safbox-client`, then acts as a browser
-would, from your workstation over HTTPS only: it checks the proxy's TLS
-(TLS 1.3 negotiated with a certificate for each name; TLS 1.0, 1.1 and
-ChaCha20 refused), that only ports 80 and 443 answer, that plain HTTP to
-each name and the bare address, on port 80 and on 443, is redirected, and loads each application's page with its scripts and
-stylesheets. Heimdall's administrator logs in and uploads the gate's own
-safbox results; Vulcan's signs in through the sign-in form and creates a
-project; a sign-up to Vulcan is tried and its result kept, as the known
-upstream defect (Accounts above), Not Applicable rather than a failure.
-Keycloak's discovery document must name the safbox realm, its
-administration paths must refuse your workstation, and its bare name must
-lead to the account page. `safuser` starts with the generated password
-(`SAFUSER_PASSWORD`): its first sign-in must ask for a new one, the
-realm's policy must refuse a short one and the user name, and the profile
-sets one, kept in a file on your workstation, mode 0600
-(`keycloak_safuser_password_file`; by default one that is removed after
-the run, so each run expects a fresh box). Signed in, `safuser` must see each of
-the template's build-gate scans the box imported as a public evaluation
-tagged with its build run. With that password `safuser`
-signs in to both applications through Keycloak as a regular user and to
-the account console, whose profile loads, and changes its password there,
-as `safuser` would; last, the generated password and a wrong one must be
-refused. The profile sends each name to the box's address itself, so your
-workstation needs no DNS or hosts entry. It creates data and changes
-`safuser`'s password, so the release gate runs it against a clone only;
-see [How SAFBox is validated](validation.md) to run it by hand. It needs
-curl and OpenSSL 3 as `openssl` (not LibreSSL, as on macOS).
+**Testing.** The release gate's safbox profile checks from a shell on the
+box that each service runs from pinned images, starts at boot and answers
+on the loopback address only, that no secret is in an env file, a
+container's visible settings or the journal, that the proxy and the
+firewall leave ports 80 and 443 only, that each name answers over HTTPS,
+and that Keycloak's administration paths answer to the box only. Its
+client profile, `verify/profiles/safbox-client`, then checks from your
+workstation the proxy's TLS (TLS 1.3 with a certificate for each name;
+TLS 1.0, 1.1 and ChaCha20 refused), that only ports 80 and 443 answer,
+that plain HTTP is redirected, and that each application's page answers.
+It only reads. Signing in is checked by hand ([How SAFBox is
+validated](validation.md)). It needs OpenSSL 3 as `openssl` (not
+LibreSSL, as on macOS).
 
 **FIPS.** SAFBox makes the effort to run every component in FIPS mode:
 each one's crypto is meant to go through a FIPS provider, under the
@@ -588,8 +601,7 @@ compose files' `postgres:17` (Heimdall) and `postgres:18-alpine` (Vulcan),
 whose OpenSSL has no FIPS provider at all. Its OpenSSL runs its FIPS
 provider on a FIPS host under the host's policy, so PostgreSQL refuses
 MD5 and computes its SCRAM-SHA-256 password hashes and its digest
-functions in FIPS mode (`safbox-heimdall-5`, `safbox-vulcan-4`,
-`safbox-keycloak-6`). That provider is an unvalidated CentOS Stream build
+functions in FIPS mode. That provider is an unvalidated CentOS Stream build
 of the RHEL 9 module: it runs in FIPS mode, and it carries no CMVP
 certificate. Red Hat's own PostgreSQL images, whose module is RHEL's,
 need a Red Hat account to pull and may not be redistributed in a
@@ -655,5 +667,6 @@ units follow Keycloak's server guides and say so in their comments.
 | Vulcan: the project's default network | the `vulcan` network, the pod alone on it | no other container reaches its database |
 | Vulcan `caddy` and `nginx` profiles | the TLS proxy (below) | one TLS proxy for every application |
 | Heimdall `nginx` and Vulcan's `nginx` profile: `image nginx:alpine` | Red Hat UBI 9 nginx, pinned by digest (`safbox_image_proxy`), `safbox-proxy.container`, one container for every application | its OpenSSL runs the FIPS provider on a FIPS host; TLS terminates in one place |
+| Heimdall `nginx` and Vulcan's `nginx` profile: `X-Forwarded-For $proxy_add_x_forwarded_for` | `X-Forwarded-For $remote_addr` | the proxy is the box's edge, so the client's own `X-Forwarded-For` is dropped: otherwise a client could name any address to the applications' sign-in rate limits |
 | proxy: `ports 80, 443` | the same, on the host network; 443 serves each application by name, 80 redirects (`nginx.conf`) | the host network reaches the pods' loopback-only ports |
 | proxy: templates and certs volumes | `nginx.conf` and the start page (`template_services` role) and the certificate first boot makes, all read-only | the configuration comes from the build and the certificate from first boot, so neither is baked into the image; read-only, since the proxy only reads them |

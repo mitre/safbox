@@ -1,4 +1,0 @@
-#!/bin/sh
-# Stub sleep for tests/scripts/*.bats: scripts/clone-and-ssh.sh's
-# waits return at once.
-exit 0

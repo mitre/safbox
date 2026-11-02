@@ -66,7 +66,7 @@ end
 control 'safbox-firstboot-1' do
   impact 1.0
   title 'The first-boot unit is installed and enabled to run the first-boot play once'
-  desc 'A one-shot unit runs the first-boot play locally with the box\'s own ansible-core; the play\'s last task leaves a marker, so it never runs again. The play, its configuration, its vars and the services\' secret lists run as root, so only root can change them. Its configuration keeps module invocations out of the system log and Ansible\'s temporary files in the unit\'s runtime directory. The build writes the vars from the site\'s switches, which decide the roles the play runs: admin\'s part of clone_accounts when safbox_base_6 is on (the box has an admin_user), safuser\'s when safbox_base_5 is, clone_secrets when Heimdall, Vulcan or Keycloak is, clone_proxy_tls when the proxy is; clone_grow_disk always runs and hands a clone\'s larger disk to the growing volumes. Only the first-boot roles (clone_) ship, none of the build\'s (template_).'
+  desc 'A one-shot unit runs the first-boot play locally with the box\'s own ansible-core; the play\'s last task leaves a marker, so it never runs again. The play, its configuration, its vars and the services\' secret lists run as root, so only root can change them. Its configuration keeps module invocations out of the system log and Ansible\'s temporary files in the unit\'s runtime directory. The build writes the vars from the site\'s switches, which decide the roles the play runs: admin\'s part of clone_accounts when safbox_base_admin is on (the box has an admin_user), safuser\'s when safbox_base_safuser is, clone_secrets when Heimdall, Vulcan or Keycloak is, clone_proxy_tls when the proxy is; clone_grow_disk always runs and hands a clone\'s larger disk to the growing volumes. Only the first-boot roles (clone_) ship, none of the build\'s (template_).'
 
   play_dir = '/usr/local/lib/safbox/firstboot'
   describe service('safbox-firstboot') do
@@ -102,19 +102,19 @@ control 'safbox-firstboot-1' do
   services = input('expected_services')
   describe yaml("#{play_dir}/vars.yml") do
     its('safbox_firstboot_done') { should eq '/var/lib/safbox/firstboot.done' }
-    its('safbox_base_6') { should eq !input('admin_user').empty? }
-    its('safbox_base_5') { should eq input('safuser') }
-    its('safbox_services_1') { should eq services.include?('heimdall') }
-    its('safbox_services_2') { should eq services.include?('vulcan') }
-    its('safbox_services_5') { should eq services.include?('keycloak') }
-    its('safbox_services_3') { should eq services.include?('proxy') }
+    its('safbox_base_admin') { should eq !input('admin_user').empty? }
+    its('safbox_base_safuser') { should eq input('safuser') }
+    its('safbox_services_heimdall') { should eq services.include?('heimdall') }
+    its('safbox_services_vulcan') { should eq services.include?('vulcan') }
+    its('safbox_services_keycloak') { should eq services.include?('keycloak') }
+    its('safbox_services_proxy') { should eq services.include?('proxy') }
   end
 end
 
 control 'safbox-firstboot-2' do
   impact 1.0
   title 'First boot completed on the deployed clone and logged no secret'
-  desc 'The unit ran the play to its end, whose last task leaves the completion marker. Every task that handles a password or a key is no_log, so the journal holds none of the secrets first boot made: safuser\'s generated password, the two private keys and every podman secret it made for the services. One exception is upstream behaviour, not first boot\'s: Heimdall prints its administrator\'s password in its own log on its first start, so that secret is looked for in first boot\'s log only.'
+  desc 'The unit ran the play to its end, whose last task leaves the completion marker. Every task that handles a password or a key is no_log, so the journal holds none of the secrets first boot made: safuser\'s generated password, the two private keys and every podman secret it made for the services. Every secret is looked for in the whole journal, so a service that logs one fails here too.'
   only_if('This is not a deployed clone', impact: 0.0) { deployed }
 
   describe file('/var/lib/safbox/firstboot.done') do
@@ -138,9 +138,8 @@ control 'safbox-firstboot-2' do
     end
   end
   command("podman secret ls --noheading --format '{{.Name}}'").stdout.split.each do |name|
-    journal = name == 'heimdall-admin-password' ? 'journalctl -o cat --no-pager -u safbox-firstboot.service' : 'journalctl -o cat --no-pager'
     describe "Journal lines holding the podman secret #{name}" do
-      subject { command(%(bash -c '#{journal} | grep -cF -f <(podman secret inspect --showsecret --format "{{.SecretData}}" #{name} | grep .)')).stdout.strip }
+      subject { command(%(bash -c 'journalctl -o cat --no-pager | grep -cF -f <(podman secret inspect --showsecret --format "{{.SecretData}}" #{name} | grep .)')).stdout.strip }
       it { should cmp 0 }
     end
   end
