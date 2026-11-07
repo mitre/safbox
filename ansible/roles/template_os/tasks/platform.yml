@@ -19,6 +19,19 @@
         state: started
       loop: "{{ template_os_services_enabled }}"
 
+    # Firmware on a VM is the hypervisor's job, and offline sites always see the refresh fail.
+    # Stopped before it is masked: masking a running timer leaves it failed.
+    - name: Stop fwupd's metadata refresh
+      ansible.builtin.systemd_service:
+        name: fwupd-refresh.timer
+        enabled: false
+        state: stopped
+
+    - name: Mask fwupd's metadata refresh
+      ansible.builtin.systemd_service:
+        name: fwupd-refresh.timer
+        masked: true
+
 - name: Firewall
   tags: [safbox-platform-firewall]
   block:

@@ -7,6 +7,9 @@
 #   SAFBOX_KEY   path to that user's SSH private key
 #
 #   tests/ansible/idempotence.sh [ansible-playbook args...]
+#
+# Roles, collections and the other arguments: docs/reference/development.md,
+# "The idempotence check". Give file paths in full: the playbook runs from ansible/.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 

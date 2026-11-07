@@ -475,9 +475,10 @@ The build failed or was interrupted. Its VM is kept for diagnosis:
   delete:  scripts/delete-vm.sh <vm_id> (or on the node: qm stop <vm_id>; qm destroy <vm_id> --purge)
 ```
 
-The address is the one Packer connected to; a build that stopped before
-it reached SSH (during the install, say) shows it only in the Proxmox UI,
-on the VM's console or, once the guest agent runs, its summary. The kept
+The address is the one Packer tried SSH on, from
+`.build/run/packer-debug.log`; a build that stopped before it reached SSH
+(during the install, say) shows it only in the Proxmox UI, on the VM's
+console or, once the guest agent runs, its summary. The kept
 VM holds its ID until you delete it, so delete it before you rebuild with
 the same `vm_id`. The next build empties `.build/run/`, the kept key with
 it.

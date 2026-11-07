@@ -10,6 +10,10 @@ After=safbox-firstboot.service
 
 [Pod]
 PodName=heimdall
+# Quadlet's default stops the pod once no container runs, as when the
+# database restarts and takes the application with it; the containers
+# could then not start again.
+ExitPolicy=continue
 Network=heimdall.network
 PublishPort=127.0.0.1:{{ template_services_heimdall_loopback_port }}:3000
 {% if template_services_keycloak_enabled | bool %}

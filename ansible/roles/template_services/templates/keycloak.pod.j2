@@ -11,6 +11,10 @@ After=safbox-firstboot.service
 
 [Pod]
 PodName=keycloak
+# Quadlet's default stops the pod once no container runs, as when the
+# database restarts and takes the application with it; the containers
+# could then not start again.
+ExitPolicy=continue
 Network=keycloak.network
 PublishPort=127.0.0.1:{{ safbox_keycloak_loopback_port }}:8080
 

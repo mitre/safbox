@@ -29,6 +29,9 @@
 #   KC_BOOTSTRAP_ADMIN_*    the temporary administrator of the master realm
 #                           Keycloak makes on its first start; its password
 #                           is a podman secret first boot makes
+#   Tmpfs=/tmp              its scratch files (vertx-cache, world-writable)
+#                           in memory, not in container storage, where the
+#                           STIG's sticky-bit rule would find and change them
 # Each secret is an environment variable (Secret=, masked in podman
 # inspect), each enabled application's client secret the same podman
 # secret the application reads.
@@ -53,6 +56,7 @@ Environment=KC_PROXY_TRUSTED_ADDRESSES={{ template_services_keycloak_gateway }}
 Environment=KC_BOOTSTRAP_ADMIN_USERNAME=temp-admin
 {{ secret_lines('keycloak') -}}
 Volume={{ template_services_keycloak_conf_dir }}/safbox-realm.json:/opt/keycloak/data/import/safbox-realm.json:ro,Z
+Tmpfs=/tmp
 HealthCmd={ printf 'HEAD /health/ready HTTP/1.0\r\n\r\n' >&0; grep -q 'HTTP/1.0 200'; } 0<>/dev/tcp/localhost/9000
 HealthInterval=30s
 HealthTimeout=10s

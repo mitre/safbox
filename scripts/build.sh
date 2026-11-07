@@ -115,11 +115,12 @@ packer_var() {
 
 # After a failed or interrupted packer build that kept its VM: print how to
 # reach it with the kept build key and how to delete it. The address is the
-# one Packer connected to, from build.log; a build that failed before that
-# point shows it only in the Proxmox UI.
+# one Packer tried SSH on, from its debug log (build.log never names it before
+# the build gate); a build that failed before that point shows it only in the
+# Proxmox UI.
 keep_vm() {
   local ip id
-  ip=$(sed -n 's/.*Using SSH communicator to connect: *\([^ ]*\).*/\1/p' "$RUN_DIR/build.log" | tail -1)
+  ip=$(sed -n 's/.*Attempting SSH connection to \([^ ]*\):[0-9]*\.\.\..*/\1/p' "$PACKER_LOG_PATH" | tail -1)
   id=$(packer_var vm_id "<vm_id>")
   echo
   echo "The build failed or was interrupted. Its VM is kept for diagnosis:"

@@ -224,9 +224,12 @@ the same controls. Each cause starts with what kind of failure it is:
 Three requirements SAFBox does not meet pass anyway, because their
 baseline controls do not test them: SV-281211 (`admin` keeps passwordless
 sudo; the control's filter can never match a rule), SV-281090 (`/home` is
-not mounted `noexec`; the control never checks the option) and SV-280985
+not mounted `noexec`, by choice, since accounts clone and run scripts and
+installers in their homes; the control never checks the option, and
+neither SV-281088 nor SV-281089 checks its option either) and SV-280985
 (no remote log server; the control passes when the forwarding line is
-commented out). Their Lockdown rules are off with the reasons above, and
+commented out). Their Lockdown rules are off (the reasons are above and in
+[Accounts](accounts.md)), and
 an assessor checks them by hand: `sudo grep -r NOPASSWD /etc/sudoers
 /etc/sudoers.d` shows only admin's rule; `findmnt -no OPTIONS /home` shows
 `nodev,nosuid` and no `noexec`; `/etc/rsyslog.d/99-forwarding.conf` is
