@@ -216,11 +216,13 @@ upid=$("${CURL[@]}" -X POST "$API/nodes/$NODE/qemu/$TEMPLATE_ID/clone" \
 wait_task "$upid"
 CREATED=1
 
+# A deployed box uses under 3 GiB, so the clone gets 8 GiB, whatever the build VM had.
 echo "configuring cloud-init"
 "${CURL[@]}" -X PUT "$API/nodes/$NODE/qemu/$CLONE_ID/config" \
   --data-urlencode "ciuser=$USER_NAME" \
   --data-urlencode "sshkeys=$(printf '%s' "$PUB" | jq -sRr @uri)" \
   --data-urlencode "ipconfig0=ip=dhcp" \
+  --data-urlencode "memory=8192" \
   --data-urlencode "ciupgrade=0" >/dev/null   # no first-boot dnf upgrade (qemu-server >= 8.1)
 if [ -n "${SAFBOX_CLONE_PASSWORD:-}" ]; then
   "${CURL[@]}" -X PUT "$API/nodes/$NODE/qemu/$CLONE_ID/config" \

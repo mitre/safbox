@@ -38,6 +38,11 @@ HealthTimeout=10s
 HealthRetries=3
 HealthStartPeriod=60s
 Notify=healthy
+# Puma runs as PID 1. On SIGTERM it stops gracefully and then re-raises
+# the signal, which PID 1 cannot die of, so Ruby exits 1 and every stop
+# looks like a failure. SIGINT is Puma's same graceful stop without the
+# re-raise: it exits 0.
+StopSignal=SIGINT
 Memory={{ template_services_vulcan_memory }}
 Volume={{ template_os_container_trust_volume }}
 NoNewPrivileges=true

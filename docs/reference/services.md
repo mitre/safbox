@@ -657,6 +657,7 @@ units follow Keycloak's server guides and say so in their comments.
 | Vulcan `web`: `depends_on db (healthy)` | `Requires=` and `After=vulcan-db.service` | as for Heimdall: `After=` waits for a healthy database |
 | Vulcan `web`: `certs/` copied into the image's store at build | the host's extracted trust store, read-only where the image reads its own (`template_os_container_trust_volume`) | the site's CA bundles reach it without a rebuild |
 | Vulcan `web`: healthcheck `curl /up`, every 30s, timeout 10s, 3 retries, start period 60s | the same, and `Notify=healthy` | with `RAILS_FORCE_SSL`, `/up` answers plain HTTP with a redirect, which `curl -f` accepts |
+| Vulcan `web`: no stop signal, so Docker's SIGTERM | `StopSignal=SIGINT` | Puma, PID 1, re-raises SIGTERM after its graceful stop and so exits 1; SIGINT is the same graceful stop and exits 0 |
 | Vulcan `db`: `image postgres:18-alpine` | the sclorg PostgreSQL 18 image, as Heimdall's (`vulcan-db.container`), with glibc's collations rather than musl's | Alpine's OpenSSL has no FIPS provider |
 | Vulcan `db`: `restart: unless-stopped` | `Restart=always` | systemd's nearest: it restarts the container whenever it exits, and a unit stopped with `systemctl stop` stays stopped, as `unless-stopped` does |
 | Vulcan `db`: `volumes vulcan_dbdata:/var/lib/postgresql` | the `vulcan-db` named volume | same behaviour: a named volume under podman's storage, created on the first start after first boot |

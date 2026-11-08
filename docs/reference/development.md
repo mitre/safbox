@@ -83,7 +83,8 @@ made from the template, running it again changes nothing. It needs:
     Without it the play looks for `site/.vitepress/dist/` and stops.
   - On a desktop clone, also `-e @$PWD/ansible/local.yml`, the file that
     sets `safbox_desktop_enabled: true`.
-- If the runner's SSH client config can't be read or used, set
+- If the runner's SSH client config can't be read or used, add
+  `-F /dev/null` to the first-boot `ssh` command above, and set
   `ANSIBLE_SSH_ARGS='-F /dev/null -o ControlMaster=auto -o ControlPersist=60s'`,
   which replaces `ssh_args` in `ansible/ansible.cfg`.
 
@@ -100,8 +101,13 @@ shipped defaults:
    (`safbox_desktop_enabled: true` in `ansible/local.yml`, the desktop
    inputs file named to the build gate in `packer/local.auto.pkrvars.hcl`
    or with `-var build_gate_site_inputs_file=verify/local/inputs.yml`). Build one after the other: each
-   build replaces `.build/run/`. Each build's gate, the safbox profile and
-   the STIG overlay against their `build` thresholds, must pass.
+   build replaces `.build/run/`, so copy the headless build's
+   `.build/run/site/` aside for its idempotence check (step 6) before the
+   desktop build starts. Each build's gate, the safbox profile and
+   the STIG overlay against their `build` thresholds, must pass. Once
+   the desktop lane is done, remove its `ansible/local.yml` and
+   `verify/local/` files: left in place, they make the next headless
+   build a desktop one.
 3. Run the release gate on a clone of each template:
    `scripts/clone-and-ssh.sh <template-vmid> <clone-vmid> --keep`, with
    `SAFBOX_SITE_INPUTS` naming the desktop inputs file for the desktop

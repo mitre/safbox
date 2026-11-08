@@ -345,7 +345,8 @@ clone is made. Run from a git worktree, the script uses that worktree's
 `.build/`; see [Deploying a clone](../../reference/accounts.md#deploying-a-clone).
 
 The clone test (`scripts/clone-and-ssh.sh`) is the release gate. It clones
-the template through the API into the pool, injects a cloud-init user
+the template through the API into the pool, sets its memory to 8 GiB
+(a deployed box uses under 3 GiB), injects a cloud-init user
 (`admin`, or `SAFBOX_CLONE_USER`, which a site inputs file must then name
 as `admin_user`) with its RSA build key and any extra keys, boots it,
 learns its address from the guest agent, logs in as that user and checks FIPS mode and the clone's
