@@ -22,7 +22,7 @@ upstream pages linked below. The versions listed are the ones CI uses
 | Tool | Version | Install |
 |---|---|---|
 | Packer | 1.12 or newer (CI: 1.16.1); `packer init` installs the pinned plugins | [developer.hashicorp.com/packer/install](https://developer.hashicorp.com/packer/install) |
-| Ansible | the `ansible` package, 14.5.0 (see below) | [Ansible installation guide](https://docs.ansible.com/ansible/latest/installation_guide/intro_installation.html) |
+| Ansible | the `ansible` package, 14.5.0 (see below) | [Ansible installation guide](https://docs.ansible.com/projects/ansible/latest/installation_guide/intro_installation.html) |
 | CINC Auditor | 7.2.1 (any 5.0 or newer runs the profiles) | [cinc.sh/docs/auditor](https://cinc.sh/docs/auditor/#install) |
 | SAF CLI | 1.7.0, on Node.js 22 | [SAF CLI installation](https://github.com/mitre/saf#installation) |
 | Node.js and npm | 18 or newer; the build uses them to build the documentation site the box serves (`site/`), from its lockfile | [nodejs.org](https://nodejs.org/en/download) |
